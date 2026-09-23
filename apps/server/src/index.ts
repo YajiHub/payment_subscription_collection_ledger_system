@@ -17,6 +17,9 @@ import { config } from "./config";
 import { closeDatabaseConnection } from "./db/connection";
 import { registerAuthRoutes } from "./modules/auth/auth.routes";
 import { registerHealthRoutes } from "./modules/health/health.routes";
+import { registerPlanRoutes } from "./modules/plans/plans.routes";
+import { registerServiceAccountRoutes } from "./modules/service-accounts/service-accounts.routes";
+import { registerSubscriberRoutes } from "./modules/subscribers/subscribers.routes";
 import { registerUserRoutes } from "./modules/users/users.routes";
 import { isAppError } from "./shared/errors";
 import { sendError } from "./shared/response";
@@ -35,6 +38,9 @@ export function buildServer(): FastifyInstance {
   server.register(registerHealthRoutes);
   server.register(registerAuthRoutes);
   server.register(registerUserRoutes);
+  server.register(registerPlanRoutes);
+  server.register(registerSubscriberRoutes);
+  server.register(registerServiceAccountRoutes);
 
   // Turns thrown errors into one predictable JSON shape.
   server.setErrorHandler((error: FastifyError, request, reply) => {

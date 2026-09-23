@@ -5,8 +5,8 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { USER_ROLES } from "@bcis/shared";
-import { ValidationError } from "../../shared/errors";
 import { sendSuccess } from "../../shared/response";
+import { parseOrThrow } from "../../shared/validate";
 import {
   changeUserPassword,
   createUser,
@@ -54,18 +54,6 @@ const changePasswordBodySchema = z.object({
 const setActiveBodySchema = z.object({
   isActive: z.boolean(),
 });
-
-/** Parses `data` with `schema` or throws a ValidationError carrying the first problem. */
-function parseOrThrow<TSchema extends z.ZodTypeAny>(
-  schema: TSchema,
-  data: unknown
-): z.infer<TSchema> {
-  const result = schema.safeParse(data);
-  if (!result.success) {
-    throw new ValidationError(result.error.issues[0]?.message ?? "Invalid request");
-  }
-  return result.data;
-}
 
 /** GET /api/users — paginated list of every user. */
 export async function getUsers(
