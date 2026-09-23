@@ -1,0 +1,418 @@
+// Acceptance tests for Phase 4 — billing and invoicing.
+//
+// They run against the real Fastify app via `app.inject()` with the database
+// swapped for an in-memory stand-in, so no PostgreSQL is required. What is being
+// pinned down is the financial behaviour: one invoice per account per period,
+// duplicate prevention, and the ledger debit/credit produced by posting and voiding.
+
+import { randomUUID } from "node:crypto";
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FastifyInstance } from "fastify";
+
+vi.mock("../src/db/connection", async () => {
+  const { fakeDatabase } = await import("./support/fake-database");
+  return {
+    db: fakeDatabase.db,
+    pool: {},
+    checkDatabaseConnection: async () => ({ isReachable: true, latencyMs: 0, errorMessage: null }),
+    closeDatabaseConnection: async () => {},
+  };
+});
+
+import { buildServer } from "../src/index.ts";
+import { billingRuns, invoiceLineItems, invoices } from "../src/db/schema/billing";
+import { ledgerEntries } from "../src/db/schema/ledger";
+import { fakeDatabase, type RecordedInsert } from "./support/fake-database";
+import { authorizationHeader, signTestToken } from "./support/tokens";
+
+const ADMIN_ID = randomUUID();
+const SERVICE_ACCOUNT_ID = randomUUID();
+const SUBSCRIBER_ID = randomUUID();
+const INVOICE_ID = randomUUID();
+
+function monthlyBillingCandidate(overrides: Record<string, unknown> = {}) {
+  return {
+    serviceAccountId: SERVICE_ACCOUNT_ID,
+    planName: "Fiber 25Mbps",
+    monthlyRateCentavos: 99900,
+    ...overrides,
+  };
+}
+
+function invoiceSummaryRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: INVOICE_ID,
+    invoiceNumber: "INV-2025-01-000001",
+    serviceAccountId: SERVICE_ACCOUNT_ID,
+    serviceAccountNumber: "SA-20250124-00001",
+    subscriberId: SUBSCRIBER_ID,
+    subscriberFirstName: "Maria",
+    subscriberLastName: "Santos",
+    invoiceType: "monthly_subscription",
+    status: "draft",
+    billingPeriodYear: 2025,
+    billingPeriodMonth: 1,
+    invoiceDate: "2025-01-01",
+    dueDate: "2025-01-15",
+    subtotalCentavos: 99900,
+    lateFeesCentavos: 0,
+    totalAmountCentavos: 99900,
+    paidAmountCentavos: 0,
+    remainingBalanceCentavos: 99900,
+    notes: null,
+    voidedByTransactionId: null,
+    createdAt: new Date(),
+    postedAt: null,
+    voidedAt: null,
+    ...overrides,
+  };
+}
+
+function lineItemRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: randomUUID(),
+    description: "Fiber 25Mbps — January 2025",
+    quantity: 1,
+    unitAmountCentavos: 99900,
+    totalAmountCentavos: 99900,
+    ...overrides,
+  };
+}
+
+/** Every insert recorded against a specific table. */
+function insertedInto(table: unknown): RecordedInsert[] {
+  return fakeDatabase.insertedRows.filter((row) => row.table === table);
+}
+
+describe("billing and invoice routes", () => {
+  let server: FastifyInstance;
+
+  beforeAll(async () => {
+    server = buildServer();
+    await server.ready();
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  beforeEach(() => {
+    fakeDatabase.reset();
+  });
+
+  it("generates exactly one draft invoice per active account and writes no ledger entry", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
+    fakeDatabase.queueSelectRows([]); // lock the account row
+    fakeDatabase.queueSelectRows([]); // no existing invoice for the period
+    fakeDatabase.queueSelectRows([]); // existing invoice numbers for the period
+    fakeDatabase.queueInsertRows([{ id: INVOICE_ID }]); // invoice insert ... returning
+    fakeDatabase.queueInsertRows([]); // line item insert
+    fakeDatabase.queueInsertRows([]); // billing run insert
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/run",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.totalInvoicesGenerated).toBe(1);
+    expect(response.json().data.totalAmountBilledCentavos).toBe(99900);
+
+    const createdInvoices = insertedInto(invoices);
+    expect(createdInvoices).toHaveLength(1);
+
+    const invoiceValues = createdInvoices[0]?.values as Record<string, unknown>;
+    expect(invoiceValues.status).toBe("draft");
+    expect(invoiceValues.totalAmountCentavos).toBe(99900);
+    expect(invoiceValues.invoiceNumber).toBe("INV-2025-01-000001");
+
+    const createdLineItems = insertedInto(invoiceLineItems);
+    expect(createdLineItems).toHaveLength(1);
+
+    // A draft is not a debt yet: nothing may reach the ledger during generation.
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+    expect(insertedInto(billingRuns)).toHaveLength(1);
+  });
+
+  it("does not create a duplicate when the billing job runs twice for the same month", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    // First run: no invoice exists yet, so one is generated.
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
+    fakeDatabase.queueSelectRows([]); // lock the account row
+    fakeDatabase.queueSelectRows([]); // no existing invoice
+    fakeDatabase.queueSelectRows([]); // no invoice numbers yet
+    fakeDatabase.queueInsertRows([{ id: INVOICE_ID }]); // invoice insert
+    fakeDatabase.queueInsertRows([]); // line item insert
+    fakeDatabase.queueInsertRows([]); // billing run insert
+
+    const firstRun = await server.inject({
+      method: "POST",
+      url: "/api/billing/run",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(firstRun.statusCode).toBe(201);
+    expect(firstRun.json().data.totalInvoicesGenerated).toBe(1);
+    expect(insertedInto(invoices)).toHaveLength(1);
+
+    // Second run for the same month: an invoice already exists, so the account is skipped.
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
+    fakeDatabase.queueSelectRows([]); // lock the account row
+    fakeDatabase.queueSelectRows([{ id: INVOICE_ID }]); // existing invoice found
+    fakeDatabase.queueInsertRows([]); // billing run insert
+
+    const secondRun = await server.inject({
+      method: "POST",
+      url: "/api/billing/run",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(secondRun.statusCode).toBe(201);
+    expect(secondRun.json().data.totalInvoicesGenerated).toBe(0);
+    expect(secondRun.json().data.totalInvoicesSkipped).toBe(1);
+
+    // Still exactly one invoice: the second run added none.
+    expect(insertedInto(invoices)).toHaveLength(1);
+  });
+
+  it("posts an invoice and creates a matching ledger DEBIT entry", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "draft",
+        totalAmountCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update
+    fakeDatabase.queueUpdateRows([]); // status -> posted
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // current ledger balance
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "posted" })]); // reload summary
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/post`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.status).toBe("posted");
+
+    const ledgerWrites = insertedInto(ledgerEntries);
+    expect(ledgerWrites).toHaveLength(1);
+
+    const ledgerValues = ledgerWrites[0]?.values as Record<string, unknown>;
+    expect(ledgerValues.entryType).toBe("invoice_posted");
+    expect(ledgerValues.amountCentavos).toBe(99900);
+    expect(ledgerValues.runningBalanceCentavos).toBe(99900);
+
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "posted" });
+  });
+
+  it("voids an invoice: marks it void, keeps the row, and creates a ledger CREDIT entry", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "posted",
+        totalAmountCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 99900 }]); // current ledger balance
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
+    fakeDatabase.queueUpdateRows([]); // status -> void
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "void", notes: "Entered wrongly" })]); // reload
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/void`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Entered wrongly" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.status).toBe("void");
+
+    const ledgerWrites = insertedInto(ledgerEntries);
+    expect(ledgerWrites).toHaveLength(1);
+
+    const ledgerValues = ledgerWrites[0]?.values as Record<string, unknown>;
+    expect(ledgerValues.entryType).toBe("invoice_void");
+    expect(ledgerValues.amountCentavos).toBe(99900);
+    expect(ledgerValues.runningBalanceCentavos).toBe(0);
+
+    // The invoice row is updated, never deleted.
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "void" });
+  });
+
+  it("refuses to void a fully paid invoice", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "paid",
+        totalAmountCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/void`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Trying to erase a paid invoice" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("CONFLICT");
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+  });
+
+  it("adds a late fee line item, updates the totals, and records a ledger debit", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        totalAmountCentavos: 99900,
+        lateFeesCentavos: 0,
+        remainingBalanceCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // overdue invoices
+    fakeDatabase.queueInsertRows([]); // late fee line item insert
+    fakeDatabase.queueUpdateRows([]); // invoice totals update
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 99900 }]); // current ledger balance
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/apply-late-fees",
+      headers: authorizationHeader(token),
+      payload: { lateFeeCentavos: 5000 },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.invoicesCharged).toBe(1);
+
+    const createdLineItems = insertedInto(invoiceLineItems);
+    expect(createdLineItems).toHaveLength(1);
+    expect(createdLineItems[0]?.values).toMatchObject({
+      description: expect.stringContaining("Late Payment Fee"),
+      totalAmountCentavos: 5000,
+    });
+
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({
+      lateFeesCentavos: 5000,
+      totalAmountCentavos: 104900,
+      remainingBalanceCentavos: 104900,
+      status: "overdue",
+    });
+
+    const ledgerValues = insertedInto(ledgerEntries)[0]?.values as Record<string, unknown>;
+    expect(ledgerValues.entryType).toBe("late_fee");
+    expect(ledgerValues.amountCentavos).toBe(5000);
+  });
+
+  it("generates a reconnection fee invoice for a service account", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: SERVICE_ACCOUNT_ID,
+        planName: "Fiber 25Mbps",
+        reconnectionFeeCentavos: 50000,
+      },
+    ]); // account joined with its plan
+    fakeDatabase.queueSelectRows([]); // existing invoice numbers
+    fakeDatabase.queueInsertRows([{ id: INVOICE_ID }]); // invoice insert
+    fakeDatabase.queueInsertRows([]); // line item insert
+    fakeDatabase.queueSelectRows([
+      invoiceSummaryRow({ invoiceType: "reconnection_fee", status: "draft" }),
+    ]); // reload summary
+    fakeDatabase.queueSelectRows([lineItemRow({ description: "Reconnection Fee — Fiber 25Mbps" })]); // reload line items
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/invoices/reconnection-fee",
+      headers: authorizationHeader(token),
+      payload: { serviceAccountId: SERVICE_ACCOUNT_ID, reason: "Reconnected after payment plan" },
+    });
+
+    expect(response.statusCode).toBe(201);
+
+    const createdInvoices = insertedInto(invoices);
+    expect(createdInvoices).toHaveLength(1);
+    expect(createdInvoices[0]?.values).toMatchObject({
+      invoiceType: "reconnection_fee",
+      totalAmountCentavos: 50000,
+      status: "draft",
+    });
+  });
+
+  it("refuses to run the billing job for a Cashier, who has no billing permission", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: ADMIN_ID });
+    fakeDatabase.queueSelectRows([]); // authenticate only; authorize rejects the request
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/run",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe("FORBIDDEN");
+    expect(insertedInto(invoices)).toHaveLength(0);
+  });
+
+  it("refuses to void an invoice for a Billing Clerk, who has no void permission", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+    fakeDatabase.queueSelectRows([]); // authenticate only
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/void`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Should not be allowed" },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe("FORBIDDEN");
+  });
+});
