@@ -28,6 +28,8 @@ export function HomePage(): ReactNode {
   const lastCheckedAt = useApiStatusStore((state) => state.lastCheckedAt);
 
   const canManageUsers = user !== null && roleHasPermission(user.role, "users:read");
+  const canViewSubscribers = user !== null && roleHasPermission(user.role, "subscribers:read");
+  const canViewPlans = user !== null && roleHasPermission(user.role, "plans:read");
 
   async function handleLogout(): Promise<void> {
     try {
@@ -51,6 +53,16 @@ export function HomePage(): ReactNode {
           </p>
         </div>
         <nav className="flex items-center gap-3 text-sm font-medium">
+          {canViewSubscribers && (
+            <Link to="/subscribers" className="text-slate-800 underline">
+              Subscribers
+            </Link>
+          )}
+          {canViewPlans && (
+            <Link to="/plans" className="text-slate-800 underline">
+              Plans
+            </Link>
+          )}
           {canManageUsers && (
             <Link to="/users" className="text-slate-800 underline">
               User Management

@@ -2,8 +2,12 @@ import type { ReactNode } from "react";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { AddSubscriberPage } from "./pages/AddSubscriberPage";
 import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
+import { PlanManagementPage } from "./pages/PlanManagementPage";
+import { SubscriberDetailPage } from "./pages/SubscriberDetailPage";
+import { SubscriberListPage } from "./pages/SubscriberListPage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { UserManagementPage } from "./pages/UserManagementPage";
 
@@ -31,6 +35,38 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="users:read">
               <UserManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscribers"
+          element={
+            <ProtectedRoute requiredPermission="subscribers:read">
+              <SubscriberListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscribers/new"
+          element={
+            <ProtectedRoute requiredPermission="subscribers:create">
+              <AddSubscriberPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscribers/:id"
+          element={
+            <ProtectedRoute requiredPermission="subscribers:read">
+              <SubscriberDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/plans"
+          element={
+            <ProtectedRoute requiredPermission="plans:read">
+              <PlanManagementPage />
             </ProtectedRoute>
           }
         />
