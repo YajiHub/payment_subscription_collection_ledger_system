@@ -336,6 +336,8 @@ export interface ReconnectionFeeEntry {
 export interface ReconnectServiceAccountResult {
   serviceAccount: ServiceAccount;
   reconnectionFeeEntry: ReconnectionFeeEntry;
+  /** The reconnection fee invoice raised on reconnect, or null when the plan has no fee. */
+  reconnectionFeeInvoice: { invoice: InvoiceDetail; amountCentavos: number } | null;
 }
 
 export interface PlanChangeResult {

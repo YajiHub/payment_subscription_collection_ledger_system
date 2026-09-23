@@ -238,9 +238,13 @@ export function SubscriberDetailPage(): ReactNode {
           reason.trim() === "" ? undefined : reason
         );
         // Tell the clerk exactly what will be charged for the reconnection.
+        const invoiceNote =
+          result.reconnectionFeeInvoice === null
+            ? ""
+            : ` Invoice ${result.reconnectionFeeInvoice.invoice.invoiceNumber} generated.`;
         setStatusMessage(
           `Reconnected ${account.serviceAccountNumber}. Reconnection fee: ` +
-            `${formatCentavos(result.reconnectionFeeEntry.amountCentavos)}.`
+            `${formatCentavos(result.reconnectionFeeEntry.amountCentavos)}.${invoiceNote}`
         );
       }
 
