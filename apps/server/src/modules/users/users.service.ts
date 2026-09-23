@@ -1,7 +1,7 @@
 // Database operations for user management.
 // Route handlers never touch the database directly — they call these functions.
 
-import { and, count, desc, eq, ne } from "drizzle-orm";
+import { count, desc, eq } from "drizzle-orm";
 
 import { db } from "../../db/connection";
 import { users } from "../../db/schema/users";
@@ -175,16 +175,4 @@ export async function setUserActiveState(userId: string, isActive: boolean): Pro
   }
 
   return updated;
-}
-
-/** True when at least one other active admin remains — guards against lockout. */
-export async function hasAnotherActiveAdmin(userId: string): Promise<boolean> {
-  const others = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.role, "admin"), eq(users.isActive, true), ne(users.id, userId)))
-    .limit(1)
-    .then((rows) => rows.length > 0);
-
-  return others;
 }
