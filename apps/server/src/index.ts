@@ -15,7 +15,9 @@ import Fastify, {
 
 import { config } from "./config";
 import { closeDatabaseConnection } from "./db/connection";
+import { registerAuthRoutes } from "./modules/auth/auth.routes";
 import { registerHealthRoutes } from "./modules/health/health.routes";
+import { registerUserRoutes } from "./modules/users/users.routes";
 import { isAppError } from "./shared/errors";
 import { sendError } from "./shared/response";
 
@@ -31,6 +33,8 @@ export function buildServer(): FastifyInstance {
 
   server.register(cors, { origin: config.CORS_ORIGIN });
   server.register(registerHealthRoutes);
+  server.register(registerAuthRoutes);
+  server.register(registerUserRoutes);
 
   // Turns thrown errors into one predictable JSON shape.
   server.setErrorHandler((error: FastifyError, request, reply) => {
@@ -79,8 +83,7 @@ async function startServer(): Promise<void> {
 }
 
 const isEntryPoint =
-  process.argv[1] !== undefined &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isEntryPoint) {
   void startServer();
