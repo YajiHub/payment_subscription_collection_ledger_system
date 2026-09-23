@@ -307,6 +307,7 @@ describe("billing and invoice routes", () => {
         id: INVOICE_ID,
         invoiceNumber: "INV-2025-01-000001",
         serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "overdue",
         totalAmountCentavos: 99900,
         lateFeesCentavos: 0,
         remainingBalanceCentavos: 99900,
@@ -314,6 +315,19 @@ describe("billing and invoice routes", () => {
         billingPeriodMonth: 1,
       },
     ]); // overdue invoices
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "overdue",
+        totalAmountCentavos: 99900,
+        lateFeesCentavos: 0,
+        remainingBalanceCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice re-read FOR UPDATE (still chargeable)
     fakeDatabase.queueInsertRows([]); // late fee line item insert
     fakeDatabase.queueUpdateRows([]); // invoice totals update
     fakeDatabase.queueSelectRows([{ balanceCentavos: 99900 }]); // current ledger balance
@@ -346,6 +360,101 @@ describe("billing and invoice routes", () => {
     const ledgerValues = insertedInto(ledgerEntries)[0]?.values as Record<string, unknown>;
     expect(ledgerValues.entryType).toBe("late_fee");
     expect(ledgerValues.amountCentavos).toBe(5000);
+  });
+
+  it("does not charge a late fee on an invoice voided after the overdue scan", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    // The coarse scan still sees the invoice (it was posted when the scan ran)...
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "posted",
+        totalAmountCentavos: 99900,
+        lateFeesCentavos: 0,
+        remainingBalanceCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // overdue invoices
+    // ...but by the time the per-invoice transaction locks it, a void has committed.
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "void",
+        totalAmountCentavos: 99900,
+        lateFeesCentavos: 0,
+        remainingBalanceCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice re-read FOR UPDATE (voided)
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/apply-late-fees",
+      headers: authorizationHeader(token),
+      payload: { lateFeeCentavos: 5000 },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.invoicesCharged).toBe(0);
+
+    // Nothing may be written for a voided invoice: no line item, no status flip
+    // back to overdue, and no late-fee ledger debit on a reversed debt.
+    expect(insertedInto(invoiceLineItems)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows).toHaveLength(0);
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+  });
+
+  it("does not charge a second fee when an invoice is already paid by the time it is locked", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "overdue",
+        totalAmountCentavos: 99900,
+        lateFeesCentavos: 0,
+        remainingBalanceCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // overdue invoices
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "paid",
+        totalAmountCentavos: 104900,
+        lateFeesCentavos: 5000,
+        remainingBalanceCentavos: 0,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice re-read FOR UPDATE (no longer chargeable)
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/apply-late-fees",
+      headers: authorizationHeader(token),
+      payload: { lateFeeCentavos: 5000 },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.invoicesCharged).toBe(0);
+    expect(insertedInto(invoiceLineItems)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows).toHaveLength(0);
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
   });
 
   it("generates a reconnection fee invoice for a service account", async () => {

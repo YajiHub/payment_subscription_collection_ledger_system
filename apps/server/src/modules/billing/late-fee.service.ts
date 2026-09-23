@@ -2,10 +2,17 @@
 //
 // Run after the due date. Each overdue invoice gets one late fee line for the run,
 // its totals are increased, and a matching ledger debit is written.
+//
+// The coarse "overdue invoices" query runs first, but it is only a candidate list:
+// every write happens inside a per-invoice transaction that re-reads the invoice
+// FOR UPDATE and re-checks its status. That re-read is what stops the job from
+// resurrecting an invoice that was voided (or paid) between the candidate read and
+// the write, and it stops two concurrent runs from charging the same fee twice.
 
 import { and, eq, gt, inArray, lt } from "drizzle-orm";
+import type { InvoiceStatus } from "@bcis/shared";
 
-import { db } from "../../db/connection";
+import { db, type DbExecutor } from "../../db/connection";
 import { invoiceLineItems, invoices } from "../../db/schema/billing";
 import { formatDateOnly } from "../../shared/date";
 import { ValidationError } from "../../shared/errors";
@@ -17,12 +24,16 @@ interface OverdueInvoice {
   id: string;
   invoiceNumber: string;
   serviceAccountId: string;
+  status: InvoiceStatus;
   totalAmountCentavos: number;
   lateFeesCentavos: number;
   remainingBalanceCentavos: number;
   billingPeriodYear: number | null;
   billingPeriodMonth: number | null;
 }
+
+/** Only these statuses still represent a live debt that a late fee may attach to. */
+const CHARGEABLE_STATUSES: readonly InvoiceStatus[] = ["posted", "partially_paid", "overdue"];
 
 /** Posted invoices that are past due and still have an unpaid balance. */
 async function findOverdueInvoices(today: Date): Promise<OverdueInvoice[]> {
@@ -31,6 +42,7 @@ async function findOverdueInvoices(today: Date): Promise<OverdueInvoice[]> {
       id: invoices.id,
       invoiceNumber: invoices.invoiceNumber,
       serviceAccountId: invoices.serviceAccountId,
+      status: invoices.status,
       totalAmountCentavos: invoices.totalAmountCentavos,
       lateFeesCentavos: invoices.lateFeesCentavos,
       remainingBalanceCentavos: invoices.remainingBalanceCentavos,
@@ -45,6 +57,41 @@ async function findOverdueInvoices(today: Date): Promise<OverdueInvoice[]> {
         gt(invoices.remainingBalanceCentavos, 0)
       )
     );
+}
+
+/**
+ * Re-reads one invoice inside the transaction and locks its row.
+ *
+ * Returns the freshly-locked invoice only when it is still chargeable; a voided or
+ * paid invoice returns undefined so the caller skips it without writing anything.
+ */
+async function lockChargeableInvoice(
+  tx: DbExecutor,
+  invoiceId: string
+): Promise<OverdueInvoice | undefined> {
+  const invoice = await tx
+    .select({
+      id: invoices.id,
+      invoiceNumber: invoices.invoiceNumber,
+      serviceAccountId: invoices.serviceAccountId,
+      status: invoices.status,
+      totalAmountCentavos: invoices.totalAmountCentavos,
+      lateFeesCentavos: invoices.lateFeesCentavos,
+      remainingBalanceCentavos: invoices.remainingBalanceCentavos,
+      billingPeriodYear: invoices.billingPeriodYear,
+      billingPeriodMonth: invoices.billingPeriodMonth,
+    })
+    .from(invoices)
+    .where(eq(invoices.id, invoiceId))
+    .limit(1)
+    .for("update")
+    .then((rows) => rows[0]);
+
+  if (invoice === undefined || !CHARGEABLE_STATUSES.includes(invoice.status)) {
+    return undefined;
+  }
+
+  return invoice;
 }
 
 /**
@@ -65,8 +112,17 @@ export async function applyLateFeesToOverdueInvoices(
   const overdueInvoices = await findOverdueInvoices(today);
   const appliedOnLabel = formatDateOnly(today);
 
-  for (const invoice of overdueInvoices) {
-    await db.transaction(async (tx) => {
+  let charged = 0;
+
+  for (const candidate of overdueInvoices) {
+    const wasCharged = await db.transaction(async (tx) => {
+      // Lock and re-check first: a void committed after the candidate read must
+      // not be flipped back to overdue or charged a fee.
+      const invoice = await lockChargeableInvoice(tx, candidate.id);
+      if (invoice === undefined) {
+        return false;
+      }
+
       const lineItem = buildLateFeeLineItem(lateFeeCentavos, appliedOnLabel);
 
       await tx.insert(invoiceLineItems).values({
@@ -88,8 +144,13 @@ export async function applyLateFeesToOverdueInvoices(
         .where(eq(invoices.id, invoice.id));
 
       await recordLateFeeApplied(tx, invoice, lateFeeCentavos, appliedByUserId);
+      return true;
     });
+
+    if (wasCharged) {
+      charged++;
+    }
   }
 
-  return overdueInvoices.length;
+  return charged;
 }
