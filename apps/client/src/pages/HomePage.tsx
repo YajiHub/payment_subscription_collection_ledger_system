@@ -30,6 +30,7 @@ export function HomePage(): ReactNode {
   const canManageUsers = user !== null && roleHasPermission(user.role, "users:read");
   const canViewSubscribers = user !== null && roleHasPermission(user.role, "subscribers:read");
   const canViewPlans = user !== null && roleHasPermission(user.role, "plans:read");
+  const canViewInvoices = user !== null && roleHasPermission(user.role, "invoices:read");
 
   async function handleLogout(): Promise<void> {
     try {
@@ -61,6 +62,11 @@ export function HomePage(): ReactNode {
           {canViewPlans && (
             <Link to="/plans" className="text-slate-800 underline">
               Plans
+            </Link>
+          )}
+          {canViewInvoices && (
+            <Link to="/billing" className="text-slate-800 underline">
+              Billing
             </Link>
           )}
           {canManageUsers && (

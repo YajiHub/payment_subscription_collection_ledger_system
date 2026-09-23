@@ -3,7 +3,10 @@ import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AddSubscriberPage } from "./pages/AddSubscriberPage";
+import { BillingDashboardPage } from "./pages/BillingDashboardPage";
 import { HomePage } from "./pages/HomePage";
+import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
+import { InvoiceListPage } from "./pages/InvoiceListPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PlanManagementPage } from "./pages/PlanManagementPage";
 import { SubscriberDetailPage } from "./pages/SubscriberDetailPage";
@@ -67,6 +70,30 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="plans:read">
               <PlanManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/billing"
+          element={
+            <ProtectedRoute requiredPermission="invoices:read">
+              <BillingDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/invoices"
+          element={
+            <ProtectedRoute requiredPermission="invoices:read">
+              <InvoiceListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/invoices/:id"
+          element={
+            <ProtectedRoute requiredPermission="invoices:read">
+              <InvoiceDetailPage />
             </ProtectedRoute>
           }
         />

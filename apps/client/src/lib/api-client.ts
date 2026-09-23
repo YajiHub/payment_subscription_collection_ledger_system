@@ -7,7 +7,7 @@
 
 import axios, { AxiosError } from "axios";
 
-import type { ServiceAccountStatus, ServiceType, UserRole } from "@bcis/shared";
+import type { InvoiceStatus, InvoiceType, ServiceAccountStatus, ServiceType, UserRole } from "@bcis/shared";
 import { API_BASE_URL, HTTP_TIMEOUT_MS } from "./constants";
 import { useAuthStore } from "../stores/auth.store";
 
@@ -522,6 +522,176 @@ export async function assignCollector(
   const response = await httpClient.put<ApiSuccessEnvelope<ServiceAccount>>(
     `/api/service-accounts/${id}/collector`,
     { assignedCollectorId }
+  );
+  return unwrap(response.data);
+}
+
+// ─── Phase 4: billing and invoices ────────────────────────────────────────────
+// Same rule as above: this is the only place the renderer performs HTTP.
+
+export interface InvoiceSummary {
+  id: string;
+  invoiceNumber: string;
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  invoiceType: InvoiceType;
+  status: InvoiceStatus;
+  billingPeriodYear: number | null;
+  billingPeriodMonth: number | null;
+  invoiceDate: string;
+  dueDate: string;
+  subtotalCentavos: number;
+  lateFeesCentavos: number;
+  totalAmountCentavos: number;
+  paidAmountCentavos: number;
+  remainingBalanceCentavos: number;
+  notes: string | null;
+  voidedByTransactionId: string | null;
+  createdAt: string;
+  postedAt: string | null;
+  voidedAt: string | null;
+}
+
+export interface InvoiceLineItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unitAmountCentavos: number;
+  totalAmountCentavos: number;
+}
+
+export interface InvoiceDetail extends InvoiceSummary {
+  lineItems: InvoiceLineItem[];
+}
+
+export interface ListInvoiceFilters {
+  status?: InvoiceStatus;
+  year?: number;
+  month?: number;
+  subscriberId?: string;
+}
+
+export interface BillingPreview {
+  billingPeriodYear: number;
+  billingPeriodMonth: number;
+  accountsToBill: number;
+  accountsAlreadyBilled: number;
+  totalAmountCentavos: number;
+}
+
+export interface BillingRunResult {
+  billingPeriodYear: number;
+  billingPeriodMonth: number;
+  totalServiceAccountsProcessed: number;
+  totalInvoicesGenerated: number;
+  totalInvoicesSkipped: number;
+  totalAmountBilledCentavos: number;
+}
+
+export interface BillingRunRecord {
+  id: string;
+  billingPeriodYear: number;
+  billingPeriodMonth: number;
+  totalServiceAccountsProcessed: number;
+  totalInvoicesGenerated: number;
+  totalInvoicesSkipped: number;
+  totalAmountBilledCentavos: number;
+  status: string;
+  errorDetails: string | null;
+  ranAt: string;
+  ranBy: string;
+}
+
+/** GET /api/billing/run-preview — a dry run of the monthly billing job. */
+export async function previewMonthlyBilling(year: number, month: number): Promise<BillingPreview> {
+  const response = await httpClient.get<ApiSuccessEnvelope<BillingPreview>>(
+    "/api/billing/run-preview",
+    { params: { year, month } }
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/billing/run — generates draft invoices for a period. */
+export async function runMonthlyBilling(year: number, month: number): Promise<BillingRunResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<BillingRunResult>>("/api/billing/run", {
+    year,
+    month,
+  });
+  return unwrap(response.data);
+}
+
+/** POST /api/billing/post-all-draft — posts every draft invoice for a period. */
+export async function postAllDraftInvoices(
+  year: number,
+  month: number
+): Promise<{ posted: number }> {
+  const response = await httpClient.post<ApiSuccessEnvelope<{ posted: number }>>(
+    "/api/billing/post-all-draft",
+    { year, month }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/billing/runs — the billing run history, newest first. */
+export async function listBillingRuns(): Promise<BillingRunRecord[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<{ items: BillingRunRecord[] }>>(
+    "/api/billing/runs"
+  );
+  return unwrap(response.data).items;
+}
+
+/** POST /api/billing/apply-late-fees — charges a late fee to overdue invoices. */
+export async function applyLateFees(lateFeeCentavos?: number): Promise<{
+  invoicesCharged: number;
+  lateFeeCentavos: number;
+}> {
+  const response = await httpClient.post<
+    ApiSuccessEnvelope<{ invoicesCharged: number; lateFeeCentavos: number }>
+  >("/api/billing/apply-late-fees", { lateFeeCentavos });
+  return unwrap(response.data);
+}
+
+/** GET /api/invoices — invoices filtered by status, period, or subscriber. */
+export async function listInvoices(filters: ListInvoiceFilters = {}): Promise<InvoiceSummary[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<{ items: InvoiceSummary[] }>>(
+    "/api/invoices",
+    { params: filters }
+  );
+  return unwrap(response.data).items;
+}
+
+/** GET /api/invoices/:id — one invoice with its line items. */
+export async function getInvoice(id: string): Promise<InvoiceDetail> {
+  const response = await httpClient.get<ApiSuccessEnvelope<InvoiceDetail>>(`/api/invoices/${id}`);
+  return unwrap(response.data);
+}
+
+/** POST /api/invoices/reconnection-fee — generates a reconnection fee invoice. */
+export async function createReconnectionFeeInvoice(input: {
+  serviceAccountId: string;
+  reason?: string;
+}): Promise<{ invoice: InvoiceDetail; amountCentavos: number }> {
+  const response = await httpClient.post<
+    ApiSuccessEnvelope<{ invoice: InvoiceDetail; amountCentavos: number }>
+  >("/api/invoices/reconnection-fee", input);
+  return unwrap(response.data);
+}
+
+/** POST /api/invoices/:id/post — posts one draft invoice, creating a ledger debit. */
+export async function postInvoice(id: string): Promise<InvoiceDetail> {
+  const response = await httpClient.post<ApiSuccessEnvelope<InvoiceDetail>>(
+    `/api/invoices/${id}/post`
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/invoices/:id/void — voids an invoice, creating a ledger credit. */
+export async function voidInvoice(id: string, reason: string): Promise<InvoiceDetail> {
+  const response = await httpClient.post<ApiSuccessEnvelope<InvoiceDetail>>(
+    `/api/invoices/${id}/void`,
+    { reason }
   );
   return unwrap(response.data);
 }
