@@ -1,17 +1,25 @@
 import type { ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 
+import { roleHasPermission } from "@bcis/shared";
 import { ApiStatusBadge } from "../components/ApiStatusBadge";
 import { useApiHealth } from "../hooks/useApiHealth";
+import { logout as requestServerLogout } from "../lib/api-client";
 import { API_BASE_URL } from "../lib/constants";
 import { useApiStatusStore } from "../stores/api-status.store";
+import { useAuthStore } from "../stores/auth.store";
 
 /**
- * Phase 1 home screen.
- * Its only job is to prove the Electron client reaches the Fastify API
- * and that the API reaches PostgreSQL.
+ * Authenticated dashboard.
+ * Shows who is signed in, links to Admin-only screens when permitted,
+ * and (from Phase 1) proves the client reaches the API and the database.
  */
 export function HomePage(): ReactNode {
   useApiHealth();
+  const navigate = useNavigate();
+
+  const user = useAuthStore((state) => state.user);
+  const clearSession = useAuthStore((state) => state.logout);
 
   const isReachable = useApiStatusStore((state) => state.isReachable);
   const serviceVersion = useApiStatusStore((state) => state.serviceVersion);
@@ -19,13 +27,43 @@ export function HomePage(): ReactNode {
   const databaseErrorMessage = useApiStatusStore((state) => state.databaseErrorMessage);
   const lastCheckedAt = useApiStatusStore((state) => state.lastCheckedAt);
 
+  const canManageUsers = user !== null && roleHasPermission(user.role, "users:read");
+
+  async function handleLogout(): Promise<void> {
+    try {
+      await requestServerLogout();
+    } catch {
+      // Even if the server is unreachable, clear the local session so the user can leave.
+    }
+    clearSession();
+    navigate("/login", { replace: true });
+  }
+
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-6 p-8">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">BCIS Subscription Billing and Collection System</h1>
-        <p className="text-sm text-slate-600">
-          Phase 1 — project foundation. Server and client are running.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold">
+            BCIS Subscription Billing and Collection System
+          </h1>
+          <p className="text-sm text-slate-600">
+            Signed in as {user?.fullName ?? "unknown user"} ({user?.role ?? "no role"}).
+          </p>
+        </div>
+        <nav className="flex items-center gap-3 text-sm font-medium">
+          {canManageUsers && (
+            <Link to="/users" className="text-slate-800 underline">
+              User Management
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            className="text-red-700 underline"
+          >
+            Log out
+          </button>
+        </nav>
       </header>
 
       <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -59,8 +97,8 @@ export function HomePage(): ReactNode {
       </section>
 
       <p className="text-xs text-slate-500">
-        All data access goes through the Fastify API. The renderer never opens a database
-        connection of its own.
+        All data access goes through the Fastify API. The renderer never opens a database connection
+        of its own.
       </p>
     </main>
   );
