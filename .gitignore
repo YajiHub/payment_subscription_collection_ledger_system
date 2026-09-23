@@ -25,3 +25,9 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 *:Zone.Identifier
+# Harness/session state — committed config lives at .pi/settings.json and .pi/skills/
+.pi/tasks/
+.pi/npm/
+.pi/git/
+.pi/cache/
+.pi/sessions/

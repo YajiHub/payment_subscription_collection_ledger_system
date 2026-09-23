@@ -18,6 +18,7 @@ export default tseslint.config(
       "**/out/**",
       "**/build/**",
       "**/coverage/**",
+      "**/.pi/**",
       "apps/server/src/db/migrations/**",
     ],
   },
