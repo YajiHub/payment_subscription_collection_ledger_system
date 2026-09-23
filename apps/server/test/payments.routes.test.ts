@@ -570,6 +570,26 @@ describe("payment routes", () => {
     expect(items[0]).toMatchObject({ receiptNumber: "OR-2025-000001", subscriberName: "Santos, Maria" });
   });
 
+  it("keeps reversed payments in the history", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      postedSummaryRow({ status: "reversed", reversedAt: new Date(), reversedById: ADMIN_ID }),
+    ]); // a reversed payment is still returned
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/payments",
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const items = response.json().data.items;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ status: "reversed", receiptNumber: "OR-2025-000001" });
+  });
+
   it("looks a payment up by its receipt number", async () => {
     const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
 
