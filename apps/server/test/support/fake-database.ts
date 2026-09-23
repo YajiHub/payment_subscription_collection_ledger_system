@@ -44,6 +44,8 @@ function createFakeDatabase(): FakeDatabase {
     const builder = {
       from: () => builder,
       where: () => builder,
+      innerJoin: () => builder,
+      leftJoin: () => builder,
       orderBy: () => builder,
       limit: () => builder,
       offset: () => builder,
