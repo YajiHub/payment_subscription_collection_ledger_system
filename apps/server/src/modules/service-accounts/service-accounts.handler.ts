@@ -14,6 +14,7 @@ import {
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { createReconnectionFeeInvoice } from "../billing/invoices.service";
 import {
   assignCollector,
   changeServiceAccountPlan,
@@ -68,7 +69,7 @@ export async function putServiceAccountSuspended(
   return sendSuccess(reply, suspended);
 }
 
-/** PUT /api/service-accounts/:id/reconnect — restores service and reports the fee. */
+/** PUT /api/service-accounts/:id/reconnect — restores service and bills the fee. */
 export async function putServiceAccountReconnected(
   request: FastifyRequest,
   reply: FastifyReply
@@ -78,7 +79,20 @@ export async function putServiceAccountReconnected(
   const changedBy = request.user?.id ?? "";
 
   const result = await reconnectServiceAccount(id, reason, changedBy);
-  return sendSuccess(reply, result);
+
+  // The reconnection fee is charged as an invoice, so reconnecting a suspended
+  // account always produces the documented reconnection fee invoice. A plan with
+  // no fee simply produces no invoice.
+  const reconnectionFeeInvoice =
+    result.reconnectionFeeEntry.amountCentavos > 0
+      ? await createReconnectionFeeInvoice(
+          id,
+          `Reconnection fee — ${reason ?? "service restored"}`,
+          changedBy
+        )
+      : null;
+
+  return sendSuccess(reply, { ...result, reconnectionFeeInvoice });
 }
 
 /** PUT /api/service-accounts/:id/terminate — permanently ends service. */

@@ -78,6 +78,18 @@ describe.skipIf(!databaseIsReachable)("Phase 3 against real PostgreSQL", () => {
 
   afterAll(async () => {
     // Remove this suite's rows in foreign-key order. Nothing else is touched.
+    // Phase 4 rows reference the service account, so they go first.
+    await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
+      createdIds.serviceAccountIds,
+    ]);
+    await pool.query(
+      `DELETE FROM invoice_line_items WHERE invoice_id IN
+         (SELECT id FROM invoices WHERE service_account_id = ANY($1::uuid[]))`,
+      [createdIds.serviceAccountIds]
+    );
+    await pool.query("DELETE FROM invoices WHERE service_account_id = ANY($1::uuid[])", [
+      createdIds.serviceAccountIds,
+    ]);
     await pool.query("DELETE FROM service_status_history WHERE service_account_id = ANY($1::uuid[])", [
       createdIds.serviceAccountIds,
     ]);
@@ -216,6 +228,20 @@ describe.skipIf(!databaseIsReachable)("Phase 3 against real PostgreSQL", () => {
 
     // AC: reconnection produces a reconnection fee entry priced from the plan.
     expect(reconnected.reconnectionFeeEntry.amountCentavos).toBe(50000);
+
+    // AC: reconnecting a suspended account generates the reconnection fee invoice.
+    expect(reconnected.reconnectionFeeInvoice).not.toBeNull();
+    const feeInvoiceRows = await pool.query(
+      `SELECT status, invoice_type, total_amount_centavos
+         FROM invoices WHERE service_account_id = $1`,
+      [firstServiceAccount.id]
+    );
+    expect(feeInvoiceRows.rowCount).toBe(1);
+    expect(feeInvoiceRows.rows[0]).toMatchObject({
+      status: "draft",
+      invoice_type: "reconnection_fee",
+      total_amount_centavos: 50000,
+    });
 
     const afterReconnect = await pool.query(
       "SELECT status, suspension_date FROM service_accounts WHERE id = $1",

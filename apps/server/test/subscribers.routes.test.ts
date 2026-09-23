@@ -30,6 +30,7 @@ const PLAN_ID = randomUUID();
 const CABLE_PLAN_ID = randomUUID();
 const SUBSCRIBER_ID = randomUUID();
 const SERVICE_ACCOUNT_ID = randomUUID();
+const INVOICE_ID = randomUUID();
 
 /** A stored subscriber row, as the service layer would receive it back. */
 function subscriberRow(overrides: Record<string, unknown> = {}) {
@@ -478,6 +479,14 @@ describe("service account suspension and reconnection", () => {
     fakeDatabase.queueUpdateRows([
       serviceAccountRow({ status: "active", suspensionDate: null, terminationDate: null }),
     ]);
+    // Reconnecting now also raises the reconnection fee invoice (Phase 4).
+    fakeDatabase.queueInsertRows([], [{ id: INVOICE_ID }]); // history row, then invoice returning
+    fakeDatabase.queueSelectRows([
+      { id: SERVICE_ACCOUNT_ID, planName: "Fiber 25Mbps", reconnectionFeeCentavos: 50000 },
+    ]); // account joined with plan for the fee invoice
+    fakeDatabase.queueSelectRows([]); // existing invoice numbers for the period
+    fakeDatabase.queueSelectRows([{ id: INVOICE_ID, invoiceType: "reconnection_fee" }]); // reload summary
+    fakeDatabase.queueSelectRows([[]]); // reload line items
 
     const response = await server.inject({
       method: "PUT",
@@ -508,6 +517,10 @@ describe("service account suspension and reconnection", () => {
     expect(history.previousStatus).toBe("suspended");
     expect(history.newStatus).toBe("active");
     expect(history.changedBy).toBe(CLERK_ID);
+
+    // AC: reconnecting a suspended account produces the reconnection fee invoice.
+    expect(body.reconnectionFeeInvoice).not.toBeNull();
+    expect(body.reconnectionFeeInvoice.amountCentavos).toBe(50000);
   });
 
   it("rolls back a reconnection when the audit-trail insert fails", async () => {
