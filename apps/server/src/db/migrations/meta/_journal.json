@@ -15,6 +15,13 @@
       "when": 1790199589428,
       "tag": "0001_blue_dreaming_celestial",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790201170818,
+      "tag": "0002_brown_triton",
+      "breakpoints": true
     }
   ]
 }
