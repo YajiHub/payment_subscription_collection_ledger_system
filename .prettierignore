@@ -1,0 +1,7 @@
+node_modules/
+dist/
+out/
+build/
+coverage/
+pnpm-lock.yaml
+apps/server/src/db/migrations/

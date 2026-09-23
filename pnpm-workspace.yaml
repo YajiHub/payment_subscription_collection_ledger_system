@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 10 does not run dependency install scripts unless they are explicitly
+# allowed here. Electron downloads its prebuilt binary from a postinstall
+# script; esbuild verifies its native binary the same way.
+onlyBuiltDependencies:
+  - electron
+  - esbuild
