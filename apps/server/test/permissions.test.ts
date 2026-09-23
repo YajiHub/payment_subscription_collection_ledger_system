@@ -34,6 +34,12 @@ describe("role permission matrix", () => {
     expect(roleHasPermission("billing_clerk", "users:create")).toBe(false);
   });
 
+  it("lets a Billing Clerk manage plans, as Phase 3's Plan Management page requires", () => {
+    expect(roleHasPermission("billing_clerk", "plans:read")).toBe(true);
+    expect(roleHasPermission("billing_clerk", "plans:create")).toBe(true);
+    expect(roleHasPermission("billing_clerk", "plans:update")).toBe(true);
+  });
+
   it("denies a Cashier the ability to manage subscribers or invoices generation", () => {
     expect(roleHasPermission("cashier", "subscribers:create")).toBe(false);
     expect(roleHasPermission("cashier", "subscribers:update")).toBe(false);

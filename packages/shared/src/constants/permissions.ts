@@ -86,7 +86,11 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "subscribers:update",
     "subscribers:suspend",
     "subscribers:reconnect",
+    // Phase 3 §5 and §7 give the Billing Clerk the Plan Management page, so the
+    // clerk may add plans and retire them. Price changes are still a new plan.
+    "plans:create",
     "plans:read",
+    "plans:update",
     "invoices:generate",
     "invoices:read",
     "payments:read",

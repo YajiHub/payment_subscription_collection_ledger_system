@@ -103,8 +103,28 @@ describe("plan routes", () => {
     expect(inserted.createdBy).toBe(ADMIN_ID);
   });
 
-  it("refuses a plan creation from a Billing Clerk, who may only read plans", async () => {
+  it("lets a Billing Clerk create a plan, as the Plan Management page allows", async () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([]); // duplicate name check
+    fakeDatabase.queueInsertRows([planRow({ name: "Fiber 50Mbps", monthlyRateCentavos: 149900 })]);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/plans",
+      headers: authorizationHeader(token),
+      payload: newPlanPayload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    const inserted = fakeDatabase.insertedRows[0]?.values as Record<string, unknown>;
+    expect(inserted.monthlyRateCentavos).toBe(149900);
+    expect(inserted.createdBy).toBe(ADMIN_ID);
+  });
+
+  it("refuses a plan creation from a Cashier, who has no plan permission", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: ADMIN_ID });
     fakeDatabase.queueSelectRows([]); // authenticate only; authorize rejects the request
 
     const response = await server.inject({

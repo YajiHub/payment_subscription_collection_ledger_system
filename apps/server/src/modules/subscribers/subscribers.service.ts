@@ -6,7 +6,7 @@
 
 import { and, count, desc, eq, ilike, inArray, like, or, type SQL } from "drizzle-orm";
 
-import { db } from "../../db/connection";
+import { db, type DbExecutor } from "../../db/connection";
 import { serviceAccounts, subscribers } from "../../db/schema/subscribers";
 import { NotFoundError } from "../../shared/errors";
 import {
@@ -150,9 +150,7 @@ export async function listSubscribers(
     .where(where)
     .then((countRows) => countRows[0]?.value ?? 0);
 
-  const accountsBySubscriber = await loadServiceAccountsForSubscribers(
-    rows.map((row) => row.id)
-  );
+  const accountsBySubscriber = await loadServiceAccountsForSubscribers(rows.map((row) => row.id));
 
   return {
     items: rows.map((row) => ({
@@ -187,10 +185,13 @@ export async function getSubscriberById(subscriberId: string): Promise<Subscribe
 }
 
 /** Builds the next subscriber account number for today, e.g. SUB-20250124-00042. */
-async function nextSubscriberAccountNumber(today: Date): Promise<string> {
+async function nextSubscriberAccountNumber(
+  today: Date,
+  executor: DbExecutor = db
+): Promise<string> {
   const prefix = `SUB-${formatDateSegment(today)}-`;
 
-  const existingNumbers = await db
+  const existingNumbers = await executor
     .select({ accountNumber: subscribers.accountNumber })
     .from(subscribers)
     .where(like(subscribers.accountNumber, `${prefix}%`));
@@ -217,45 +218,51 @@ export interface CreateSubscriberInput {
 
 /** Creates a subscriber, and its first service account when one is supplied. */
 export async function createSubscriber(input: CreateSubscriberInput): Promise<SubscriberSummary> {
-  const accountNumber = await nextSubscriberAccountNumber(new Date());
+  // The subscriber and its first service account are written in one transaction.
+  // A household must never exist with no service to bill: if the account insert
+  // fails, the subscriber insert rolls back with it.
+  return db.transaction(async (tx) => {
+    const accountNumber = await nextSubscriberAccountNumber(new Date(), tx);
 
-  const created = await db
-    .insert(subscribers)
-    .values({
-      accountNumber,
-      firstName: input.subscriber.firstName,
-      lastName: input.subscriber.lastName,
-      middleName: input.subscriber.middleName ?? null,
-      primaryPhone: input.subscriber.primaryPhone,
-      secondaryPhone: input.subscriber.secondaryPhone ?? null,
-      emailAddress: input.subscriber.emailAddress ?? null,
-      serviceAddress: input.subscriber.serviceAddress,
-      serviceBarangay: input.subscriber.serviceBarangay,
-      serviceMunicipality: input.subscriber.serviceMunicipality,
-      serviceProvince: input.subscriber.serviceProvince,
-      internalNotes: input.subscriber.internalNotes ?? null,
-      createdBy: input.createdBy,
-    })
-    .returning(subscriberColumns)
-    .then((rows) => rows[0]);
+    const created = await tx
+      .insert(subscribers)
+      .values({
+        accountNumber,
+        firstName: input.subscriber.firstName,
+        lastName: input.subscriber.lastName,
+        middleName: input.subscriber.middleName ?? null,
+        primaryPhone: input.subscriber.primaryPhone,
+        secondaryPhone: input.subscriber.secondaryPhone ?? null,
+        emailAddress: input.subscriber.emailAddress ?? null,
+        serviceAddress: input.subscriber.serviceAddress,
+        serviceBarangay: input.subscriber.serviceBarangay,
+        serviceMunicipality: input.subscriber.serviceMunicipality,
+        serviceProvince: input.subscriber.serviceProvince,
+        internalNotes: input.subscriber.internalNotes ?? null,
+        createdBy: input.createdBy,
+      })
+      .returning(subscriberColumns)
+      .then((rows) => rows[0]);
 
-  // `.returning()` always yields the inserted row; the guard keeps types honest.
-  if (created === undefined) {
-    throw new NotFoundError("Subscriber could not be created");
-  }
+    // `.returning()` always yields the inserted row; the guard keeps types honest.
+    if (created === undefined) {
+      throw new NotFoundError("Subscriber could not be created");
+    }
 
-  const serviceAccountsCreated: ServiceAccountSummary[] = [];
+    const serviceAccountsCreated: ServiceAccountSummary[] = [];
 
-  if (input.serviceAccount !== undefined) {
-    const firstAccount = await insertServiceAccount(
-      created.id,
-      input.serviceAccount,
-      input.createdBy
-    );
-    serviceAccountsCreated.push(firstAccount);
-  }
+    if (input.serviceAccount !== undefined) {
+      const firstAccount = await insertServiceAccount(
+        created.id,
+        input.serviceAccount,
+        input.createdBy,
+        tx
+      );
+      serviceAccountsCreated.push(firstAccount);
+    }
 
-  return { ...created, serviceAccounts: serviceAccountsCreated };
+    return { ...created, serviceAccounts: serviceAccountsCreated };
+  });
 }
 
 /** Updates contact and address details. The account number never changes. */

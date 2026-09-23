@@ -7,7 +7,7 @@
 
 import { and, asc, eq } from "drizzle-orm";
 
-import { db } from "../../db/connection";
+import { db, type DbExecutor } from "../../db/connection";
 import { subscriptionPlans } from "../../db/schema/subscribers";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import type { ServiceType } from "@bcis/shared";
@@ -66,8 +66,8 @@ export async function listPlans(filters: ListPlansFilters = {}): Promise<PlanSum
 }
 
 /** Loads a single plan, or throws NotFoundError so the route returns 404. */
-export async function getPlanById(planId: string): Promise<PlanSummary> {
-  const plan = await db
+export async function getPlanById(planId: string, executor: DbExecutor = db): Promise<PlanSummary> {
+  const plan = await executor
     .select(planColumns)
     .from(subscriptionPlans)
     .where(eq(subscriptionPlans.id, planId))
@@ -85,8 +85,11 @@ export async function getPlanById(planId: string): Promise<PlanSummary> {
  * Loads a plan that may be assigned to a new service account.
  * A retired plan still exists but must not take new signups.
  */
-export async function requireAssignablePlan(planId: string): Promise<PlanSummary> {
-  const plan = await getPlanById(planId);
+export async function requireAssignablePlan(
+  planId: string,
+  executor: DbExecutor = db
+): Promise<PlanSummary> {
+  const plan = await getPlanById(planId, executor);
 
   if (!plan.isActive) {
     throw new ValidationError(`Plan "${plan.name}" is retired and cannot be assigned`);

@@ -160,11 +160,35 @@ describe("subscriber management routes", () => {
     // AC: a new account with no activation date is "pending".
     expect(accountInsert.status).toBe("pending");
     expect(accountInsert.activationDate).toBeNull();
-    expect(accountInsert.serviceAccountNumber).toMatch(/^SA-\d{8}-\d{5}$/);    expect(accountInsert.subscriberId).toBe(SUBSCRIBER_ID);
+    expect(accountInsert.serviceAccountNumber).toMatch(/^SA-\d{8}-\d{5}$/);
+    expect(accountInsert.subscriberId).toBe(SUBSCRIBER_ID);
     expect(accountInsert.createdBy).toBe(CLERK_ID);
 
     expect(response.json().data.serviceAccounts).toHaveLength(1);
     expect(response.json().data.serviceAccounts[0].status).toBe("pending");
+  });
+
+  it("rolls back the subscriber when its first service account cannot be created", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: CLERK_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([]); // subscriber numbers today
+    fakeDatabase.queueInsertRows([subscriberRow()]); // the subscriber insert succeeds
+    fakeDatabase.queueSelectRows([planRow()]); // requireAssignablePlan
+    fakeDatabase.queueSelectRows([]); // service account numbers today
+    // No service-account insert row is queued, so the account insert fails after
+    // the subscriber row was written. A household must not survive without service.
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/subscribers",
+      headers: authorizationHeader(token),
+      payload: { ...subscriberPayload, serviceAccount: { planId: PLAN_ID } },
+    });
+
+    expect(response.statusCode).toBe(404);
+    // The subscriber insert is discarded together with the failed account insert.
+    expect(fakeDatabase.insertedRows).toHaveLength(0);
   });
 
   it("creates the service account as active when an activation date is supplied", async () => {
@@ -227,7 +251,10 @@ describe("subscriber management routes", () => {
     fakeDatabase.queueSelectRows([subscriberRow()]); // the subscriber
     fakeDatabase.queueSelectRows([
       { account: serviceAccountRow(), plan: planRow() },
-      { account: serviceAccountRow({ id: randomUUID(), planId: CABLE_PLAN_ID }), plan: cablePlanRow() },
+      {
+        account: serviceAccountRow({ id: randomUUID(), planId: CABLE_PLAN_ID }),
+        plan: cablePlanRow(),
+      },
     ]);
 
     const response = await server.inject({
@@ -240,10 +267,9 @@ describe("subscriber management routes", () => {
     const body = response.json().data;
     expect(body.accountNumber).toBe("SUB-20250124-00001");
     expect(body.serviceAccounts).toHaveLength(2);
-    expect(body.serviceAccounts.map((account: { serviceType: string }) => account.serviceType)).toEqual([
-      "internet",
-      "cable_tv",
-    ]);
+    expect(
+      body.serviceAccounts.map((account: { serviceType: string }) => account.serviceType)
+    ).toEqual(["internet", "cable_tv"]);
     // AC: a Manager may read subscriber data.
     expect(UUID_PATTERN.test(body.id)).toBe(true);
   });
@@ -368,7 +394,9 @@ describe("service account suspension and reconnection", () => {
 
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([{ account: serviceAccountRow(), plan: planRow() }]); // current state
-    fakeDatabase.queueUpdateRows([serviceAccountRow({ status: "suspended", suspensionDate: "2025-01-24" })]);
+    fakeDatabase.queueUpdateRows([
+      serviceAccountRow({ status: "suspended", suspensionDate: "2025-01-24" }),
+    ]);
 
     const response = await server.inject({
       method: "PUT",
@@ -391,6 +419,30 @@ describe("service account suspension and reconnection", () => {
     expect(history.reason).toBe("Unpaid for three consecutive months");
     expect(history.changedBy).toBe(CLERK_ID);
     expect(history.serviceAccountId).toBe(SERVICE_ACCOUNT_ID);
+  });
+
+  it("rolls back a suspension when the audit-trail insert fails", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: CLERK_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([{ account: serviceAccountRow(), plan: planRow() }]); // locked state
+    fakeDatabase.queueUpdateRows([
+      serviceAccountRow({ status: "suspended", suspensionDate: "2025-01-24" }),
+    ]);
+    fakeDatabase.failNextInsert(new Error("connection reset before the audit row was written"));
+
+    const response = await server.inject({
+      method: "PUT",
+      url: `/api/service-accounts/${SERVICE_ACCOUNT_ID}/suspend`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Unpaid for three consecutive months" },
+    });
+
+    expect(response.statusCode).toBe(500);
+    // Status and history commit together: a changed status with no audit row
+    // must never be possible.
+    expect(fakeDatabase.updatedRows).toHaveLength(0);
+    expect(fakeDatabase.insertedRows).toHaveLength(0);
   });
 
   it("refuses to suspend an account that is already suspended", async () => {
@@ -418,7 +470,10 @@ describe("service account suspension and reconnection", () => {
 
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([
-      { account: serviceAccountRow({ status: "suspended", suspensionDate: "2025-01-10" }), plan: planRow() },
+      {
+        account: serviceAccountRow({ status: "suspended", suspensionDate: "2025-01-10" }),
+        plan: planRow(),
+      },
     ]);
     fakeDatabase.queueUpdateRows([
       serviceAccountRow({ status: "active", suspensionDate: null, terminationDate: null }),
@@ -453,6 +508,33 @@ describe("service account suspension and reconnection", () => {
     expect(history.previousStatus).toBe("suspended");
     expect(history.newStatus).toBe("active");
     expect(history.changedBy).toBe(CLERK_ID);
+  });
+
+  it("rolls back a reconnection when the audit-trail insert fails", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: CLERK_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        account: serviceAccountRow({ status: "suspended", suspensionDate: "2025-01-10" }),
+        plan: planRow(),
+      },
+    ]);
+    fakeDatabase.queueUpdateRows([
+      serviceAccountRow({ status: "active", suspensionDate: null, terminationDate: null }),
+    ]);
+    fakeDatabase.failNextInsert(new Error("connection reset before the audit row was written"));
+
+    const response = await server.inject({
+      method: "PUT",
+      url: `/api/service-accounts/${SERVICE_ACCOUNT_ID}/reconnect`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Balance settled in full" },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(fakeDatabase.updatedRows).toHaveLength(0);
+    expect(fakeDatabase.insertedRows).toHaveLength(0);
   });
 
   it("refuses to reconnect an account that is not suspended", async () => {
@@ -522,6 +604,28 @@ describe("service account suspension and reconnection", () => {
     const history = fakeDatabase.insertedRows[0]?.values as Record<string, unknown>;
     expect(history.newStatus).toBe("terminated");
     expect(history.reason).toBe("Subscriber moved to another province");
+  });
+
+  it("rolls back a termination when the audit-trail insert fails", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: CLERK_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([{ account: serviceAccountRow(), plan: planRow() }]);
+    fakeDatabase.queueUpdateRows([
+      serviceAccountRow({ status: "terminated", terminationDate: "2025-01-24" }),
+    ]);
+    fakeDatabase.failNextInsert(new Error("connection reset before the audit row was written"));
+
+    const response = await server.inject({
+      method: "PUT",
+      url: `/api/service-accounts/${SERVICE_ACCOUNT_ID}/terminate`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Subscriber moved to another province" },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(fakeDatabase.updatedRows).toHaveLength(0);
+    expect(fakeDatabase.insertedRows).toHaveLength(0);
   });
 
   it("returns the service account with its status history", async () => {

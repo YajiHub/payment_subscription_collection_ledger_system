@@ -8,7 +8,7 @@
 
 import { desc, eq, inArray, like } from "drizzle-orm";
 
-import { db } from "../../db/connection";
+import { db, type DbExecutor } from "../../db/connection";
 import {
   serviceAccounts,
   serviceStatusHistory,
@@ -116,15 +116,21 @@ export function toServiceAccountSummary(
 
 /** Loads a service account together with its plan, or throws NotFoundError. */
 async function requireServiceAccountWithPlan(
-  serviceAccountId: string
+  serviceAccountId: string,
+  executor: DbExecutor = db,
+  options: { forUpdate?: boolean } = {}
 ): Promise<{ account: ServiceAccountRow; plan: PlanSnapshot }> {
-  const row = await db
+  const query = executor
     .select({ account: serviceAccountColumns, plan: planColumns })
     .from(serviceAccounts)
     .innerJoin(subscriptionPlans, eq(serviceAccounts.planId, subscriptionPlans.id))
     .where(eq(serviceAccounts.id, serviceAccountId))
-    .limit(1)
-    .then((rows) => rows[0]);
+    .limit(1);
+
+  // Inside a status-change transaction the row is locked so a concurrent
+  // suspend/reconnect cannot slip between the guard and the update.
+  const rows = options.forUpdate === true ? await query.for("update") : await query;
+  const row = rows[0];
 
   if (row === undefined) {
     throw new NotFoundError("Service account not found");
@@ -137,8 +143,11 @@ async function requireServiceAccountWithPlan(
  * Rejects a collector assignment that points at the wrong kind of user.
  * Field collection is a role, not a label: only an active Collector may be assigned.
  */
-export async function requireAssignableCollector(collectorId: string): Promise<void> {
-  const collector = await db
+export async function requireAssignableCollector(
+  collectorId: string,
+  executor: DbExecutor = db
+): Promise<void> {
+  const collector = await executor
     .select({ role: users.role, isActive: users.isActive })
     .from(users)
     .where(eq(users.id, collectorId))
@@ -159,10 +168,10 @@ export async function requireAssignableCollector(collectorId: string): Promise<v
 }
 
 /** Builds the next service account number for today, e.g. SA-20250124-00042. */
-async function nextServiceAccountNumber(today: Date): Promise<string> {
+async function nextServiceAccountNumber(today: Date, executor: DbExecutor = db): Promise<string> {
   const prefix = `SA-${formatDateSegment(today)}-`;
 
-  const existingNumbers = await db
+  const existingNumbers = await executor
     .select({ serviceAccountNumber: serviceAccounts.serviceAccountNumber })
     .from(serviceAccounts)
     .where(like(serviceAccounts.serviceAccountNumber, `${prefix}%`));
@@ -192,18 +201,19 @@ export interface CreateServiceAccountInput {
 export async function insertServiceAccount(
   subscriberId: string,
   input: CreateServiceAccountInput,
-  createdBy: string
+  createdBy: string,
+  executor: DbExecutor = db
 ): Promise<ServiceAccountSummary> {
-  const plan = await requireAssignablePlan(input.planId);
+  const plan = await requireAssignablePlan(input.planId, executor);
 
   if (input.assignedCollectorId !== undefined) {
-    await requireAssignableCollector(input.assignedCollectorId);
+    await requireAssignableCollector(input.assignedCollectorId, executor);
   }
 
-  const serviceAccountNumber = await nextServiceAccountNumber(new Date());
+  const serviceAccountNumber = await nextServiceAccountNumber(new Date(), executor);
   const activationDate = input.activationDate ?? null;
 
-  const inserted = await db
+  const inserted = await executor
     .insert(serviceAccounts)
     .values({
       serviceAccountNumber,
@@ -300,8 +310,8 @@ interface StatusChangeRecord {
 }
 
 /** Writes one row to the audit trail. Every status change goes through here. */
-async function recordStatusChange(change: StatusChangeRecord): Promise<void> {
-  await db.insert(serviceStatusHistory).values(change);
+async function recordStatusChange(executor: DbExecutor, change: StatusChangeRecord): Promise<void> {
+  await executor.insert(serviceStatusHistory).values(change);
 }
 
 /**
@@ -314,44 +324,50 @@ export async function suspendServiceAccount(
   reason: string,
   changedBy: string
 ): Promise<ServiceAccountSummary> {
-  const { account, plan } = await requireServiceAccountWithPlan(serviceAccountId);
+  // The status update and its audit row commit together, so the account can
+  // never end up suspended with no record of who did it or why.
+  return db.transaction(async (tx) => {
+    const { account, plan } = await requireServiceAccountWithPlan(serviceAccountId, tx, {
+      forUpdate: true,
+    });
 
-  if (account.status === "terminated") {
-    throw new ConflictError("A terminated service account cannot be suspended");
-  }
+    if (account.status === "terminated") {
+      throw new ConflictError("A terminated service account cannot be suspended");
+    }
 
-  if (account.status === "suspended") {
-    throw new ConflictError("This service account is already suspended");
-  }
+    if (account.status === "suspended") {
+      throw new ConflictError("This service account is already suspended");
+    }
 
-  if (account.status === "pending") {
-    throw new ConflictError("A pending service account has no service to suspend");
-  }
+    if (account.status === "pending") {
+      throw new ConflictError("A pending service account has no service to suspend");
+    }
 
-  const updated = await db
-    .update(serviceAccounts)
-    .set({
-      status: "suspended",
-      suspensionDate: formatDateOnly(new Date()),
-      updatedAt: new Date(),
-    })
-    .where(eq(serviceAccounts.id, serviceAccountId))
-    .returning(serviceAccountColumns)
-    .then((rows) => rows[0]);
+    const updated = await tx
+      .update(serviceAccounts)
+      .set({
+        status: "suspended",
+        suspensionDate: formatDateOnly(new Date()),
+        updatedAt: new Date(),
+      })
+      .where(eq(serviceAccounts.id, serviceAccountId))
+      .returning(serviceAccountColumns)
+      .then((rows) => rows[0]);
 
-  if (updated === undefined) {
-    throw new NotFoundError("Service account not found");
-  }
+    if (updated === undefined) {
+      throw new NotFoundError("Service account not found");
+    }
 
-  await recordStatusChange({
-    serviceAccountId,
-    previousStatus: account.status,
-    newStatus: "suspended",
-    reason,
-    changedBy,
+    await recordStatusChange(tx, {
+      serviceAccountId,
+      previousStatus: account.status,
+      newStatus: "suspended",
+      reason,
+      changedBy,
+    });
+
+    return toServiceAccountSummary(updated, plan);
   });
-
-  return toServiceAccountSummary(updated, plan);
 }
 
 export interface ReconnectionFeeEntry {
@@ -378,52 +394,58 @@ export async function reconnectServiceAccount(
   reason: string | undefined,
   changedBy: string
 ): Promise<ReconnectServiceAccountResult> {
-  const { account, plan } = await requireServiceAccountWithPlan(serviceAccountId);
+  // The re-activation and its audit row are one transaction, so a failure
+  // cannot leave the account active with the move unrecorded.
+  return db.transaction(async (tx) => {
+    const { account, plan } = await requireServiceAccountWithPlan(serviceAccountId, tx, {
+      forUpdate: true,
+    });
 
-  if (account.status === "terminated") {
-    throw new ConflictError("A terminated service account cannot be reconnected");
-  }
+    if (account.status === "terminated") {
+      throw new ConflictError("A terminated service account cannot be reconnected");
+    }
 
-  if (account.status !== "suspended") {
-    throw new ConflictError("Only a suspended service account can be reconnected");
-  }
+    if (account.status !== "suspended") {
+      throw new ConflictError("Only a suspended service account can be reconnected");
+    }
 
-  const updated = await db
-    .update(serviceAccounts)
-    .set({
-      status: "active",
-      suspensionDate: null,
-      terminationDate: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(serviceAccounts.id, serviceAccountId))
-    .returning(serviceAccountColumns)
-    .then((rows) => rows[0]);
+    const updated = await tx
+      .update(serviceAccounts)
+      .set({
+        status: "active",
+        suspensionDate: null,
+        terminationDate: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(serviceAccounts.id, serviceAccountId))
+      .returning(serviceAccountColumns)
+      .then((rows) => rows[0]);
 
-  if (updated === undefined) {
-    throw new NotFoundError("Service account not found");
-  }
+    if (updated === undefined) {
+      throw new NotFoundError("Service account not found");
+    }
 
-  const reconnectionFeeCentavos = plan.reconnectionFeeCentavos;
+    const reconnectionFeeCentavos = plan.reconnectionFeeCentavos;
 
-  await recordStatusChange({
-    serviceAccountId,
-    previousStatus: "suspended",
-    newStatus: "active",
-    reason:
-      reason ?? `Reconnected — reconnection fee of ${reconnectionFeeCentavos} centavos applies`,
-    changedBy,
-  });
-
-  return {
-    serviceAccount: toServiceAccountSummary(updated, plan),
-    reconnectionFeeEntry: {
+    await recordStatusChange(tx, {
       serviceAccountId,
-      planId: plan.id,
-      amountCentavos: reconnectionFeeCentavos,
-      description: `Reconnection fee — ${plan.name}`,
-    },
-  };
+      previousStatus: "suspended",
+      newStatus: "active",
+      reason:
+        reason ?? `Reconnected — reconnection fee of ${reconnectionFeeCentavos} centavos applies`,
+      changedBy,
+    });
+
+    return {
+      serviceAccount: toServiceAccountSummary(updated, plan),
+      reconnectionFeeEntry: {
+        serviceAccountId,
+        planId: plan.id,
+        amountCentavos: reconnectionFeeCentavos,
+        description: `Reconnection fee — ${plan.name}`,
+      },
+    };
+  });
 }
 
 /**
@@ -435,36 +457,42 @@ export async function terminateServiceAccount(
   reason: string,
   changedBy: string
 ): Promise<ServiceAccountSummary> {
-  const { account, plan } = await requireServiceAccountWithPlan(serviceAccountId);
+  // Termination and its audit row commit together; a terminated account is
+  // never reactivated, so the history row is the only record of the decision.
+  return db.transaction(async (tx) => {
+    const { account, plan } = await requireServiceAccountWithPlan(serviceAccountId, tx, {
+      forUpdate: true,
+    });
 
-  if (account.status === "terminated") {
-    throw new ConflictError("This service account is already terminated");
-  }
+    if (account.status === "terminated") {
+      throw new ConflictError("This service account is already terminated");
+    }
 
-  const updated = await db
-    .update(serviceAccounts)
-    .set({
-      status: "terminated",
-      terminationDate: formatDateOnly(new Date()),
-      updatedAt: new Date(),
-    })
-    .where(eq(serviceAccounts.id, serviceAccountId))
-    .returning(serviceAccountColumns)
-    .then((rows) => rows[0]);
+    const updated = await tx
+      .update(serviceAccounts)
+      .set({
+        status: "terminated",
+        terminationDate: formatDateOnly(new Date()),
+        updatedAt: new Date(),
+      })
+      .where(eq(serviceAccounts.id, serviceAccountId))
+      .returning(serviceAccountColumns)
+      .then((rows) => rows[0]);
 
-  if (updated === undefined) {
-    throw new NotFoundError("Service account not found");
-  }
+    if (updated === undefined) {
+      throw new NotFoundError("Service account not found");
+    }
 
-  await recordStatusChange({
-    serviceAccountId,
-    previousStatus: account.status,
-    newStatus: "terminated",
-    reason,
-    changedBy,
+    await recordStatusChange(tx, {
+      serviceAccountId,
+      previousStatus: account.status,
+      newStatus: "terminated",
+      reason,
+      changedBy,
+    });
+
+    return toServiceAccountSummary(updated, plan);
   });
-
-  return toServiceAccountSummary(updated, plan);
 }
 
 export interface PlanChangeResult {

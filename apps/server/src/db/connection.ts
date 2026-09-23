@@ -19,6 +19,16 @@ export const db = drizzle(pool, {
   logger: config.NODE_ENV === "development", // logs SQL in dev, silent in production
 });
 
+/**
+ * The connection handle, or a handle inside a transaction.
+ *
+ * Both expose the same query builder, so a service function can accept either
+ * one. Passing `db` runs the statements as they are; passing the `tx` from
+ * `db.transaction(...)` binds them to that transaction so they commit or roll
+ * back together.
+ */
+export type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 export interface DatabaseHealthResult {
   isReachable: boolean;
   latencyMs: number;
