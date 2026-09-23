@@ -112,6 +112,9 @@ function createFakeDatabase(): FakeDatabase {
       select: () => makeSelectBuilder(),
       insert: (table: unknown) => makeInsertBuilder(table, records),
       update: (table: unknown) => makeUpdateBuilder(table, records),
+      // Advisory locks and other raw statements are accepted and ignored. Receipt
+      // sequence reads still come through `select` above, so tests stay honest.
+      execute: async () => ({ rows: [] }),
     };
   }
 
