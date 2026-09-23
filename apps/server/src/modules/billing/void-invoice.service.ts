@@ -31,6 +31,7 @@ export async function voidInvoice(
         serviceAccountId: invoices.serviceAccountId,
         status: invoices.status,
         totalAmountCentavos: invoices.totalAmountCentavos,
+        remainingBalanceCentavos: invoices.remainingBalanceCentavos,
         billingPeriodYear: invoices.billingPeriodYear,
         billingPeriodMonth: invoices.billingPeriodMonth,
       })

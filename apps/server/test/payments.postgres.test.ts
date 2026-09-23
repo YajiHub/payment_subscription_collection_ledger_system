@@ -15,6 +15,7 @@ import type { FastifyInstance } from "fastify";
 
 import { buildServer } from "../src/index.ts";
 import { closeDatabaseConnection, pool } from "../src/db/connection";
+import { generateInvoiceForCandidate } from "../src/modules/billing/monthly-billing.service.ts";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 
 /** A valid bcrypt hash. The value is never checked in this test — only its shape. */
@@ -131,6 +132,9 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
     await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
       created.serviceAccountIds,
     ]);
+    await pool.query("DELETE FROM invoice_line_items WHERE invoice_id = ANY($1::uuid[])", [
+      created.invoiceIds,
+    ]);
     await pool.query("DELETE FROM invoices WHERE id = ANY($1::uuid[])", [created.invoiceIds]);
     await pool.query("DELETE FROM service_accounts WHERE id = ANY($1::uuid[])", [
       created.serviceAccountIds,
@@ -241,6 +245,109 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
 
     // The payment credits and the reversal debit cancel exactly.
     expect(await ledgerNetCentavos()).toBe(0);
+  });
+
+  it("applies an advance credit to the next generated monthly invoice", async () => {
+    const { token } = signTestToken({ role: "admin", sub: adminId });
+    const headers = authorizationHeader(token);
+
+    // A fresh, debt-free account so the whole payment becomes advance credit.
+    const freshPlanId = randomUUID();
+    await pool.query(
+      `INSERT INTO subscription_plans
+         (id, name, service_type, speed_mbps, monthly_rate_centavos, reconnection_fee_centavos, is_active, created_by)
+       VALUES ($1, $2, 'internet', 25, 99900, 50000, true, $3)`,
+      [freshPlanId, `Advance Credit Fiber ${freshPlanId.slice(0, 8)}`, adminId]
+    );
+    created.planIds.push(freshPlanId);
+
+    const freshSubscriberId = randomUUID();
+    await pool.query(
+      `INSERT INTO subscribers
+         (id, account_number, first_name, last_name, primary_phone, service_address,
+          service_barangay, service_municipality, service_province, created_by)
+       VALUES ($1, $2, 'Nestor', 'Overpaid', '09170000001', '2 Test Street',
+               'Poblacion', 'Testville', 'Testprovince', $3)`,
+      [freshSubscriberId, `SUB-${randomUUID().slice(0, 8)}`, adminId]
+    );
+    created.subscriberIds.push(freshSubscriberId);
+
+    const freshAccountId = randomUUID();
+    await pool.query(
+      `INSERT INTO service_accounts
+         (id, service_account_number, subscriber_id, plan_id, status, activation_date, created_by)
+       VALUES ($1, $2, $3, $4, 'active', '2025-01-01', $5)`,
+      [freshAccountId, `SA-${randomUUID().slice(0, 8)}`, freshSubscriberId, freshPlanId, adminId]
+    );
+    created.serviceAccountIds.push(freshAccountId);
+
+    // Overpay by 300.00 with nothing owed: the payment is all advance credit.
+    const postResponse = await server.inject({
+      method: "POST",
+      url: "/api/payments",
+      headers,
+      payload: {
+        serviceAccountId: freshAccountId,
+        paymentMethod: "cash",
+        amountCentavos: 30000,
+        paymentDate: "2031-07-01",
+      },
+    });
+    expect(postResponse.statusCode).toBe(201);
+    expect(postResponse.json().data.advanceCreditCentavos).toBe(30000);
+
+    // The next billing run must consume the credit on the new invoice.
+    const wasGenerated = await generateInvoiceForCandidate(
+      {
+        serviceAccountId: freshAccountId,
+        planName: `Advance Credit Fiber ${freshPlanId.slice(0, 8)}`,
+        monthlyRateCentavos: 99900,
+      },
+      2031,
+      7,
+      adminId
+    );
+    expect(wasGenerated).toBe(true);
+
+    const invoiceResult = await pool.query(
+      `SELECT id, status, total_amount_centavos, paid_amount_centavos, remaining_balance_centavos
+         FROM invoices
+        WHERE service_account_id = $1 AND billing_period_year = 2031 AND billing_period_month = 7`,
+      [freshAccountId]
+    );
+    expect(invoiceResult.rowCount).toBe(1);
+    const generatedInvoice = invoiceResult.rows[0];
+    created.invoiceIds.push(generatedInvoice.id);
+    expect(generatedInvoice).toMatchObject({
+      status: "draft",
+      total_amount_centavos: 99900,
+      paid_amount_centavos: 30000,
+      remaining_balance_centavos: 69900,
+    });
+
+    const allocationResult = await pool.query(
+      "SELECT payment_id, allocated_amount_centavos FROM payment_allocations WHERE invoice_id = $1",
+      [generatedInvoice.id]
+    );
+    expect(allocationResult.rowCount).toBe(1);
+    expect(allocationResult.rows[0]).toMatchObject({ allocated_amount_centavos: 30000 });
+
+    const appliedEntries = await pool.query(
+      "SELECT entry_type, amount_centavos FROM ledger_entries WHERE service_account_id = $1 AND entry_type = 'advance_credit_applied'",
+      [freshAccountId]
+    );
+    expect(appliedEntries.rows).toEqual([
+      { entry_type: "advance_credit_applied", amount_centavos: 30000 },
+    ]);
+
+    // Credit consumed, invoice debt not yet posted: the net ledger balance is zero.
+    const netResult = await pool.query(
+      `SELECT coalesce(sum(case when entry_type in ('invoice_posted','late_fee','manual_debit','payment_reversal','advance_credit_applied')
+          then amount_centavos else -amount_centavos end), 0)::int AS net
+         FROM ledger_entries WHERE service_account_id = $1`,
+      [freshAccountId]
+    );
+    expect(netResult.rows[0].net).toBe(0);
   });
 
   it("rejects a duplicate GCash reference number with a 409", async () => {

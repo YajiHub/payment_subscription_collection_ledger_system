@@ -23,6 +23,7 @@ vi.mock("../src/db/connection", async () => {
 import { buildServer } from "../src/index.ts";
 import { billingRuns, invoiceLineItems, invoices } from "../src/db/schema/billing";
 import { ledgerEntries } from "../src/db/schema/ledger";
+import { paymentAllocations } from "../src/db/schema/payments";
 import { fakeDatabase, type RecordedInsert } from "./support/fake-database";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 
@@ -30,6 +31,7 @@ const ADMIN_ID = randomUUID();
 const SERVICE_ACCOUNT_ID = randomUUID();
 const SUBSCRIBER_ID = randomUUID();
 const INVOICE_ID = randomUUID();
+const ADVANCE_PAYMENT_ID = randomUUID();
 
 function monthlyBillingCandidate(overrides: Record<string, unknown> = {}) {
   return {
@@ -109,6 +111,7 @@ describe("billing and invoice routes", () => {
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice for the period
     fakeDatabase.queueSelectRows([]); // existing invoice numbers for the period
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance: no credit to apply
     fakeDatabase.queueInsertRows([{ id: INVOICE_ID }]); // invoice insert ... returning
     fakeDatabase.queueInsertRows([]); // line item insert
     fakeDatabase.queueInsertRows([]); // billing run insert
@@ -130,6 +133,7 @@ describe("billing and invoice routes", () => {
     const invoiceValues = createdInvoices[0]?.values as Record<string, unknown>;
     expect(invoiceValues.status).toBe("draft");
     expect(invoiceValues.totalAmountCentavos).toBe(99900);
+    expect(invoiceValues.remainingBalanceCentavos).toBe(99900);
     expect(invoiceValues.invoiceNumber).toBe("INV-2025-01-000001");
 
     const createdLineItems = insertedInto(invoiceLineItems);
@@ -138,6 +142,137 @@ describe("billing and invoice routes", () => {
     // A draft is not a debt yet: nothing may reach the ledger during generation.
     expect(insertedInto(ledgerEntries)).toHaveLength(0);
     expect(insertedInto(billingRuns)).toHaveLength(1);
+  });
+
+  it("applies an account's advance credit to the newly generated invoice", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
+    fakeDatabase.queueSelectRows([]); // lock the account row
+    fakeDatabase.queueSelectRows([]); // no existing invoice for the period
+    fakeDatabase.queueSelectRows([]); // existing invoice numbers for the period
+    fakeDatabase.queueSelectRows([{ balanceCentavos: -30000 }]); // ledger balance: 300.00 credit held
+    fakeDatabase.queueSelectRows([
+      { paymentId: ADVANCE_PAYMENT_ID, amountCentavos: 30000 },
+    ]); // the advance payment that created the credit
+    fakeDatabase.queueSelectRows([{ balanceCentavos: -30000 }]); // balance when the application is recorded
+    fakeDatabase.queueInsertRows([{ id: INVOICE_ID }]); // invoice insert
+    fakeDatabase.queueInsertRows([]); // line item insert
+    fakeDatabase.queueInsertRows([]); // payment allocation insert
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
+    fakeDatabase.queueInsertRows([]); // billing run insert
+    fakeDatabase.queueUpdateRows([]); // invoice paid/remaining update
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/run",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(response.statusCode).toBe(201);
+
+    // The new invoice is still a draft, but 300.00 of it is already covered.
+    const invoiceValues = insertedInto(invoices)[0]?.values as Record<string, unknown>;
+    expect(invoiceValues.status).toBe("draft");
+    expect(invoiceValues.totalAmountCentavos).toBe(99900);
+
+    // The credit is attributed to the advance payment that funded it.
+    const allocationValues = insertedInto(paymentAllocations)[0]?.values as Record<
+      string,
+      unknown
+    >;
+    expect(allocationValues).toMatchObject({
+      paymentId: ADVANCE_PAYMENT_ID,
+      invoiceId: INVOICE_ID,
+      allocatedAmountCentavos: 30000,
+    });
+
+    // And an advance_credit_applied DEBIT cancels the credit it consumed.
+    const ledgerWrites = insertedInto(ledgerEntries);
+    expect(ledgerWrites).toHaveLength(1);
+    expect(ledgerWrites[0]?.values).toMatchObject({
+      entryType: "advance_credit_applied",
+      amountCentavos: 30000,
+      runningBalanceCentavos: 0,
+    });
+
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({
+      paidAmountCentavos: 30000,
+      remainingBalanceCentavos: 69900,
+    });
+  });
+
+  it("posts a credit-reduced draft for its remaining balance only", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "draft",
+        totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 69900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update
+    fakeDatabase.queueUpdateRows([]); // status -> posted
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // current ledger balance
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "posted" })]); // reload summary
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/post`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    // Only the still-owed part becomes a new debt.
+    const ledgerValues = insertedInto(ledgerEntries)[0]?.values as Record<string, unknown>;
+    expect(ledgerValues.entryType).toBe("invoice_posted");
+    expect(ledgerValues.amountCentavos).toBe(69900);
+    expect(ledgerValues.runningBalanceCentavos).toBe(69900);
+  });
+
+  it("posts a fully credit-covered draft as paid without a new ledger debit", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "draft",
+        totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 0,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update
+    fakeDatabase.queueUpdateRows([]); // status -> paid
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "paid" })]); // reload summary
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/post`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.status).toBe("paid");
+
+    // Nothing new is owed, so no invoice_posted debit is written.
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "paid" });
   });
 
   it("does not create a duplicate when the billing job runs twice for the same month", async () => {
@@ -197,6 +332,7 @@ describe("billing and invoice routes", () => {
         serviceAccountId: SERVICE_ACCOUNT_ID,
         status: "draft",
         totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 99900,
         billingPeriodYear: 2025,
         billingPeriodMonth: 1,
       },
@@ -238,6 +374,7 @@ describe("billing and invoice routes", () => {
         serviceAccountId: SERVICE_ACCOUNT_ID,
         status: "posted",
         totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 99900,
         billingPeriodYear: 2025,
         billingPeriodMonth: 1,
       },
@@ -281,6 +418,7 @@ describe("billing and invoice routes", () => {
         serviceAccountId: SERVICE_ACCOUNT_ID,
         status: "paid",
         totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 0,
         billingPeriodYear: 2025,
         billingPeriodMonth: 1,
       },
@@ -469,6 +607,7 @@ describe("billing and invoice routes", () => {
       },
     ]); // account joined with its plan
     fakeDatabase.queueSelectRows([]); // existing invoice numbers
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance: no credit to apply
     fakeDatabase.queueInsertRows([{ id: INVOICE_ID }]); // invoice insert
     fakeDatabase.queueInsertRows([]); // line item insert
     fakeDatabase.queueSelectRows([

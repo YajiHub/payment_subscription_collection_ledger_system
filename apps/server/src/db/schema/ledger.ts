@@ -31,10 +31,14 @@ export const ledgerEntryTypeEnum = pgEnum("ledger_entry_type", [
   "payment_received", // cash or GCash payment
   "invoice_void", // invoice cancelled — removes the debt
   "advance_credit", // payment exceeded invoices — credit for future use
-  "advance_credit_applied", // advance credit consumed by a new invoice
+  "advance_credit_applied", // consumes an advance credit applied to a new invoice
   "manual_credit", // manual credit by an admin (with justification)
   "write_off", // bad debt written off (creates a zero balance but is documented)
 ]);
+
+// `advance_credit_applied` is listed with the credits above (the enum order is kept
+// stable so no migration is regenerated), but it is a DEBIT: applying an advance
+// credit consumes it, shrinking the credit the subscriber still holds.
 
 /** Debit entry types. Every other type is a credit. */
 export const DEBIT_ENTRY_TYPES = [
@@ -42,6 +46,7 @@ export const DEBIT_ENTRY_TYPES = [
   "late_fee",
   "manual_debit",
   "payment_reversal",
+  "advance_credit_applied",
 ] as const;
 
 export const ledgerEntries = pgTable("ledger_entries", {

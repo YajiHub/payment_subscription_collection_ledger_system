@@ -14,6 +14,7 @@ import { formatDateOnly } from "../../shared/date";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { buildReconnectionFeeLineItem } from "./invoice-calculations";
 import { allocateNextInvoiceNumber } from "./invoice-number.service";
+import { applyAdvanceCreditToInvoice } from "./advance-credit.service";
 import { recordInvoicePosted } from "../ledger/ledger.service";
 
 export interface InvoiceSummary {
@@ -227,6 +228,7 @@ export async function postInvoiceForId(
         serviceAccountId: invoices.serviceAccountId,
         status: invoices.status,
         totalAmountCentavos: invoices.totalAmountCentavos,
+        remainingBalanceCentavos: invoices.remainingBalanceCentavos,
         billingPeriodYear: invoices.billingPeriodYear,
         billingPeriodMonth: invoices.billingPeriodMonth,
       })
@@ -248,9 +250,13 @@ export async function postInvoiceForId(
       throw new ConflictError("Only a draft invoice can be posted");
     }
 
+    // Advance credit may already have covered part (or all) of this draft, so the
+    // posted status reflects what is still owed.
+    const postedStatus = invoice.remainingBalanceCentavos === 0 ? "paid" : "posted";
+
     await tx
       .update(invoices)
-      .set({ status: "posted", postedAt: new Date(), postedBy: postedByUserId })
+      .set({ status: postedStatus, postedAt: new Date(), postedBy: postedByUserId })
       .where(eq(invoices.id, invoiceId));
 
     await recordInvoicePosted(tx, invoice, postedByUserId);
@@ -299,15 +305,12 @@ export async function createReconnectionFeeInvoice(
 
     const today = new Date();
     const lineItem = buildReconnectionFeeLineItem(account.planName, account.reconnectionFeeCentavos);
+    const invoiceNumber = await allocateNextInvoiceNumber(tx, today.getFullYear(), today.getMonth() + 1);
 
     const insertedInvoice = await tx
       .insert(invoices)
       .values({
-        invoiceNumber: await allocateNextInvoiceNumber(
-          tx,
-          today.getFullYear(),
-          today.getMonth() + 1
-        ),
+        invoiceNumber,
         serviceAccountId,
         invoiceType: "reconnection_fee",
         status: "draft",
@@ -334,6 +337,18 @@ export async function createReconnectionFeeInvoice(
       unitAmountCentavos: lineItem.unitAmountCentavos,
       totalAmountCentavos: lineItem.totalAmountCentavos,
     });
+
+    // A reconnection fee is a fresh invoice too, so any advance credit pays it down.
+    await applyAdvanceCreditToInvoice(
+      tx,
+      {
+        id: insertedInvoice.id,
+        invoiceNumber,
+        serviceAccountId,
+        totalAmountCentavos: lineItem.totalAmountCentavos,
+      },
+      createdByUserId
+    );
 
     return {
       invoice: await loadInvoiceDetail(tx, insertedInvoice.id),

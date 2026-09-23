@@ -7,7 +7,7 @@
 // Phase 4 posts invoices (debit) and voids them (credit). Phase 5 adds payments,
 // and Phase 6 builds the Statement of Account on top of this table.
 
-import { eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 import type { DbExecutor } from "../../db/connection";
 import { DEBIT_ENTRY_TYPES, ledgerEntries } from "../../db/schema/ledger";
@@ -20,6 +20,10 @@ export interface InvoiceForLedger {
   invoiceNumber: string;
   serviceAccountId: string;
   totalAmountCentavos: number;
+  // What the invoice still owes once any advance credit has been applied to it.
+  // This is the debt that actually reaches the ledger when the invoice is posted;
+  // it equals the total when no credit was applied while the invoice was a draft.
+  remainingBalanceCentavos: number;
   billingPeriodYear: number | null;
   billingPeriodMonth: number | null;
 }
@@ -49,6 +53,96 @@ export async function getCurrentBalanceCentavos(
   return Number(balance);
 }
 
+/** One unapplied advance-credit credit, and the payment that created it. */
+export interface AdvanceCreditSource {
+  paymentId: string;
+  amountCentavos: number;
+}
+
+/**
+ * The advance-credit credits still unapplied, oldest first.
+ *
+ * An advance credit is written when a payment exceeds every outstanding invoice.
+ * Applying it to a later invoice writes an `advance_credit_applied` debit; the two
+ * cancel, so the credit still available is the credits minus the debits, consumed
+ * oldest first. A credit with no payment (a manual credit) is skipped: it cannot be
+ * attributed to the payment that created it.
+ */
+export async function getUnappliedAdvanceCreditSources(
+  executor: DbExecutor,
+  serviceAccountId: string,
+  availableCentavos: number
+): Promise<AdvanceCreditSource[]> {
+  if (availableCentavos <= 0) {
+    return [];
+  }
+
+  const credits = await executor
+    .select({
+      paymentId: ledgerEntries.paymentId,
+      amountCentavos: ledgerEntries.amountCentavos,
+    })
+    .from(ledgerEntries)
+    .where(
+      and(
+        eq(ledgerEntries.serviceAccountId, serviceAccountId),
+        eq(ledgerEntries.entryType, "advance_credit")
+      )
+    )
+    .orderBy(asc(ledgerEntries.entryDate), asc(ledgerEntries.id));
+
+  // Anything already applied comes off the oldest credits first. Clamp at zero so
+  // a balance made negative by a non-advance credit (e.g. a manual credit) never
+  // makes a credit look bigger than it is.
+  const totalCredited = credits.reduce((sum, credit) => sum + credit.amountCentavos, 0);
+  let alreadyApplied = Math.max(0, totalCredited - availableCentavos);
+
+  const sources: AdvanceCreditSource[] = [];
+  for (const credit of credits) {
+    if (alreadyApplied >= credit.amountCentavos) {
+      alreadyApplied -= credit.amountCentavos;
+      continue;
+    }
+
+    const unappliedCentavos = credit.amountCentavos - alreadyApplied;
+    alreadyApplied = 0;
+
+    if (credit.paymentId !== null) {
+      sources.push({ paymentId: credit.paymentId, amountCentavos: unappliedCentavos });
+    }
+  }
+
+  return sources;
+}
+
+/**
+ * Records the debit that consumes an advance credit when it is applied to a new
+ * invoice. The advance credit was a credit; this debit cancels it so the same money
+ * cannot be spent twice.
+ */
+export async function recordAdvanceCreditApplied(
+  executor: DbExecutor,
+  input: {
+    serviceAccountId: string;
+    invoiceId: string;
+    invoiceNumber: string;
+    amountCentavos: number;
+    createdByUserId: string;
+  }
+): Promise<void> {
+  const previousBalance = await getCurrentBalanceCentavos(executor, input.serviceAccountId);
+
+  await executor.insert(ledgerEntries).values({
+    serviceAccountId: input.serviceAccountId,
+    entryType: "advance_credit_applied",
+    amountCentavos: input.amountCentavos,
+    runningBalanceCentavos: previousBalance + input.amountCentavos,
+    description: `Advance Credit Applied — Invoice ${input.invoiceNumber}`,
+    invoiceId: input.invoiceId,
+    createdBy: input.createdByUserId,
+  });
+}
+
 /** A human label for the invoice's billing period, or a generic fallback. */
 function periodLabel(invoice: InvoiceForLedger): string {
   if (invoice.billingPeriodYear === null || invoice.billingPeriodMonth === null) {
@@ -59,13 +153,25 @@ function periodLabel(invoice: InvoiceForLedger): string {
 
 /**
  * Records the debit created when an invoice is posted.
- * Returns the ledger entry id so the invoice can point back at its entry.
+ *
+ * The amount debited is the invoice's remaining balance, not its gross total: an
+ * invoice that had advance credit applied while it was a draft is already partly
+ * covered, so only the still-owed part becomes a new debt. Returns the ledger
+ * entry id so the invoice can point back at its entry.
  */
 export async function recordInvoicePosted(
   executor: DbExecutor,
   invoice: InvoiceForLedger,
   createdByUserId: string
 ): Promise<string> {
+  const debitCentavos = invoice.remainingBalanceCentavos;
+
+  // An invoice fully covered by advance credit owes nothing, so posting it adds no
+  // debt: the advance_credit_applied debit already recorded what was owed.
+  if (debitCentavos <= 0) {
+    return "";
+  }
+
   const previousBalance = await getCurrentBalanceCentavos(executor, invoice.serviceAccountId);
 
   const entry = await executor
@@ -73,8 +179,8 @@ export async function recordInvoicePosted(
     .values({
       serviceAccountId: invoice.serviceAccountId,
       entryType: "invoice_posted",
-      amountCentavos: invoice.totalAmountCentavos,
-      runningBalanceCentavos: previousBalance + invoice.totalAmountCentavos,
+      amountCentavos: debitCentavos,
+      runningBalanceCentavos: previousBalance + debitCentavos,
       description: `Invoice ${invoice.invoiceNumber} — ${periodLabel(invoice)}`,
       invoiceId: invoice.id,
       createdBy: createdByUserId,

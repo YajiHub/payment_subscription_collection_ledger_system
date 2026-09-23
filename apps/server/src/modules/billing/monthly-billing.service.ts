@@ -18,6 +18,7 @@ import { MONTHLY_INVOICE_DUE_DAY } from "@bcis/shared";
 import { buildMonthlyInvoiceDraft } from "./invoice-calculations";
 import { allocateNextInvoiceNumber } from "./invoice-number.service";
 import { postInvoiceForId } from "./invoices.service";
+import { applyAdvanceCreditToInvoice } from "./advance-credit.service";
 
 /** One active service account that the billing job may invoice. */
 export interface BillingCandidate {
@@ -94,7 +95,7 @@ function monthlyDueDate(year: number, month: number): string {
  *
  * Returns true when a new invoice was created, false when the account was skipped.
  */
-async function generateInvoiceForCandidate(
+export async function generateInvoiceForCandidate(
   candidate: BillingCandidate,
   year: number,
   month: number,
@@ -127,11 +128,12 @@ async function generateInvoiceForCandidate(
       month
     );
     const invoiceDate = formatDateOnly(new Date());
+    const invoiceNumber = await allocateNextInvoiceNumber(tx, year, month);
 
     const insertedInvoice = await tx
       .insert(invoices)
       .values({
-        invoiceNumber: await allocateNextInvoiceNumber(tx, year, month),
+        invoiceNumber,
         serviceAccountId: candidate.serviceAccountId,
         invoiceType: "monthly_subscription",
         status: "draft",
@@ -161,6 +163,19 @@ async function generateInvoiceForCandidate(
         unitAmountCentavos: lineItem.unitAmountCentavos,
         totalAmountCentavos: lineItem.totalAmountCentavos,
       }))
+    );
+
+    // Any credit the subscriber is holding pays down this new invoice before it
+    // ever reaches them.
+    await applyAdvanceCreditToInvoice(
+      tx,
+      {
+        id: insertedInvoice.id,
+        invoiceNumber,
+        serviceAccountId: candidate.serviceAccountId,
+        totalAmountCentavos: draft.totalAmountCentavos,
+      },
+      initiatedByUserId
     );
 
     return true;
