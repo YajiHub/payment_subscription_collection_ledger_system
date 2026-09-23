@@ -8,7 +8,11 @@ import { HomePage } from "./pages/HomePage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 import { InvoiceListPage } from "./pages/InvoiceListPage";
 import { LoginPage } from "./pages/LoginPage";
+import { PaymentDetailPage } from "./pages/PaymentDetailPage";
+import { PaymentHistoryPage } from "./pages/PaymentHistoryPage";
 import { PlanManagementPage } from "./pages/PlanManagementPage";
+import { PostPaymentPage } from "./pages/PostPaymentPage";
+import { ReceiptPreviewPage } from "./pages/ReceiptPreviewPage";
 import { SubscriberDetailPage } from "./pages/SubscriberDetailPage";
 import { SubscriberListPage } from "./pages/SubscriberListPage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
@@ -94,6 +98,38 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="invoices:read">
               <InvoiceDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/payments/new"
+          element={
+            <ProtectedRoute requiredPermission="payments:post">
+              <PostPaymentPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/payments"
+          element={
+            <ProtectedRoute requiredPermission="payments:read">
+              <PaymentHistoryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/payments/:id"
+          element={
+            <ProtectedRoute requiredPermission="payments:read">
+              <PaymentDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/payments/:id/receipt"
+          element={
+            <ProtectedRoute requiredPermission="receipts:print">
+              <ReceiptPreviewPage />
             </ProtectedRoute>
           }
         />

@@ -7,7 +7,16 @@
 
 import axios, { AxiosError } from "axios";
 
-import type { InvoiceStatus, InvoiceType, ServiceAccountStatus, ServiceType, UserRole } from "@bcis/shared";
+import type {
+  InvoiceStatus,
+  InvoiceType,
+  PaymentMethod,
+  PaymentStatus,
+  PostablePaymentMethod,
+  ServiceAccountStatus,
+  ServiceType,
+  UserRole,
+} from "@bcis/shared";
 import { API_BASE_URL, HTTP_TIMEOUT_MS } from "./constants";
 import { useAuthStore } from "../stores/auth.store";
 
@@ -694,6 +703,177 @@ export async function voidInvoice(id: string, reason: string): Promise<InvoiceDe
   const response = await httpClient.post<ApiSuccessEnvelope<InvoiceDetail>>(
     `/api/invoices/${id}/void`,
     { reason }
+  );
+  return unwrap(response.data);
+}
+
+// ─── Phase 5: payments, receipts, and reversals ───────────────────────────────
+// Same rule as above: this is the only place the renderer performs HTTP.
+
+export interface PaymentSummary {
+  id: string;
+  receiptNumber: string;
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  paymentMethod: PaymentMethod;
+  status: PaymentStatus;
+  amountCentavos: number;
+  allocatedCentavos: number;
+  advanceCreditCentavos: number;
+  paymentDate: string;
+  notes: string | null;
+  gcashReferenceNumber: string | null;
+  postedAt: string;
+  postedById: string;
+  postedByName: string;
+  reversedAt: string | null;
+  reversedById: string | null;
+}
+
+export interface PaymentAllocationSummary {
+  invoiceId: string;
+  invoiceNumber: string;
+  allocatedAmountCentavos: number;
+}
+
+export interface PaymentDetail extends PaymentSummary {
+  allocations: PaymentAllocationSummary[];
+  gcash: {
+    referenceNumber: string;
+    senderGcashNumber: string | null;
+    senderName: string | null;
+    screenshotFilePath: string | null;
+    verifiedAt: string | null;
+  } | null;
+}
+
+export interface OutstandingInvoiceSummary {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  status: string;
+  totalAmountCentavos: number;
+  paidAmountCentavos: number;
+  remainingBalanceCentavos: number;
+}
+
+export interface ServiceAccountPaymentSummary {
+  serviceAccountId: string;
+  outstandingInvoices: OutstandingInvoiceSummary[];
+  outstandingTotalCentavos: number;
+  creditBalanceCentavos: number;
+}
+
+export interface PostPaymentInput {
+  serviceAccountId: string;
+  paymentMethod: PostablePaymentMethod;
+  amountCentavos: number;
+  paymentDate: string;
+  notes?: string;
+  gcash?: {
+    referenceNumber: string;
+    senderGcashNumber?: string;
+    senderName?: string;
+    screenshotFilePath?: string;
+  };
+}
+
+export interface PostPaymentResult {
+  payment: PaymentSummary;
+  allocations: PaymentAllocationSummary[];
+  allocatedCentavos: number;
+  advanceCreditCentavos: number;
+}
+
+export interface ReversePaymentResult {
+  paymentId: string;
+  reversalReceiptNumber: string;
+  reversedAt: string;
+}
+
+export interface ListPaymentFilters {
+  serviceAccountId?: string;
+  method?: PaymentMethod;
+  status?: PaymentStatus;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+/** GET /api/payments — the payment history, newest first. */
+export async function listPayments(
+  filters: ListPaymentFilters = {}
+): Promise<PaymentSummary[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<{ items: PaymentSummary[] }>>(
+    "/api/payments",
+    { params: filters }
+  );
+  return unwrap(response.data).items;
+}
+
+/** GET /api/payments/:id — one payment with its allocations. */
+export async function getPayment(id: string): Promise<PaymentDetail> {
+  const response = await httpClient.get<ApiSuccessEnvelope<PaymentDetail>>(`/api/payments/${id}`);
+  return unwrap(response.data);
+}
+
+/** GET /api/payments/receipt/:receiptNumber — lookup by receipt number. */
+export async function getPaymentByReceiptNumber(receiptNumber: string): Promise<PaymentDetail> {
+  const response = await httpClient.get<ApiSuccessEnvelope<PaymentDetail>>(
+    `/api/payments/receipt/${encodeURIComponent(receiptNumber)}`
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/payments — posts a Cash or GCash payment. */
+export async function postPayment(input: PostPaymentInput): Promise<PostPaymentResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<PostPaymentResult>>(
+    "/api/payments",
+    input
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/payments/:id/reverse — reverses a payment (Admin only). */
+export async function reversePayment(id: string, reason: string): Promise<ReversePaymentResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<ReversePaymentResult>>(
+    `/api/payments/${id}/reverse`,
+    { reason }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/service-accounts/:id/payments — every payment for one account. */
+export async function listServiceAccountPayments(
+  serviceAccountId: string
+): Promise<PaymentSummary[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<{ items: PaymentSummary[] }>>(
+    `/api/service-accounts/${serviceAccountId}/payments`
+  );
+  return unwrap(response.data).items;
+}
+
+/** GET /api/service-accounts/:id/payment-summary — what a cashier sees before posting. */
+export async function getServiceAccountPaymentSummary(
+  serviceAccountId: string
+): Promise<ServiceAccountPaymentSummary> {
+  const response = await httpClient.get<ApiSuccessEnvelope<ServiceAccountPaymentSummary>>(
+    `/api/service-accounts/${serviceAccountId}/payment-summary`
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/payments/gcash/upload-screenshot — stores a GCash proof screenshot. */
+export async function uploadGcashScreenshot(input: {
+  fileName: string;
+  contentType: string;
+  dataBase64: string;
+}): Promise<{ filePath: string; sizeBytes: number }> {
+  const response = await httpClient.post<ApiSuccessEnvelope<{ filePath: string; sizeBytes: number }>>(
+    "/api/payments/gcash/upload-screenshot",
+    input
   );
   return unwrap(response.data);
 }

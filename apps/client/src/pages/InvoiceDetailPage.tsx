@@ -260,7 +260,11 @@ export function InvoiceDetailPage(): ReactNode {
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-medium">Payment history</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Payments are recorded in Phase 5. Until then this section stays empty.
+          Payments that settle this invoice appear in the{" "}
+          <Link to="/payments" className="underline">
+            payment history
+          </Link>
+          .
         </p>
       </section>
 
