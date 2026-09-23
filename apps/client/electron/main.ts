@@ -37,6 +37,9 @@ function createMainWindow(): BrowserWindow {
   return mainWindow;
 }
 
+// Every channel below is a narrow, named capability. None of them can reach the
+// database: the renderer talks to the Fastify API for data, and these handlers
+// only drive OS features.
 // Keep the request/response channel next to its handler so the whitelist stays obvious.
 ipcMain.handle("get-app-version", () => app.getVersion());
 

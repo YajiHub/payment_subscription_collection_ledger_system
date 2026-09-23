@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 interface ApiStatusBadgeProps {
+  /** True once the API answered its health probe; false while it is unreachable. */
   isReachable: boolean;
 }
 

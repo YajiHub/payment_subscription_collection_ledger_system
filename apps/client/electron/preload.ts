@@ -5,6 +5,8 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
+// Options accepted by the native open-file dialog. The renderer may choose a
+// title and file filters; it can never ask for a directory or a raw path.
 export interface OpenFilePickerOptions {
   title?: string;
   filters?: { name: string; extensions: string[] }[];
