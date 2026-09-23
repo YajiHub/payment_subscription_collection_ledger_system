@@ -11,6 +11,7 @@ import { eq, sql } from "drizzle-orm";
 
 import type { DbExecutor } from "../../db/connection";
 import { DEBIT_ENTRY_TYPES, ledgerEntries } from "../../db/schema/ledger";
+import type { NewLedgerEntry } from "../../db/schema/ledger";
 import { getMonthYearLabel } from "@bcis/shared";
 
 /** The invoice fields a ledger entry needs to describe its source document. */
@@ -134,4 +135,91 @@ export async function recordLateFeeApplied(
     .then((rows) => rows[0]);
 
   return entry?.id ?? "";
+}
+
+/** The payment fields the ledger needs to describe its source document. */
+export interface PaymentForLedger {
+  id: string;
+  receiptNumber: string;
+  serviceAccountId: string;
+  amountCentavos: number;
+  allocatedCentavos: number;
+  advanceCreditCentavos: number;
+}
+
+/**
+ * Records the credit(s) created when a payment is posted.
+ *
+ * The amount applied to invoices is a `payment_received` credit; anything left
+ * over is an `advance_credit` credit that will net against the next invoice. The
+ * two entries together credit exactly the amount received, so the ledger balance
+ * falls by the full payment and an overpayment naturally shows as a credit
+ * balance (a negative ledger balance).
+ */
+export async function recordPaymentPosted(
+  executor: DbExecutor,
+  payment: PaymentForLedger,
+  createdByUserId: string
+): Promise<void> {
+  const previousBalance = await getCurrentBalanceCentavos(executor, payment.serviceAccountId);
+  const entries: NewLedgerEntry[] = [];
+
+  // Build the entries one after another so each carries the running balance after it.
+  let runningBalance = previousBalance;
+
+  if (payment.allocatedCentavos > 0) {
+    runningBalance -= payment.allocatedCentavos;
+    entries.push({
+      serviceAccountId: payment.serviceAccountId,
+      entryType: "payment_received",
+      amountCentavos: payment.allocatedCentavos,
+      runningBalanceCentavos: runningBalance,
+      description: `Payment ${payment.receiptNumber}`,
+      paymentId: payment.id,
+      createdBy: createdByUserId,
+    });
+  }
+
+  if (payment.advanceCreditCentavos > 0) {
+    runningBalance -= payment.advanceCreditCentavos;
+    entries.push({
+      serviceAccountId: payment.serviceAccountId,
+      entryType: "advance_credit",
+      amountCentavos: payment.advanceCreditCentavos,
+      runningBalanceCentavos: runningBalance,
+      description: `Advance Credit — Payment ${payment.receiptNumber}`,
+      paymentId: payment.id,
+      createdBy: createdByUserId,
+    });
+  }
+
+  if (entries.length > 0) {
+    await executor.insert(ledgerEntries).values(entries);
+  }
+}
+
+/**
+ * Records the debit that cancels a reversed payment's credit.
+ *
+ * One debit for the full amount received cancels every credit the original
+ * payment created (the allocated part and any advance credit), so the net effect
+ * on the subscriber's balance is exactly zero.
+ */
+export async function recordPaymentReversed(
+  executor: DbExecutor,
+  payment: PaymentForLedger,
+  reason: string,
+  createdByUserId: string
+): Promise<void> {
+  const previousBalance = await getCurrentBalanceCentavos(executor, payment.serviceAccountId);
+
+  await executor.insert(ledgerEntries).values({
+    serviceAccountId: payment.serviceAccountId,
+    entryType: "payment_reversal",
+    amountCentavos: payment.amountCentavos,
+    runningBalanceCentavos: previousBalance + payment.amountCentavos,
+    description: `Payment ${payment.receiptNumber} Reversed — ${reason}`,
+    paymentId: payment.id,
+    createdBy: createdByUserId,
+  });
 }

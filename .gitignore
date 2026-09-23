@@ -31,3 +31,6 @@ Thumbs.db
 .pi/git/
 .pi/cache/
 .pi/sessions/
+
+# Uploaded GCash proof screenshots live on the server, never in git
+uploads/
