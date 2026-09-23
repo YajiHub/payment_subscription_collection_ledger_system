@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import jwt from "jsonwebtoken";
+import jwt, { type SignOptions } from "jsonwebtoken";
 
 import type { UserRole } from "@bcis/shared";
 import { config } from "../../src/config";
@@ -9,7 +9,8 @@ interface TokenOverrides {
   sub?: string;
   role?: UserRole;
   jti?: string;
-  expiresIn?: string;
+  // jsonwebtoken accepts a number of seconds or an ms-style string like "8h".
+  expiresIn?: SignOptions["expiresIn"];
 }
 
 /**
