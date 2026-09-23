@@ -127,6 +127,31 @@ describe("authentication routes", () => {
     });
   });
 
+  // Guards the spec rule that login must not reveal whether a username exists.
+  // The observable symptom of the bug is that an unknown username skips bcrypt
+  // entirely, so the response comes back measurably faster than a wrong password.
+  // We assert on the call itself rather than on wall-clock time, which is flaky.
+  it("compares the password for an unknown username instead of short-circuiting", async () => {
+    fakeDatabase.queueSelectRows([]);
+    const compareSpy = vi.spyOn(bcrypt, "compare");
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "ghost", password: PASSWORD },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(compareSpy).toHaveBeenCalledTimes(1);
+
+    // The substitute hash must be a real bcrypt hash: an invalid one makes
+    // compare return immediately, which reintroduces the timing leak.
+    const substituteHash = compareSpy.mock.calls[0]?.[1] as string;
+    expect(bcrypt.getRounds(substituteHash)).toBeGreaterThanOrEqual(12);
+
+    compareSpy.mockRestore();
+  });
+
   it("POST /api/auth/login for an inactive account returns 403", async () => {
     const user = await buildTestUser({ username: "ana", isActive: false });
     fakeDatabase.queueSelectRows([user]);

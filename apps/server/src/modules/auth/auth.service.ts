@@ -16,6 +16,15 @@ import { loginAuditLog, revokedTokens, users } from "../../db/schema/users";
 import { ForbiddenError, NotFoundError, UnauthorizedError } from "../../shared/errors";
 import type { UserRole } from "@bcis/shared";
 
+// A real bcrypt hash (cost 12) of a value nobody can log in with.
+// When the username does not exist we still run bcrypt.compare against this hash.
+// Without it, an unknown username would return faster than a known one with a wrong
+// password, and that timing difference alone would reveal which accounts exist.
+// It must stay a VALID bcrypt hash: an invalid one makes compare throw or return
+// immediately, which reintroduces the very timing leak this constant prevents.
+const TIMING_EQUALIZER_PASSWORD_HASH =
+  "$2b$12$OMlJdIjzDLp3Jfn.9NR3qOBmwx5aLVRkyrFhSH6e5J1g.kCBMSeJe";
+
 // What we embed in the JWT — keep it small (no sensitive data).
 export interface JwtPayload {
   sub: string; // user ID
@@ -53,7 +62,9 @@ export async function loginUser(
     .limit(1)
     .then((rows) => rows[0]);
 
-  const isValidPassword = user ? await bcrypt.compare(password, user.passwordHash) : false;
+  // Compare unconditionally: a missing user must cost the same as a wrong password.
+  const passwordHash = user?.passwordHash ?? TIMING_EQUALIZER_PASSWORD_HASH;
+  const isValidPassword = await bcrypt.compare(password, passwordHash);
 
   await db.insert(loginAuditLog).values({
     username,
