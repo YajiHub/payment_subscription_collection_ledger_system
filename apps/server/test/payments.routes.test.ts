@@ -84,6 +84,33 @@ function postedPaymentRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A payment row as a detail/list query returns it (subscriber and cashier joined). */
+function postedSummaryRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: PAYMENT_ID,
+    receiptNumber: "OR-2025-000001",
+    serviceAccountId: SERVICE_ACCOUNT_ID,
+    serviceAccountNumber: "SA-20250101-00001",
+    subscriberId: randomUUID(),
+    subscriberFirstName: "Maria",
+    subscriberLastName: "Santos",
+    paymentMethod: "cash",
+    status: "posted",
+    amountCentavos: 99900,
+    allocatedCentavos: 99900,
+    advanceCreditCentavos: 0,
+    paymentDate: "2025-03-01",
+    notes: null,
+    gcashReferenceNumber: null,
+    postedAt: new Date(),
+    postedById: ADMIN_ID,
+    postedByName: "Admin User",
+    reversedAt: null,
+    reversedById: null,
+    ...overrides,
+  };
+}
+
 /** Every insert recorded against a specific table. */
 function insertedInto(table: unknown): RecordedInsert[] {
   return fakeDatabase.insertedRows.filter((row) => row.table === table);
@@ -541,5 +568,59 @@ describe("payment routes", () => {
     const items = response.json().data.items;
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ receiptNumber: "OR-2025-000001", subscriberName: "Santos, Maria" });
+  });
+
+  it("looks a payment up by its receipt number", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([postedSummaryRow()]); // payment by receipt
+    fakeDatabase.queueSelectRows([]); // allocations
+    fakeDatabase.queueSelectRows([]); // gcash details
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/payments/receipt/OR-2025-000001",
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      receiptNumber: "OR-2025-000001",
+      subscriberName: "Santos, Maria",
+      allocations: [],
+      gcash: null,
+    });
+  });
+
+  it("reports the outstanding invoices and advance credit for a service account", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: randomUUID(),
+        invoiceNumber: "INV-2025-01-000001",
+        invoiceDate: "2025-01-01",
+        dueDate: "2025-01-15",
+        status: "posted",
+        totalAmountCentavos: 99900,
+        paidAmountCentavos: 0,
+        remainingBalanceCentavos: 99900,
+      },
+    ]); // outstanding invoices
+    fakeDatabase.queueSelectRows([{ balanceCentavos: -5000 }]); // ledger shows an advance credit
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/service-accounts/${SERVICE_ACCOUNT_ID}/payment-summary`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      outstandingTotalCentavos: 99900,
+      creditBalanceCentavos: 5000,
+    });
   });
 });
