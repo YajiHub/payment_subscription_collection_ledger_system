@@ -158,15 +158,26 @@ describe.skipIf(!databaseIsReachable)("Phase 3 against real PostgreSQL", () => {
     expect(accountRows.rowCount).toBe(2);
     expect(accountRows.rows.map((row) => row.status).sort()).toEqual(["active", "pending"]);
 
-    // ── Search finds the subscriber by a partial name ───────────────────────
-    const searchResponse = await server.inject({
-      method: "GET",
-      url: `/api/subscribers/search?q=${encodeURIComponent("Integration")}`,
-      headers,
-    });
-    expect(searchResponse.statusCode).toBe(200);
-    const foundIds = searchResponse.json().data.items.map((item: { id: string }) => item.id);
-    expect(foundIds).toContain(createdSubscriber.id);
+    // ── Search finds the subscriber by name, account number, and phone ──────
+    // AC: partial name, account number, or phone number all return the record.
+    const searchTerms = [
+      "Integration", // partial name
+      createdSubscriber.accountNumber, // full account number
+      "0917", // partial phone number
+    ];
+
+    for (const term of searchTerms) {
+      const searchResponse = await server.inject({
+        method: "GET",
+        url: `/api/subscribers/search?q=${encodeURIComponent(term)}`,
+        headers,
+      });
+      expect(searchResponse.statusCode).toBe(200);
+      const foundIds = searchResponse.json().data.items.map((item: { id: string }) => item.id);
+      expect(foundIds, `search for "${term}" should find the created subscriber`).toContain(
+        createdSubscriber.id
+      );
+    }
 
     // ── Suspend the active account ──────────────────────────────────────────
     const suspendResponse = await server.inject({
