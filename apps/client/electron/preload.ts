@@ -36,6 +36,14 @@ const electronApi = {
   getAppVersion: (): Promise<string> => {
     return ipcRenderer.invoke("get-app-version");
   },
+
+  /**
+   * The API server this installation talks to, read from %APPDATA%\BCIS\config.json,
+   * plus the path of that file so the UI can tell a user where to change it.
+   */
+  getAppConfig: (): Promise<{ apiBaseUrl: string | null; configFilePath: string }> => {
+    return ipcRenderer.invoke("get-app-config");
+  },
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronApi);

@@ -26,6 +26,8 @@ declare global {
       openPrintPreview: (htmlContent: string) => Promise<void>;
       /** Version of the installed desktop application. */
       getAppVersion: () => Promise<string>;
+      /** The configured API server and the file that holds that setting. */
+      getAppConfig: () => Promise<{ apiBaseUrl: string | null; configFilePath: string }>;
     };
   }
 }

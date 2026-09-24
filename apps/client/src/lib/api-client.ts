@@ -34,6 +34,22 @@ const httpClient = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+// The API server this session is talking to. It starts as the build-time default
+// and is replaced once by the run-time config.json value (see main.tsx), so every
+// later request — including the interceptors below — uses the chosen server.
+let apiBaseUrl = API_BASE_URL;
+
+/** The API server currently in use, for display in the UI. */
+export function getApiBaseUrl(): string {
+  return apiBaseUrl;
+}
+
+/** Points every subsequent request at the API server chosen for this installation. */
+export function configureApiBaseUrl(baseUrl: string): void {
+  apiBaseUrl = baseUrl;
+  httpClient.defaults.baseURL = baseUrl;
+}
+
 // Attach the bearer token to every request once the user is logged in.
 httpClient.interceptors.request.use((requestConfig) => {
   const token = useAuthStore.getState().token;
