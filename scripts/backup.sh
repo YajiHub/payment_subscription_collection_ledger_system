@@ -35,10 +35,35 @@ BACKUP_FILE="$BACKUP_DIR/bcis_backup_$TIMESTAMP.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
 
+# Dump to a temporary file and publish it only once it is known to be a real
+# dump. Writing straight to BACKUP_FILE is unsafe: the shell creates the file
+# before pg_dump runs, so a failed dump leaves a truncated file behind. An empty
+# gzip is exactly 20 bytes AND still passes `gzip -t`, so a crashed run would
+# leave something that looks like a good backup. Verify, then rename atomically.
+TEMP_FILE="$BACKUP_FILE.partial"
+trap 'rm -f "$TEMP_FILE"' EXIT
+
 # --format=custom lets pg_restore rebuild indexes, constraints, and the
 # append-only audit trigger exactly as they were. --no-password stops pg_dump
 # from prompting, so the script can run unattended from Task Scheduler.
-pg_dump --dbname="$DATABASE_URL" --no-password --format=custom | gzip > "$BACKUP_FILE"
+pg_dump --dbname="$DATABASE_URL" --no-password --format=custom | gzip > "$TEMP_FILE"
+
+if ! gzip -t "$TEMP_FILE" 2>/dev/null; then
+  echo "Backup failed: the dump is not a readable gzip archive." >&2
+  exit 1
+fi
+
+# A real dump of any populated database is far larger than this threshold, so a
+# tiny file means pg_dump produced no data and must not be published.
+BACKUP_BYTES="$(wc -c < "$TEMP_FILE")"
+if [ "$BACKUP_BYTES" -lt 100 ]; then
+  echo "Backup failed: pg_dump produced no data (see the pg_dump error above)." >&2
+  echo "Discarded the incomplete file; no backup was created." >&2
+  exit 1
+fi
+
+mv "$TEMP_FILE" "$BACKUP_FILE"
+trap - EXIT
 
 echo "Backup created: $BACKUP_FILE"
 echo "Size: $(du -h "$BACKUP_FILE" | cut -f1)"

@@ -159,7 +159,7 @@ the installed desktop app.
 
 6. Start the app again. It reads `config.json` at startup, so a change takes
    effect on the next launch.
-7. **[check]** The badge in the app says **API reachable**. Hovering over it shows
+7. Confirm the badge in the app says **API reachable**. Hovering over it shows
    the server it is using. If it says **API offline**, check the firewall step
    below and that PC-1's server is running.
 

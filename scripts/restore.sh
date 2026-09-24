@@ -39,6 +39,21 @@ if [ ! -f "$BACKUP_FILE" ]; then
   exit 1
 fi
 
+# Validate the archive BEFORE anything destructive runs. pg_restore --clean drops
+# the existing objects first, so feeding it a corrupt or empty backup would wipe
+# the database and restore nothing. An empty gzip still passes `gzip -t`, so also
+# require that it actually decompresses to some content.
+if ! gzip -t "$BACKUP_FILE" 2>/dev/null; then
+  echo "Refusing to restore: $BACKUP_FILE is not a readable gzip archive." >&2
+  exit 1
+fi
+
+if [ "$(gzip -dc "$BACKUP_FILE" | wc -c)" -eq 0 ]; then
+  echo "Refusing to restore: $BACKUP_FILE decompresses to zero bytes." >&2
+  echo "Nothing was changed in the database." >&2
+  exit 1
+fi
+
 echo "This replaces all current data in the database at DATABASE_URL."
 echo "Backup file: $BACKUP_FILE"
 read -r -p "Type 'yes' to confirm: " CONFIRMATION
