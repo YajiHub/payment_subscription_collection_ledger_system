@@ -12,6 +12,7 @@ import {
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import {
   createSubscriber,
   getSubscriberById,
@@ -90,6 +91,8 @@ export async function postSubscriber(
     createdBy,
   });
 
+  await audit.subscriberCreated({ ...created }, requestActor(request));
+
   return sendSuccess(reply, created, 201);
 }
 
@@ -103,6 +106,7 @@ export async function putSubscriber(
   const updatedBy = request.user?.id ?? "";
 
   const updated = await updateSubscriber(id, body, updatedBy);
+  await audit.subscriberUpdated({ ...updated }, requestActor(request));
   return sendSuccess(reply, updated);
 }
 

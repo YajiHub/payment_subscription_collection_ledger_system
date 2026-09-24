@@ -15,6 +15,10 @@ const environmentSchema = z.object({
   JWT_SECRET: z.string().min(32, "JWT secret must be at least 32 characters"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   BCRYPT_ROUNDS: z.coerce.number().default(12),
+  // General API rate limit, per client IP. Phase 9 §4.
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
+  // The stricter limit applied to the login endpoint specifically, per IP.
+  LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   // Where GCash proof screenshots are written. Relative paths resolve against the
   // server's working directory; the directory is git-ignored.
   UPLOADS_DIR: z.string().default("uploads"),

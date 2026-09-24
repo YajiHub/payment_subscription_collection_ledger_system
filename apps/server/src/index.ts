@@ -6,7 +6,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import cors from "@fastify/cors";
 import Fastify, {
   type FastifyError,
   type FastifyInstance,
@@ -15,6 +14,7 @@ import Fastify, {
 
 import { config } from "./config";
 import { closeDatabaseConnection } from "./db/connection";
+import { registerAuditRoutes } from "./modules/audit/audit.routes";
 import { registerAuthRoutes } from "./modules/auth/auth.routes";
 import { registerBillingRoutes } from "./modules/billing/billing.routes";
 import { registerInvoiceRoutes } from "./modules/billing/invoices.routes";
@@ -28,8 +28,12 @@ import { registerReceivablesRoutes } from "./modules/receivables/receivables.rou
 import { registerReportRoutes } from "./modules/reports/reports.routes";
 import { registerServiceAccountRoutes } from "./modules/service-accounts/service-accounts.routes";
 import { registerSubscriberRoutes } from "./modules/subscribers/subscribers.routes";
+import { registerSystemRoutes } from "./modules/system/system.routes";
+import { ensureSystemSettingsSeeded } from "./modules/system/system-settings.service";
 import { registerUserRoutes } from "./modules/users/users.routes";
 import { isAppError } from "./shared/errors";
+import { securityPlugin } from "./shared/plugins/security.plugin";
+import { validationPlugin } from "./shared/plugins/validation.plugin";
 import { sendError } from "./shared/response";
 
 const isDevelopment = config.NODE_ENV === "development";
@@ -38,25 +42,44 @@ const loggerOptions: FastifyServerOptions["logger"] = isDevelopment
   ? { level: "info", transport: { target: "pino-pretty" } }
   : { level: "warn" };
 
+/** Phase 9 §4: the largest JSON request body the API will accept (1 MB). */
+const JSON_BODY_LIMIT_BYTES = 1_048_576;
+
+/**
+ * Installs plugins and routes in the order they must run.
+ *
+ * It is registered as ONE plugin because Fastify installs a plugin's hooks when
+ * the plugin is loaded. The security plugins must finish loading before any route
+ * is compiled, or the rate-limit hook never attaches to the routes that were
+ * queued ahead of it.
+ */
+async function registerApplication(server: FastifyInstance): Promise<void> {
+  validationPlugin(server);
+  await securityPlugin(server);
+
+  await server.register(registerHealthRoutes);
+  await server.register(registerAuthRoutes);
+  await server.register(registerUserRoutes);
+  await server.register(registerPlanRoutes);
+  await server.register(registerSubscriberRoutes);
+  await server.register(registerServiceAccountRoutes);
+  await server.register(registerBillingRoutes);
+  await server.register(registerInvoiceRoutes);
+  await server.register(registerPaymentRoutes);
+  await server.register(registerLedgerRoutes);
+  await server.register(registerCollectorBatchRoutes);
+  await server.register(registerReceivablesRoutes);
+  await server.register(registerDashboardRoutes);
+  await server.register(registerReportRoutes);
+  await server.register(registerAuditRoutes);
+  await server.register(registerSystemRoutes);
+}
+
 /** Creates the Fastify instance with every plugin, route, and error handler applied. */
 export function buildServer(): FastifyInstance {
-  const server = Fastify({ logger: loggerOptions });
+  const server = Fastify({ logger: loggerOptions, bodyLimit: JSON_BODY_LIMIT_BYTES });
 
-  server.register(cors, { origin: config.CORS_ORIGIN });
-  server.register(registerHealthRoutes);
-  server.register(registerAuthRoutes);
-  server.register(registerUserRoutes);
-  server.register(registerPlanRoutes);
-  server.register(registerSubscriberRoutes);
-  server.register(registerServiceAccountRoutes);
-  server.register(registerBillingRoutes);
-  server.register(registerInvoiceRoutes);
-  server.register(registerPaymentRoutes);
-  server.register(registerLedgerRoutes);
-  server.register(registerCollectorBatchRoutes);
-  server.register(registerReceivablesRoutes);
-  server.register(registerDashboardRoutes);
-  server.register(registerReportRoutes);
+  server.register(registerApplication);
 
   // Turns thrown errors into one predictable JSON shape.
   server.setErrorHandler((error: FastifyError, request, reply) => {
@@ -84,6 +107,15 @@ export function buildServer(): FastifyInstance {
 
 async function startServer(): Promise<void> {
   const server = buildServer();
+
+  // A fresh database is seeded with the default business rules. A failure must
+  // not stop the server from starting: the health endpoint reports the database
+  // as unreachable instead.
+  try {
+    await ensureSystemSettingsSeeded();
+  } catch (error) {
+    server.log.warn({ err: error }, "Could not seed system settings on startup");
+  }
 
   try {
     await server.listen({ port: config.PORT, host: "0.0.0.0" });

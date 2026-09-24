@@ -10,8 +10,8 @@ import { roleHasPermission, type Permission } from "@bcis/shared";
 
 import { sendError } from "../response";
 
-export function authorize(requiredPermission: Permission) {
-  return async function authorizeRequest(
+export function authorize(requiredPermission: Permission): AuthorizeHandler {
+  const authorizeRequest = async function authorizeRequest(
     request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> {
@@ -28,4 +28,16 @@ export function authorize(requiredPermission: Permission) {
       );
     }
   };
+
+  // Exposing the permission on the function lets the RBAC sweep test read the
+  // permission a route actually declared, rather than trusting a hand-written
+  // list that could drift from the route table.
+  authorizeRequest.permission = requiredPermission;
+  return authorizeRequest;
+}
+
+/** A preHandler that carries the permission it enforces. */
+export interface AuthorizeHandler {
+  (request: FastifyRequest, reply: FastifyReply): Promise<void>;
+  permission: Permission;
 }

@@ -6,6 +6,8 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { applyLateFeesSchema, billingPeriodQuerySchema, DEFAULT_LATE_FEE_CENTAVOS, postAllDraftSchema, runBillingSchema } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { audit, logAuditEntry, requestActor } from "../../shared/audit/audit-logger";
+import { AUDIT_NO_ENTITY_ID } from "@bcis/shared";
 import { applyLateFeesToOverdueInvoices } from "./late-fee.service";
 import {
   listBillingRuns,
@@ -32,6 +34,7 @@ export async function postBillingRun(
   const period = parseOrThrow(runBillingSchema, request.body);
   const initiatedByUserId = request.user?.id ?? "";
   const result = await runMonthlyBilling(period.year, period.month, initiatedByUserId);
+  await audit.billingRunExecuted({ ...result }, requestActor(request));
   return sendSuccess(reply, result, 201);
 }
 
@@ -43,6 +46,20 @@ export async function postAllDraftInvoicesHandler(
   const period = parseOrThrow(postAllDraftSchema, request.body);
   const postedByUserId = request.user?.id ?? "";
   const posted = await postAllDraftInvoices(period.year, period.month, postedByUserId);
+
+  // Posting a batch of drafts is a bulk financial action, so it is recorded as
+  // one event rather than one row per invoice.
+  await logAuditEntry({
+    action: "billing_run.executed",
+    entityType: "billing_run",
+    entityId: AUDIT_NO_ENTITY_ID,
+    newState: { year: period.year, month: period.month, posted },
+    description: `Posted ${posted} draft invoice(s) for ${period.year}-${period.month}`,
+    ...requestActor(request),
+    performedBy: request.user?.id ?? null,
+    clientIpAddress: request.ip,
+  });
+
   return sendSuccess(reply, { posted });
 }
 

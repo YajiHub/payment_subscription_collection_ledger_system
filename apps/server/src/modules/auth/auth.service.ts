@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { config } from "../../config";
 import { db } from "../../db/connection";
 import { loginAuditLog, revokedTokens, users } from "../../db/schema/users";
+import { audit } from "../../shared/audit/audit-logger";
 import { ForbiddenError, NotFoundError, UnauthorizedError } from "../../shared/errors";
 import type { UserRole } from "@bcis/shared";
 
@@ -74,16 +75,24 @@ export async function loginUser(
   });
 
   if (user === undefined || !isValidPassword) {
+    // Phase 9 §2: a failed login is a security event, so it is written to the
+    // audit trail as well as the login log. The reason is deliberately generic
+    // in the description the caller sees; the audit trail records the real one.
+    await audit.loginFailed(username, ipAddress, "invalid credentials");
     throw new UnauthorizedError("Invalid username or password");
   }
 
   if (!user.isActive) {
+    await audit.loginFailed(username, ipAddress, "account deactivated");
     throw new ForbiddenError("Account is deactivated. Contact your administrator.");
   }
 
   const jti = randomUUID();
   const payload = { sub: user.id, role: user.role, jti };
   const token = jwt.sign(payload, config.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+
+  // A successful login is a security event worth recording alongside failures.
+  await audit.loginSucceeded(user.id, username, ipAddress);
 
   return { token, user: { id: user.id, fullName: user.fullName, role: user.role } };
 }

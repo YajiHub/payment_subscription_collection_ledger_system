@@ -13,9 +13,12 @@
   "dependencies": {
     "@bcis/shared": "workspace:*",
     "@fastify/cors": "^10.0.1",
+    "@fastify/helmet": "^13.1.1",
+    "@fastify/rate-limit": "^11.2.0",
     "bcrypt": "^6.0.0",
     "drizzle-orm": "^0.44.0",
     "fastify": "^5.1.0",
+    "fastify-type-provider-zod": "^4.0.2",
     "jsonwebtoken": "^9.0.3",
     "pdf-lib": "^1.17.1",
     "pg": "^8.13.1",

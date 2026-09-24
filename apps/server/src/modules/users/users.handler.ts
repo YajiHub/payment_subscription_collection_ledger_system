@@ -4,9 +4,10 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
-import { USER_ROLES } from "@bcis/shared";
+import { USER_ROLES, type UserRole } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import {
   changeUserPassword,
   createUser,
@@ -73,6 +74,7 @@ export async function postUser(
   const body = parseOrThrow(createUserBodySchema, request.body);
   const createdBy = request.user?.id ?? "";
   const created = await createUser({ ...body, createdBy });
+  await audit.userCreated({ ...created }, requestActor(request));
   return sendSuccess(reply, created, 201);
 }
 
@@ -87,7 +89,27 @@ export async function getUser(request: FastifyRequest, reply: FastifyReply): Pro
 export async function putUser(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   const { id } = parseOrThrow(userIdParamsSchema, request.params);
   const body = parseOrThrow(updateUserBodySchema, request.body);
+
+  // A role change is a privilege change and must be recorded with its previous
+  // value. The extra read happens only when a role was supplied, so ordinary
+  // profile edits stay a single update.
+  let previousRole: UserRole | undefined;
+  if (body.role !== undefined) {
+    const existingUser = await getUserById(id);
+    previousRole = existingUser.role;
+  }
+
   const updated = await updateUser(id, body);
+
+  if (previousRole !== undefined && previousRole !== updated.role) {
+    await audit.userRoleChanged(
+      { ...updated },
+      previousRole,
+      updated.role,
+      requestActor(request)
+    );
+  }
+
   return sendSuccess(reply, updated);
 }
 
@@ -99,6 +121,7 @@ export async function putUserPassword(
   const { id } = parseOrThrow(userIdParamsSchema, request.params);
   const body = parseOrThrow(changePasswordBodySchema, request.body);
   const updated = await changeUserPassword(id, body.password);
+  await audit.userPasswordChanged({ ...updated }, requestActor(request));
   return sendSuccess(reply, updated);
 }
 
@@ -110,5 +133,12 @@ export async function putUserActiveState(
   const { id } = parseOrThrow(userIdParamsSchema, request.params);
   const body = parseOrThrow(setActiveBodySchema, request.body);
   const updated = await setUserActiveState(id, body.isActive);
+
+  // Deactivating an account is a security event; reactivating one is recorded as
+  // an ordinary update and needs no separate audit action.
+  if (body.isActive === false) {
+    await audit.userDeactivated({ ...updated }, requestActor(request));
+  }
+
   return sendSuccess(reply, updated);
 }

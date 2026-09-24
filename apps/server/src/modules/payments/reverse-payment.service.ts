@@ -16,6 +16,8 @@ import { getNextReversalReceiptNumber } from "./receipt-number.service";
 
 export interface ReversePaymentResult {
   paymentId: string;
+  /** The original payment's receipt number, so the audit trail names the payment. */
+  receiptNumber: string;
   reversalReceiptNumber: string;
   reversedAt: Date;
 }
@@ -88,7 +90,7 @@ export async function reversePaymentWithinTransaction(
 
   await recordPaymentReversed(executor, payment, reason, reversedByUserId);
 
-  return { paymentId, reversalReceiptNumber, reversedAt };
+  return { paymentId, receiptNumber: payment.receiptNumber, reversalReceiptNumber, reversedAt };
 }
 
 /**

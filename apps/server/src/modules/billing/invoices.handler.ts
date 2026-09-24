@@ -11,6 +11,7 @@ import {
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import {
   createReconnectionFeeInvoice,
   getInvoiceById,
@@ -67,6 +68,7 @@ export async function postInvoicePosted(
   const { id } = parseOrThrow(invoiceIdParamsSchema, request.params);
   const postedByUserId = request.user?.id ?? "";
   const invoice = await postInvoiceForId(id, postedByUserId);
+  await audit.invoicePosted({ ...invoice }, requestActor(request));
   return sendSuccess(reply, invoice);
 }
 
@@ -79,5 +81,6 @@ export async function postInvoiceVoided(
   const body = parseOrThrow(voidInvoiceSchema, request.body);
   const voidedByUserId = request.user?.id ?? "";
   const invoice = await voidInvoice(id, body.reason, voidedByUserId);
+  await audit.invoiceVoided({ ...invoice }, body.reason, requestActor(request));
   return sendSuccess(reply, invoice);
 }

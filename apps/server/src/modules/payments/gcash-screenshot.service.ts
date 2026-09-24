@@ -51,6 +51,54 @@ export function validateGcashScreenshot(contentType: string, sizeBytes: number):
   }
 }
 
+/** True when the buffer starts with the given bytes. */
+function startsWithBytes(buffer: Buffer, signature: readonly number[]): boolean {
+  if (buffer.byteLength < signature.length) {
+    return false;
+  }
+  return signature.every((byte, index) => buffer[index] === byte);
+}
+
+// The magic bytes (file signatures) of the accepted image formats. Checking them
+// is what stops a file renamed from .exe to .jpg from being accepted: the name
+// and the declared content type are both attacker-controlled, the bytes are not.
+const JPEG_MAGIC_BYTES = [0xff, 0xd8, 0xff] as const;
+const PNG_MAGIC_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+const RIFF_MAGIC_BYTES = [0x52, 0x49, 0x46, 0x46] as const; // "RIFF"
+const WEBP_MAGIC_BYTES = [0x57, 0x45, 0x42, 0x50] as const; // "WEBP" at offset 8
+
+/**
+ * The image format a buffer's magic bytes really are, or null when the bytes are
+ * not a supported image at all.
+ *
+ * Pure: takes bytes, answers with a MIME type. No disk, no database.
+ */
+export function detectImageMimeType(buffer: Buffer): GcashScreenshotMimeType | null {
+  if (startsWithBytes(buffer, JPEG_MAGIC_BYTES)) {
+    return "image/jpeg";
+  }
+
+  if (startsWithBytes(buffer, PNG_MAGIC_BYTES)) {
+    return "image/png";
+  }
+
+  // A WebP file is a RIFF container whose form type at offset 8 is "WEBP".
+  if (
+    startsWithBytes(buffer, RIFF_MAGIC_BYTES) &&
+    buffer.byteLength >= 12 &&
+    startsWithBytes(buffer.subarray(8), WEBP_MAGIC_BYTES)
+  ) {
+    return "image/webp";
+  }
+
+  return null;
+}
+
+/** True when the bytes look like one of the accepted image formats. */
+export function isValidImageMagicBytes(buffer: Buffer): boolean {
+  return detectImageMimeType(buffer) !== null;
+}
+
 export interface StoreGcashScreenshotInput {
   contentType: GcashScreenshotMimeType;
   dataBase64: string;
@@ -65,6 +113,13 @@ export async function storeGcashScreenshot(
 ): Promise<{ filePath: string; sizeBytes: number }> {
   const bytes = Buffer.from(input.dataBase64, "base64");
   validateGcashScreenshot(input.contentType, bytes.byteLength);
+
+  // The declared content type is client-supplied. The bytes are not, so the file
+  // must actually BE the format it claims to be.
+  const detectedMimeType = detectImageMimeType(bytes);
+  if (detectedMimeType === null || detectedMimeType !== input.contentType) {
+    throw new ValidationError("File content does not match a valid image format");
+  }
 
   const now = new Date();
   const year = String(now.getFullYear());

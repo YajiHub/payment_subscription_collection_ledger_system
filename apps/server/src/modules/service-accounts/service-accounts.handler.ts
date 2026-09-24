@@ -14,6 +14,7 @@ import {
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import { createReconnectionFeeInvoice } from "../billing/invoices.service";
 import {
   assignCollector,
@@ -66,6 +67,7 @@ export async function putServiceAccountSuspended(
   const changedBy = request.user?.id ?? "";
 
   const suspended = await suspendServiceAccount(id, reason, changedBy);
+  await audit.serviceAccountSuspended({ ...suspended }, reason, requestActor(request));
   return sendSuccess(reply, suspended);
 }
 

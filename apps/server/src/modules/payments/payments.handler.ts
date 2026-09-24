@@ -14,6 +14,7 @@ import {
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import { postPayment } from "./post-payment.service";
 import { reversePayment } from "./reverse-payment.service";
 import { readGcashScreenshot, storeGcashScreenshot } from "./gcash-screenshot.service";
@@ -52,6 +53,8 @@ export async function postPaymentHandler(
     postedByUserId,
     gcash: body.gcash,
   });
+
+  await audit.paymentPosted({ ...result.payment }, requestActor(request));
 
   return sendSuccess(
     reply,
@@ -109,6 +112,12 @@ export async function reversePaymentHandler(
   const reversedByUserId = request.user?.id ?? "";
 
   const result = await reversePayment(id, body.reason, reversedByUserId);
+  await audit.paymentReversed(
+    result.paymentId,
+    result.receiptNumber,
+    body.reason,
+    requestActor(request)
+  );
   return sendSuccess(reply, result);
 }
 
