@@ -4,7 +4,7 @@
 // through a floating-point value. The column headers say so explicitly.
 
 import type { ArAgingReport } from "./ar-aging.service";
-import { buildXlsxWorkbook, type XlsxRow } from "./xlsx-writer";
+import { buildXlsxWorkbook, type XlsxRow } from "../../shared/xlsx/xlsx-writer";
 
 export const AR_AGING_EXPORT_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

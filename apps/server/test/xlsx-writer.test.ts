@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildXlsxWorkbook, crc32 } from "../src/modules/receivables/xlsx-writer";
+import { buildXlsxWorkbook, crc32 } from "../src/shared/xlsx/xlsx-writer";
 import { buildArAgingRows } from "../src/modules/receivables/ar-aging-export.service";
 import type { ArAgingReport } from "../src/modules/receivables/ar-aging.service";
 
@@ -45,7 +45,7 @@ describe("buildXlsxWorkbook", () => {
   });
 
   it("writes string cells inline and numbers as numeric cells", () => {
-    expect(decoded).toContain("<t xml:space=\"preserve\">Santos, Maria</t>");
+    expect(decoded).toContain('<t xml:space="preserve">Santos, Maria</t>');
     expect(decoded).toContain('<c r="B2"><v>175000</v></c>');
   });
 });
