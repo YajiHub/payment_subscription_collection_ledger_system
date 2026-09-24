@@ -8,6 +8,9 @@
 import axios, { AxiosError } from "axios";
 
 import type {
+  CollectedMethod,
+  CollectionResult,
+  CollectorBatchStatus,
   InvoiceStatus,
   InvoiceType,
   LedgerEntryType,
@@ -1046,6 +1049,352 @@ export async function postManualLedgerEntry(
   const response = await httpClient.post<ApiSuccessEnvelope<ManualLedgerEntryResult>>(
     "/api/ledger/manual-entry",
     input
+  );
+  return unwrap(response.data);
+}
+
+// ─── Phase 7: field collection and receivables ────────────────────────────────
+// Same rule as above: this is the only place the renderer performs HTTP.
+//
+// Every monetary value here is an integer number of centavos. The renderer never
+// does money arithmetic in floating point; it only formats the integers.
+
+export interface AssignableCollector {
+  id: string;
+  fullName: string;
+  isActive: boolean;
+}
+
+export interface CollectorBatchSummary {
+  id: string;
+  batchNumber: string;
+  collectorId: string;
+  collectorName: string;
+  status: CollectorBatchStatus;
+  collectionDate: string;
+  expectedRemittanceCentavos: number;
+  actualRemittanceCentavos: number | null;
+  varianceCentavos: number | null;
+  varianceNotes: string | null;
+  assignmentCount: number;
+  collectedCount: number;
+  createdAt: string;
+  submittedAt: string | null;
+  reconciledAt: string | null;
+}
+
+export interface BatchAssignmentSummary {
+  id: string;
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  planName: string;
+  outstandingBalanceCentavos: number;
+  collectionResult: CollectionResult | null;
+  collectedAmountCentavos: number | null;
+  collectedMethod: CollectedMethod | null;
+  paymentId: string | null;
+  collectorNotes: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
+}
+
+export interface CollectorBatchDetail extends CollectorBatchSummary {
+  assignments: BatchAssignmentSummary[];
+  collectedTotalCentavos: number;
+  outstandingTotalCentavos: number;
+}
+
+export interface CollectorBatchList {
+  items: CollectorBatchSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ListCollectorBatchFilters {
+  collectorId?: string;
+  status?: CollectorBatchStatus;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface CreateCollectorBatchInput {
+  collectorId: string;
+  collectionDate: string;
+  serviceAccountIds: string[];
+}
+
+export interface RecordCollectionInput {
+  result: CollectionResult;
+  collectedAmountCentavos?: number;
+  collectedMethod?: CollectedMethod;
+  collectorNotes?: string;
+  gcash?: { referenceNumber: string; senderName?: string; senderGcashNumber?: string };
+}
+
+export interface RecordCollectionResult {
+  batchId: string;
+  serviceAccountId: string;
+  expectedRemittanceCentavos: number;
+  paymentId: string | null;
+}
+
+export interface SubmitRemittanceResult {
+  batchId: string;
+  expectedRemittanceCentavos: number;
+  actualRemittanceCentavos: number;
+  varianceCentavos: number;
+  hasVariance: boolean;
+}
+
+export interface ReconcileBatchResult {
+  batchId: string;
+  varianceCentavos: number;
+  expectedRemittanceCentavos: number;
+  actualRemittanceCentavos: number;
+  ledgerCreditTotalCentavos: number;
+  ledgerReconciles: boolean;
+}
+
+export interface ArAgingEntry {
+  subscriberId: string;
+  subscriberName: string;
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  planName: string;
+  currentCentavos: number;
+  bucket_1_30_centavos: number;
+  bucket_31_60_centavos: number;
+  bucket_61_90_centavos: number;
+  over_90_centavos: number;
+  totalOutstandingCentavos: number;
+}
+
+export interface ArAgingTotals {
+  current: number;
+  bucket_1_30: number;
+  bucket_31_60: number;
+  bucket_61_90: number;
+  over_90: number;
+  grandTotal: number;
+}
+
+export interface ArAgingReport {
+  asOfDate: string;
+  entries: ArAgingEntry[];
+  totals: ArAgingTotals;
+}
+
+/** A bucket in the overdue summary, e.g. "3_months_or_more". */
+export type OverdueSummaryBucketKey = "1_month" | "2_months" | "3_months_or_more";
+
+export interface OverdueSummaryBucket {
+  bucket: OverdueSummaryBucketKey;
+  accountCount: number;
+  totalCentavos: number;
+}
+
+export interface OverdueAccount {
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  planName: string;
+  consecutiveOverdueMonths: number;
+  totalOverdueCentavos: number;
+  collectorId: string | null;
+  collectorName: string | null;
+  lastPaymentDate: string | null;
+}
+
+export interface OverdueAccountsResult {
+  items: OverdueAccount[];
+  totalOverdueCentavos: number;
+}
+
+export interface OverdueSummaryResult {
+  accountCount: number;
+  totalOverdueCentavos: number;
+  buckets: OverdueSummaryBucket[];
+}
+
+export interface SuspendOverdueResult {
+  suspended: string[];
+  failed: { serviceAccountId: string; message: string }[];
+}
+
+/** GET /api/collector-batches/collectors — the active collectors a batch can be for. */
+export async function listAssignableCollectors(): Promise<AssignableCollector[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<{ items: AssignableCollector[] }>>(
+    "/api/collector-batches/collectors"
+  );
+  return unwrap(response.data).items;
+}
+
+/** GET /api/collector-batches — the batch list, scoped to the caller on the server. */
+export async function listCollectorBatches(
+  filters: ListCollectorBatchFilters = {}
+): Promise<CollectorBatchList> {
+  const response = await httpClient.get<ApiSuccessEnvelope<CollectorBatchList>>(
+    "/api/collector-batches",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/collector-batches — creates a batch with its first service accounts. */
+export async function createCollectorBatch(
+  input: CreateCollectorBatchInput
+): Promise<CollectorBatchDetail> {
+  const response = await httpClient.post<ApiSuccessEnvelope<CollectorBatchDetail>>(
+    "/api/collector-batches",
+    input
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/collector-batches/:id — one batch with its assignments and totals. */
+export async function getCollectorBatch(batchId: string): Promise<CollectorBatchDetail> {
+  const response = await httpClient.get<ApiSuccessEnvelope<CollectorBatchDetail>>(
+    `/api/collector-batches/${batchId}`
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/collector-batches/:id/assignments — adds accounts to an open batch. */
+export async function addBatchAssignments(
+  batchId: string,
+  serviceAccountIds: string[]
+): Promise<CollectorBatchDetail> {
+  const response = await httpClient.post<ApiSuccessEnvelope<CollectorBatchDetail>>(
+    `/api/collector-batches/${batchId}/assignments`,
+    { serviceAccountIds }
+  );
+  return unwrap(response.data);
+}
+
+/** PUT /api/collector-batches/:id/assignments/:serviceAccountId — records a visit. */
+export async function recordCollection(
+  batchId: string,
+  serviceAccountId: string,
+  input: RecordCollectionInput
+): Promise<RecordCollectionResult> {
+  const response = await httpClient.put<ApiSuccessEnvelope<RecordCollectionResult>>(
+    `/api/collector-batches/${batchId}/assignments/${serviceAccountId}`,
+    input
+  );
+  return unwrap(response.data);
+}
+
+/** PUT .../assignments/:serviceAccountId/void — voids a collection. */
+export async function voidCollection(
+  batchId: string,
+  serviceAccountId: string,
+  reason: string
+): Promise<RecordCollectionResult> {
+  const response = await httpClient.put<ApiSuccessEnvelope<RecordCollectionResult>>(
+    `/api/collector-batches/${batchId}/assignments/${serviceAccountId}/void`,
+    { reason }
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/collector-batches/:id/submit — declares the cash handed in. */
+export async function submitBatchRemittance(
+  batchId: string,
+  actualRemittanceCentavos: number
+): Promise<SubmitRemittanceResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<SubmitRemittanceResult>>(
+    `/api/collector-batches/${batchId}/submit`,
+    { actualRemittanceCentavos }
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/collector-batches/:id/reconcile — closes a submitted batch. */
+export async function reconcileBatch(
+  batchId: string,
+  varianceNotes?: string
+): Promise<ReconcileBatchResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<ReconcileBatchResult>>(
+    `/api/collector-batches/${batchId}/reconcile`,
+    { varianceNotes }
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/collector-batches/:id/cancel — abandons an open batch. */
+export async function cancelCollectorBatch(
+  batchId: string,
+  reason?: string
+): Promise<CollectorBatchSummary> {
+  const response = await httpClient.post<ApiSuccessEnvelope<CollectorBatchSummary>>(
+    `/api/collector-batches/${batchId}/cancel`,
+    { reason }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/receivables/ar-aging — the AR aging report as of a calendar day. */
+export async function getArAging(asOfDate?: string): Promise<ArAgingReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<ArAgingReport>>(
+    "/api/receivables/ar-aging",
+    { params: { asOfDate } }
+  );
+  return unwrap(response.data);
+}
+
+/**
+ * GET /api/receivables/ar-aging/export — downloads the .xlsx workbook.
+ *
+ * The response is a file, not the JSON envelope, so it is fetched as an array
+ * buffer. The renderer then hands the bytes to Electron's save dialog / a download.
+ */
+export async function downloadArAgingXlsx(
+  asOfDate?: string
+): Promise<{ fileName: string; bytes: ArrayBuffer }> {
+  const response = await httpClient.get<ArrayBuffer>("/api/receivables/ar-aging/export", {
+    params: { asOfDate, format: "xlsx" },
+    responseType: "arraybuffer",
+  });
+  const fileName = `AR-aging-${asOfDate ?? new Date().toISOString().slice(0, 10)}.xlsx`;
+  return { fileName, bytes: response.data };
+}
+
+/** GET /api/receivables/overdue — the overdue service accounts. */
+export async function getOverdueAccounts(
+  filters: { noPaymentInDays?: number; minConsecutiveOverdueMonths?: number } = {}
+): Promise<OverdueAccountsResult> {
+  const response = await httpClient.get<ApiSuccessEnvelope<OverdueAccountsResult>>(
+    "/api/receivables/overdue",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/receivables/overdue-summary — counts and totals by overdue duration. */
+export async function getOverdueSummary(
+  filters: { noPaymentInDays?: number; minConsecutiveOverdueMonths?: number } = {}
+): Promise<OverdueSummaryResult> {
+  const response = await httpClient.get<ApiSuccessEnvelope<OverdueSummaryResult>>(
+    "/api/receivables/overdue-summary",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/receivables/overdue/suspend — suspends the selected accounts. */
+export async function suspendOverdueAccounts(
+  serviceAccountIds: string[],
+  reason: string
+): Promise<SuspendOverdueResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<SuspendOverdueResult>>(
+    "/api/receivables/overdue/suspend",
+    { serviceAccountIds, reason }
   );
   return unwrap(response.data);
 }

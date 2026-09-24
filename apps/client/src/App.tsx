@@ -4,6 +4,8 @@ import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AddSubscriberPage } from "./pages/AddSubscriberPage";
 import { BillingDashboardPage } from "./pages/BillingDashboardPage";
+import { CollectorBatchDetailPage } from "./pages/CollectorBatchDetailPage";
+import { CollectorBatchListPage } from "./pages/CollectorBatchListPage";
 import { HomePage } from "./pages/HomePage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 import { InvoiceListPage } from "./pages/InvoiceListPage";
@@ -12,6 +14,8 @@ import { PaymentDetailPage } from "./pages/PaymentDetailPage";
 import { PaymentHistoryPage } from "./pages/PaymentHistoryPage";
 import { PlanManagementPage } from "./pages/PlanManagementPage";
 import { PostPaymentPage } from "./pages/PostPaymentPage";
+import { ReceivablesAgingPage } from "./pages/ReceivablesAgingPage";
+import { OverdueAccountsPage } from "./pages/OverdueAccountsPage";
 import { ReceiptPreviewPage } from "./pages/ReceiptPreviewPage";
 import { ServiceAccountLedgerPage } from "./pages/ServiceAccountLedgerPage";
 import { StatementOfAccountPage } from "./pages/StatementOfAccountPage";
@@ -148,6 +152,38 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="receipts:print">
               <ReceiptPreviewPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/collector-batches"
+          element={
+            <ProtectedRoute requiredPermission="collector_batches:read">
+              <CollectorBatchListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/collector-batches/:id"
+          element={
+            <ProtectedRoute requiredPermission="collector_batches:read">
+              <CollectorBatchDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/receivables/aging"
+          element={
+            <ProtectedRoute requiredPermission="reports:view">
+              <ReceivablesAgingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/receivables/overdue"
+          element={
+            <ProtectedRoute requiredPermission="reports:view">
+              <OverdueAccountsPage />
             </ProtectedRoute>
           }
         />

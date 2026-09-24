@@ -33,6 +33,8 @@ export function HomePage(): ReactNode {
   const canViewInvoices = user !== null && roleHasPermission(user.role, "invoices:read");
   const canViewPayments = user !== null && roleHasPermission(user.role, "payments:read");
   const canPostPayments = user !== null && roleHasPermission(user.role, "payments:post");
+  const canViewBatches = user !== null && roleHasPermission(user.role, "collector_batches:read");
+  const canViewReports = user !== null && roleHasPermission(user.role, "reports:view");
 
   async function handleLogout(): Promise<void> {
     try {
@@ -79,6 +81,21 @@ export function HomePage(): ReactNode {
           {canPostPayments && (
             <Link to="/payments/new" className="text-slate-800 underline">
               Post Payment
+            </Link>
+          )}
+          {canViewBatches && (
+            <Link to="/collector-batches" className="text-slate-800 underline">
+              Collector Batches
+            </Link>
+          )}
+          {canViewReports && (
+            <Link to="/receivables/aging" className="text-slate-800 underline">
+              AR Aging
+            </Link>
+          )}
+          {canViewReports && (
+            <Link to="/receivables/overdue" className="text-slate-800 underline">
+              Overdue Accounts
             </Link>
           )}
           {canManageUsers && (
