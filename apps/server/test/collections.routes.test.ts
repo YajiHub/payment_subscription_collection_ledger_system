@@ -218,6 +218,51 @@ describe("collector batch routes", () => {
     expect(insertedInto(collectorBatches)).toHaveLength(1);
   });
 
+  it("lets a Manager see every collector's batches", async () => {
+    const { token } = signTestToken({ role: "manager", sub: randomUUID() });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      { batch: batchRow({ id: randomUUID(), collectorId: COLLECTOR_A_ID, batchNumber: "CB-20250124-0001" }), collectorName: "Rico Reyes" },
+      { batch: batchRow({ id: randomUUID(), collectorId: COLLECTOR_B_ID, batchNumber: "CB-20250124-0002" }), collectorName: "Nena Cruz" },
+    ]);
+    fakeDatabase.queueSelectRows([]); // assignment counts
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/collector-batches",
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const collectorIds = (response.json().data.items as Array<{ collectorId: string }>).map(
+      (item) => item.collectorId
+    );
+    expect(collectorIds).toEqual([COLLECTOR_A_ID, COLLECTOR_B_ID]);
+  });
+
+  it("scopes a Collector's list to their own batches", async () => {
+    const { token } = signTestToken({ role: "collector", sub: COLLECTOR_B_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    // The server forces the collector filter, so the database returns only their own.
+    fakeDatabase.queueSelectRows([
+      { batch: batchRow({ id: randomUUID(), collectorId: COLLECTOR_B_ID }), collectorName: "Nena Cruz" },
+    ]);
+    fakeDatabase.queueSelectRows([]); // assignment counts
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/collector-batches",
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const items = response.json().data.items as Array<{ collectorId: string }>;
+    expect(items).toHaveLength(1);
+    expect(items[0]?.collectorId).toBe(COLLECTOR_B_ID);
+  });
+
   it("lists the active collectors a batch can be created for", async () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: BILLING_CLERK_ID });
 
