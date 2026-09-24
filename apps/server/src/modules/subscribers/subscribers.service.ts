@@ -20,6 +20,7 @@ import {
   type CreateServiceAccountInput,
   type ServiceAccountSummary,
 } from "../service-accounts/service-accounts.service";
+import { getCurrentBalanceCentavos } from "../ledger/ledger.service";
 import type {
   CreateSubscriberFields,
   ServiceAccountStatus,
@@ -290,26 +291,39 @@ export async function updateSubscriber(
   };
 }
 
+export interface SubscriberStatementAccount extends Omit<ServiceAccountSummary, "balanceCentavos"> {
+  /** The current balance, computed from the ledger (negative = advance credit). */
+  balanceCentavos: number;
+}
+
 export interface StatementOfAccount {
   subscriber: SubscriberSummary;
   generatedAt: Date;
-  serviceAccounts: ServiceAccountSummary[];
-  /**
-   * Totals come from the ledger, which is implemented in Phase 6.
-   * Until then they are reported as null rather than a misleading zero.
-   */
-  totalOutstandingCentavos: null;
+  serviceAccounts: SubscriberStatementAccount[];
+  /** The sum of every account's positive balance; credits do not offset debts. */
+  totalOutstandingCentavos: number;
 }
 
-/** Statement of account: the subscriber and every service they hold. */
+/** Statement of account: the subscriber, every service they hold, and each balance. */
 export async function getSubscriberStatement(subscriberId: string): Promise<StatementOfAccount> {
   const subscriber = await getSubscriberById(subscriberId);
+
+  const serviceAccountsWithBalances: SubscriberStatementAccount[] = [];
+  let totalOutstandingCentavos = 0;
+
+  for (const account of subscriber.serviceAccounts) {
+    const balanceCentavos = await getCurrentBalanceCentavos(db, account.id);
+    serviceAccountsWithBalances.push({ ...account, balanceCentavos });
+    if (balanceCentavos > 0) {
+      totalOutstandingCentavos += balanceCentavos;
+    }
+  }
 
   return {
     subscriber,
     generatedAt: new Date(),
-    serviceAccounts: subscriber.serviceAccounts,
-    totalOutstandingCentavos: null,
+    serviceAccounts: serviceAccountsWithBalances,
+    totalOutstandingCentavos,
   };
 }
 
