@@ -6,6 +6,9 @@
 //
 // `electronAPI` is optional: the renderer also runs in a plain browser during
 // `vite dev`, where the bridge is absent, so callers must guard for it.
+//
+// Keep this list in step with the object exposed in electron/preload.ts: a capability
+// that is not listed here is one the renderer may not call.
 
 export {};
 
@@ -19,6 +22,8 @@ declare global {
       }) => Promise<string | null>;
       /** Ask the main process to print the current window. */
       printCurrentWindow: () => Promise<void>;
+      /** Open a separate window showing a finished report document. */
+      openPrintPreview: (htmlContent: string) => Promise<void>;
       /** Version of the installed desktop application. */
       getAppVersion: () => Promise<string>;
     };

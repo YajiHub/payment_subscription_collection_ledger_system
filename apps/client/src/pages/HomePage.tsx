@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { roleHasPermission } from "@bcis/shared";
 import { ApiStatusBadge } from "../components/ApiStatusBadge";
@@ -46,6 +46,12 @@ export function HomePage(): ReactNode {
     navigate("/login", { replace: true });
   }
 
+  // Phase 8 §8: the Management Dashboard is the first screen after login for the
+  // Administrator and the Manager. Everyone else stays on this page.
+  if (user !== null && (user.role === "admin" || user.role === "manager")) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-6 p-8">
       <header className="flex items-start justify-between gap-4">
@@ -86,6 +92,16 @@ export function HomePage(): ReactNode {
           {canViewBatches && (
             <Link to="/collector-batches" className="text-slate-800 underline">
               Collector Batches
+            </Link>
+          )}
+          {canViewReports && (
+            <Link to="/dashboard" className="text-slate-800 underline">
+              Dashboard
+            </Link>
+          )}
+          {canViewReports && (
+            <Link to="/reports" className="text-slate-800 underline">
+              Reports
             </Link>
           )}
           {canViewReports && (

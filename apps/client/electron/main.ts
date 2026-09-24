@@ -53,6 +53,24 @@ ipcMain.handle("print-window", (event) => {
   return BrowserWindow.fromWebContents(event.sender)?.webContents.print();
 });
 
+// Report preview: a separate window that shows a report document and can be printed
+// from there. The renderer supplies the finished HTML; the main process only opens a
+// window for it, so no data is fetched here either.
+ipcMain.handle("open-print-preview", async (_event, htmlContent: string) => {
+  const previewWindow = new BrowserWindow({
+    width: 900,
+    height: 700,
+    title: "Print Preview",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+
+  await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+});
+
 void app.whenReady().then(() => {
   createMainWindow();
 

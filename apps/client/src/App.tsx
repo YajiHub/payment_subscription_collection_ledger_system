@@ -6,6 +6,7 @@ import { AddSubscriberPage } from "./pages/AddSubscriberPage";
 import { BillingDashboardPage } from "./pages/BillingDashboardPage";
 import { CollectorBatchDetailPage } from "./pages/CollectorBatchDetailPage";
 import { CollectorBatchListPage } from "./pages/CollectorBatchListPage";
+import { DashboardPage } from "./pages/DashboardPage";
 import { HomePage } from "./pages/HomePage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 import { InvoiceListPage } from "./pages/InvoiceListPage";
@@ -15,6 +16,7 @@ import { PaymentHistoryPage } from "./pages/PaymentHistoryPage";
 import { PlanManagementPage } from "./pages/PlanManagementPage";
 import { PostPaymentPage } from "./pages/PostPaymentPage";
 import { ReceivablesAgingPage } from "./pages/ReceivablesAgingPage";
+import { ReportsCenterPage } from "./pages/ReportsCenterPage";
 import { OverdueAccountsPage } from "./pages/OverdueAccountsPage";
 import { ReceiptPreviewPage } from "./pages/ReceiptPreviewPage";
 import { ServiceAccountLedgerPage } from "./pages/ServiceAccountLedgerPage";
@@ -184,6 +186,22 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="reports:view">
               <OverdueAccountsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute requiredPermission="reports:view">
+              <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute requiredPermission="reports:view">
+              <ReportsCenterPage />
             </ProtectedRoute>
           }
         />

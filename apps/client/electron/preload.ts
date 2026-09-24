@@ -23,6 +23,15 @@ const electronApi = {
     return ipcRenderer.invoke("print-window");
   },
 
+  /**
+   * Opens a separate Electron window showing a finished report document, so it can
+   * be reviewed and printed from there. The renderer passes the HTML it already
+   * rendered; the main process fetches nothing.
+   */
+  openPrintPreview: (htmlContent: string): Promise<void> => {
+    return ipcRenderer.invoke("open-print-preview", htmlContent);
+  },
+
   /** Version of the installed desktop application, shown in the UI footer. */
   getAppVersion: (): Promise<string> => {
     return ipcRenderer.invoke("get-app-version");

@@ -11,6 +11,7 @@ import type {
   CollectedMethod,
   CollectionResult,
   CollectorBatchStatus,
+  ReportType,
   InvoiceStatus,
   InvoiceType,
   LedgerEntryType,
@@ -370,10 +371,12 @@ export interface ListSubscriberFilters {
 }
 
 /** GET /api/plans — active plans, optionally filtered by service type. */
-export async function listPlans(options: {
-  serviceType?: ServiceType;
-  includeInactive?: boolean;
-} = {}): Promise<Plan[]> {
+export async function listPlans(
+  options: {
+    serviceType?: ServiceType;
+    includeInactive?: boolean;
+  } = {}
+): Promise<Plan[]> {
   const response = await httpClient.get<ApiSuccessEnvelope<{ items: Plan[] }>>("/api/plans", {
     params: {
       serviceType: options.serviceType,
@@ -435,10 +438,7 @@ export async function getSubscriber(id: string): Promise<Subscriber> {
 
 /** POST /api/subscribers — creates a subscriber, with a first service account when supplied. */
 export async function createSubscriber(input: CreateSubscriberInput): Promise<Subscriber> {
-  const response = await httpClient.post<ApiSuccessEnvelope<Subscriber>>(
-    "/api/subscribers",
-    input
-  );
+  const response = await httpClient.post<ApiSuccessEnvelope<Subscriber>>("/api/subscribers", input);
   return unwrap(response.data);
 }
 
@@ -483,10 +483,7 @@ export async function addServiceAccount(
 }
 
 /** PUT /api/service-accounts/:id/suspend — cuts off service. A reason is required. */
-export async function suspendServiceAccount(
-  id: string,
-  reason: string
-): Promise<ServiceAccount> {
+export async function suspendServiceAccount(id: string, reason: string): Promise<ServiceAccount> {
   const response = await httpClient.put<ApiSuccessEnvelope<ServiceAccount>>(
     `/api/service-accounts/${id}/suspend`,
     { reason }
@@ -507,10 +504,7 @@ export async function reconnectServiceAccount(
 }
 
 /** PUT /api/service-accounts/:id/terminate — permanently ends service. */
-export async function terminateServiceAccount(
-  id: string,
-  reason: string
-): Promise<ServiceAccount> {
+export async function terminateServiceAccount(id: string, reason: string): Promise<ServiceAccount> {
   const response = await httpClient.put<ApiSuccessEnvelope<ServiceAccount>>(
     `/api/service-accounts/${id}/terminate`,
     { reason }
@@ -652,9 +646,8 @@ export async function postAllDraftInvoices(
 
 /** GET /api/billing/runs — the billing run history, newest first. */
 export async function listBillingRuns(): Promise<BillingRunRecord[]> {
-  const response = await httpClient.get<ApiSuccessEnvelope<{ items: BillingRunRecord[] }>>(
-    "/api/billing/runs"
-  );
+  const response =
+    await httpClient.get<ApiSuccessEnvelope<{ items: BillingRunRecord[] }>>("/api/billing/runs");
   return unwrap(response.data).items;
 }
 
@@ -808,9 +801,7 @@ export interface ListPaymentFilters {
 }
 
 /** GET /api/payments — the payment history, newest first. */
-export async function listPayments(
-  filters: ListPaymentFilters = {}
-): Promise<PaymentSummary[]> {
+export async function listPayments(filters: ListPaymentFilters = {}): Promise<PaymentSummary[]> {
   const response = await httpClient.get<ApiSuccessEnvelope<{ items: PaymentSummary[] }>>(
     "/api/payments",
     { params: filters }
@@ -876,10 +867,9 @@ export async function uploadGcashScreenshot(input: {
   contentType: string;
   dataBase64: string;
 }): Promise<{ filePath: string; sizeBytes: number }> {
-  const response = await httpClient.post<ApiSuccessEnvelope<{ filePath: string; sizeBytes: number }>>(
-    "/api/payments/gcash/upload-screenshot",
-    input
-  );
+  const response = await httpClient.post<
+    ApiSuccessEnvelope<{ filePath: string; sizeBytes: number }>
+  >("/api/payments/gcash/upload-screenshot", input);
   return unwrap(response.data);
 }
 
@@ -1397,4 +1387,226 @@ export async function suspendOverdueAccounts(
     { serviceAccountIds, reason }
   );
   return unwrap(response.data);
+}
+
+// ─── Phase 8: management dashboard and reports ────────────────────────────────
+// Same rule as above: this is the only place the renderer performs HTTP.
+//
+// Reports arrive as JSON for the screen and as a file for an export. Every monetary
+// value is an integer number of centavos; the renderer only formats them.
+
+export interface DashboardKpis {
+  totalActiveServiceAccounts: number;
+  newServiceAccountsThisMonth: number;
+  suspendedAccounts: number;
+  terminatedAccounts: number;
+  totalInvoicedThisMonthCentavos: number;
+  totalCollectedThisMonthCentavos: number;
+  collectionRatePercent: number;
+  totalOutstandingArCentavos: number;
+  overdueOver30DaysCentavos: number;
+  overdueOver90DaysCentavos: number;
+  openCollectorBatches: number;
+  submittedBatchesPendingReconciliation: number;
+  lastBillingRunDate: string | null;
+  lastBillingRunAccountsCount: number | null;
+}
+
+export interface DailyCollectionItem {
+  receiptNumber: string;
+  postedAt: string;
+  subscriberName: string;
+  serviceAccountNumber: string;
+  paymentMethod: PaymentMethod;
+  amountCentavos: number;
+  postedByName: string;
+}
+
+export interface PaymentTotals {
+  paymentCount: number;
+  cashTotalCentavos: number;
+  gcashTotalCentavos: number;
+  grandTotalCentavos: number;
+}
+
+export interface DailyCollectionReport {
+  date: string;
+  items: DailyCollectionItem[];
+  totals: PaymentTotals;
+}
+
+export interface MonthlyBillingItem {
+  invoiceNumber: string;
+  subscriberName: string;
+  serviceAccountNumber: string;
+  planName: string;
+  invoiceDate: string;
+  dueDate: string;
+  totalAmountCentavos: number;
+  paidAmountCentavos: number;
+  remainingBalanceCentavos: number;
+  status: InvoiceStatus;
+}
+
+export interface MonthlyBillingReport {
+  year: number;
+  month: number;
+  periodLabel: string;
+  items: MonthlyBillingItem[];
+  totals: {
+    invoiceCount: number;
+    totalInvoicedCentavos: number;
+    totalPaidCentavos: number;
+    totalOutstandingCentavos: number;
+  };
+}
+
+export interface CollectorRemittanceLine {
+  subscriberName: string;
+  serviceAccountNumber: string;
+  collectedAmountCentavos: number;
+  collectedMethod: CollectedMethod | null;
+  collectionResult: CollectionResult | null;
+  isVoided: boolean;
+}
+
+export interface CollectorRemittanceReport {
+  batchId: string;
+  batchNumber: string;
+  collectorName: string;
+  collectionDate: string;
+  status: CollectorBatchStatus;
+  lines: CollectorRemittanceLine[];
+  expectedRemittanceCentavos: number;
+  actualRemittanceCentavos: number | null;
+  varianceCentavos: number | null;
+  hasVariance: boolean;
+}
+
+export interface CollectorOutstandingGroup {
+  collectorId: string | null;
+  collectorName: string;
+  assignedAccountCount: number;
+  totalOutstandingCentavos: number;
+  bucket_30_60_centavos: number;
+  bucket_60_90_centavos: number;
+  over_90_centavos: number;
+}
+
+export interface OutstandingByCollectorReport {
+  asOfDate: string;
+  groups: CollectorOutstandingGroup[];
+  totals: CollectorOutstandingGroup;
+}
+
+/** The parameters an export request carries. Only the chosen report reads them. */
+export interface ReportExportParams {
+  date?: string;
+  year?: number;
+  month?: number;
+  asOf?: string;
+  batchId?: string;
+  serviceAccountId?: string;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export interface ReportExportRequest {
+  reportType: ReportType;
+  params: ReportExportParams;
+}
+
+export interface DownloadedReport {
+  fileName: string;
+  bytes: ArrayBuffer;
+}
+
+/** GET /api/dashboard/kpis — every KPI the dashboard shows. */
+export async function getDashboardKpis(): Promise<DashboardKpis> {
+  const response = await httpClient.get<ApiSuccessEnvelope<DashboardKpis>>("/api/dashboard/kpis");
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/daily-collection — everything collected on one day. */
+export async function getDailyCollectionReport(date?: string): Promise<DailyCollectionReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<DailyCollectionReport>>(
+    "/api/reports/daily-collection",
+    { params: { date } }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/monthly-billing — every invoice raised for a billing period. */
+export async function getMonthlyBillingReport(
+  year: number,
+  month: number
+): Promise<MonthlyBillingReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<MonthlyBillingReport>>(
+    "/api/reports/monthly-billing",
+    { params: { year, month } }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/ar-aging — the AR aging report as of a calendar day. */
+export async function getArAgingReport(asOf?: string): Promise<ArAgingReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<ArAgingReport>>(
+    "/api/reports/ar-aging",
+    { params: { asOf } }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/collector-remittance — one batch's remittance reconciliation. */
+export async function getCollectorRemittanceReport(
+  batchId: string
+): Promise<CollectorRemittanceReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<CollectorRemittanceReport>>(
+    "/api/reports/collector-remittance",
+    { params: { batchId } }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/outstanding-by-collector — receivables grouped by collector. */
+export async function getOutstandingByCollectorReport(
+  asOf?: string
+): Promise<OutstandingByCollectorReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<OutstandingByCollectorReport>>(
+    "/api/reports/outstanding-by-collector",
+    { params: { asOf } }
+  );
+  return unwrap(response.data);
+}
+
+/** The file name the server put in Content-Disposition, or a fallback. */
+function fileNameFromDisposition(disposition: string | undefined, fallback: string): string {
+  const match = disposition?.match(/filename="([^"]+)"/);
+  return match?.[1] ?? fallback;
+}
+
+/** Downloads a report in the requested format. Throws when the caller may not export. */
+async function downloadReport(
+  path: string,
+  request: ReportExportRequest,
+  fallbackFileName: string
+): Promise<DownloadedReport> {
+  const response = await httpClient.post<ArrayBuffer>(path, request, {
+    responseType: "arraybuffer",
+  });
+
+  return {
+    fileName: fileNameFromDisposition(response.headers["content-disposition"], fallbackFileName),
+    bytes: response.data,
+  };
+}
+
+/** POST /api/reports/export-pdf — the report as a printable PDF document. */
+export async function exportReportPdf(request: ReportExportRequest): Promise<DownloadedReport> {
+  return downloadReport("/api/reports/export-pdf", request, `${request.reportType}.pdf`);
+}
+
+/** POST /api/reports/export-xlsx — the report as a spreadsheet. */
+export async function exportReportXlsx(request: ReportExportRequest): Promise<DownloadedReport> {
+  return downloadReport("/api/reports/export-xlsx", request, `${request.reportType}.xlsx`);
 }
