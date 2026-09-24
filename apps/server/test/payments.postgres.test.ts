@@ -126,10 +126,11 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
       "DELETE FROM gcash_payments WHERE payment_id IN (SELECT id FROM payments WHERE service_account_id = ANY($1::uuid[]))",
       [created.serviceAccountIds]
     );
-    await pool.query("DELETE FROM payments WHERE service_account_id = ANY($1::uuid[])", [
+    // The ledger references both payments and invoices, so it is cleared first.
+    await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
       created.serviceAccountIds,
     ]);
-    await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
+    await pool.query("DELETE FROM payments WHERE service_account_id = ANY($1::uuid[])", [
       created.serviceAccountIds,
     ]);
     await pool.query("DELETE FROM invoice_line_items WHERE invoice_id = ANY($1::uuid[])", [

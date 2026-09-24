@@ -342,6 +342,7 @@ describe("subscriber management routes", () => {
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([subscriberRow()]); // subscriber
     fakeDatabase.queueSelectRows([{ account: serviceAccountRow(), plan: planRow() }]); // accounts
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 125000 }]); // ledger balance for the account
 
     const response = await server.inject({
       method: "GET",
@@ -353,8 +354,9 @@ describe("subscriber management routes", () => {
     const body = response.json().data;
     expect(body.subscriber.accountNumber).toBe("SUB-20250124-00001");
     expect(body.serviceAccounts).toHaveLength(1);
-    // Balances come from the ledger in Phase 6; reported as null rather than zero.
-    expect(body.totalOutstandingCentavos).toBeNull();
+    // Phase 6 computes every balance from the ledger.
+    expect(body.serviceAccounts[0].balanceCentavos).toBe(125000);
+    expect(body.totalOutstandingCentavos).toBe(125000);
   });
 });
 
