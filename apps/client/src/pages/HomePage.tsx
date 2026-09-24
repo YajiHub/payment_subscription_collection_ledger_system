@@ -28,6 +28,8 @@ export function HomePage(): ReactNode {
   const lastCheckedAt = useApiStatusStore((state) => state.lastCheckedAt);
 
   const canManageUsers = user !== null && roleHasPermission(user.role, "users:read");
+  const canViewAuditLogs = user !== null && roleHasPermission(user.role, "audit:read");
+  const canManageSettings = user !== null && roleHasPermission(user.role, "system:settings");
   const canViewSubscribers = user !== null && roleHasPermission(user.role, "subscribers:read");
   const canViewPlans = user !== null && roleHasPermission(user.role, "plans:read");
   const canViewInvoices = user !== null && roleHasPermission(user.role, "invoices:read");
@@ -117,6 +119,16 @@ export function HomePage(): ReactNode {
           {canManageUsers && (
             <Link to="/users" className="text-slate-800 underline">
               User Management
+            </Link>
+          )}
+          {canViewAuditLogs && (
+            <Link to="/audit-logs" className="text-slate-800 underline">
+              Audit Trail
+            </Link>
+          )}
+          {canManageSettings && (
+            <Link to="/settings" className="text-slate-800 underline">
+              System Settings
             </Link>
           )}
           <button

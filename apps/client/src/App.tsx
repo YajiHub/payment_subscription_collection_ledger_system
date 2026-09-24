@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AddSubscriberPage } from "./pages/AddSubscriberPage";
+import { AuditLogPage } from "./pages/AuditLogPage";
 import { BillingDashboardPage } from "./pages/BillingDashboardPage";
 import { CollectorBatchDetailPage } from "./pages/CollectorBatchDetailPage";
 import { CollectorBatchListPage } from "./pages/CollectorBatchListPage";
@@ -23,6 +24,7 @@ import { ServiceAccountLedgerPage } from "./pages/ServiceAccountLedgerPage";
 import { StatementOfAccountPage } from "./pages/StatementOfAccountPage";
 import { SubscriberDetailPage } from "./pages/SubscriberDetailPage";
 import { SubscriberListPage } from "./pages/SubscriberListPage";
+import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { UserManagementPage } from "./pages/UserManagementPage";
 
@@ -50,6 +52,22 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="users:read">
               <UserManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/audit-logs"
+          element={
+            <ProtectedRoute requiredPermission="audit:read">
+              <AuditLogPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute requiredPermission="system:settings">
+              <SystemSettingsPage />
             </ProtectedRoute>
           }
         />

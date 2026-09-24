@@ -11,6 +11,7 @@ import type {
   CollectedMethod,
   CollectionResult,
   CollectorBatchStatus,
+  PaginatedAuditLogs,
   ReportType,
   InvoiceStatus,
   InvoiceType,
@@ -21,6 +22,7 @@ import type {
   PostablePaymentMethod,
   ServiceAccountStatus,
   ServiceType,
+  SystemSetting,
   UserRole,
 } from "@bcis/shared";
 import { API_BASE_URL, HTTP_TIMEOUT_MS } from "./constants";
@@ -1609,4 +1611,42 @@ export async function exportReportPdf(request: ReportExportRequest): Promise<Dow
 /** POST /api/reports/export-xlsx — the report as a spreadsheet. */
 export async function exportReportXlsx(request: ReportExportRequest): Promise<DownloadedReport> {
   return downloadReport("/api/reports/export-xlsx", request, `${request.reportType}.xlsx`);
+}
+
+// ─── Phase 9: audit trail and system settings ─────────────────────────────────
+// Same rule as above: this is the only place the renderer performs HTTP.
+
+export interface AuditLogFilters {
+  page?: number;
+  pageSize?: number;
+  action?: string;
+  entityType?: string;
+  entityId?: string;
+  performedBy?: string;
+}
+
+/** GET /api/audit-logs — one page of the audit trail (Admin only). */
+export async function listAuditLogs(filters: AuditLogFilters = {}): Promise<PaginatedAuditLogs> {
+  const response = await httpClient.get<ApiSuccessEnvelope<PaginatedAuditLogs>>("/api/audit-logs", {
+    params: filters,
+  });
+  return unwrap(response.data);
+}
+
+/** GET /api/system/settings — the configurable business rules. */
+export async function getSystemSettings(): Promise<SystemSetting[]> {
+  const response =
+    await httpClient.get<ApiSuccessEnvelope<{ items: SystemSetting[] }>>("/api/system/settings");
+  return unwrap(response.data).items;
+}
+
+/** PUT /api/system/settings — updates one or more settings (Admin only). */
+export async function updateSystemSettings(
+  settings: { key: string; value: string }[]
+): Promise<SystemSetting[]> {
+  const response = await httpClient.put<ApiSuccessEnvelope<{ items: SystemSetting[] }>>(
+    "/api/system/settings",
+    { settings }
+  );
+  return unwrap(response.data).items;
 }
