@@ -50,7 +50,9 @@ export type Permission =
   | "reports:export"
   // System
   | "system:backup"
-  | "system:settings";
+  | "system:settings"
+  // Audit trail
+  | "audit:read";
 
 // The permission matrix: what each role is allowed to do.
 // If a permission is not listed for a role, access is denied.
@@ -87,6 +89,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "reports:export",
     "system:backup",
     "system:settings",
+    // Phase 9 §7: only the Administrator may read the audit trail.
+    "audit:read",
   ],
 
   billing_clerk: [
