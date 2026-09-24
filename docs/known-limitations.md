@@ -35,9 +35,11 @@ would only be caught by hand.
 present and correct against the current build layout (`out/`), and
 electron-builder 25 is installed. But producing an NSIS `.exe` needs Windows (a
 Linux cross-build needs Wine, which is not part of the toolchain), so
-`installer/BCIS-Setup-1.0.0.exe` does not exist in this repository. The installer
-icon and licence text are also still the electron-builder defaults; see
-`apps/client/build-resources/README.md`.
+`installer/BCIS-Setup-<version>.exe` does not exist in this repository. The
+configuration itself was validated here by packaging an unpacked Linux build
+(`electron-builder --linux dir`), which loaded the config and produced an app
+directory. The installer icon and licence text are also still the electron-builder
+defaults; see `apps/client/build-resources/README.md`.
 
 ## 4. Database setup: what was verified against PostgreSQL, and how
 

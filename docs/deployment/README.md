@@ -136,8 +136,9 @@ the installed desktop app.
 
 1. Build the installer **once, on a Windows machine** (see Step 5), or use an
    installer already provided with the submission.
-2. Copy `BCIS-Setup-1.0.0.exe` to each PC and run it. The wizard lets you choose
-   the installation folder and creates desktop and Start Menu shortcuts.
+2. Copy `BCIS-Setup-<version>.exe` (for example `BCIS-Setup-0.1.0.exe`) to each PC
+   and run it. The wizard lets you choose the installation folder and creates
+   desktop and Start Menu shortcuts.
 3. On **first launch**, the app writes a starter configuration file to:
 
    ```
