@@ -146,6 +146,11 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
 
 // Utility: check if a role has a specific permission.
 // Kept intentionally simple — it is a pure lookup with no side effects.
+//
+// An unknown role has NO permissions. A role can only reach here from a verified
+// JWT, so an unknown one means a token minted by an older build; denying it is the
+// safe answer, and it must be a denial rather than a crash while reading the matrix.
 export function roleHasPermission(role: UserRole, permission: Permission): boolean {
-  return ROLE_PERMISSIONS[role].includes(permission);
+  const grantedPermissions: readonly Permission[] | undefined = ROLE_PERMISSIONS[role];
+  return grantedPermissions !== undefined && grantedPermissions.includes(permission);
 }
