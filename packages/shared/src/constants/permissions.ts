@@ -46,6 +46,7 @@ export type Permission =
   | "collector_batches:reconcile"
   // Reports
   | "reports:view"
+  | "reports:management_view"
   | "reports:export"
   // System
   | "system:backup"
@@ -82,6 +83,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "collector_batches:remit",
     "collector_batches:reconcile",
     "reports:view",
+    "reports:management_view",
     "reports:export",
     "system:backup",
     "system:settings",
@@ -106,6 +108,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     // Phase 7 §2: the Billing Clerk creates collector batches and assigns accounts.
     "collector_batches:create",
     "reports:view",
+    // Phase 8 §9: the monthly billing and receivables reports are management views.
+    "reports:management_view",
   ],
 
   cashier: [
@@ -140,6 +144,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "ledger:read",
     "collector_batches:read",
     "reports:view",
+    "reports:management_view",
     "reports:export",
   ],
 };

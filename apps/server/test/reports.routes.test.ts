@@ -8,8 +8,9 @@
 //   • a voided invoice, a reversed payment, and a voided collection count for
 //     nothing;
 //   • an empty database answers with zeros and a valid export file, not a crash;
-//   • `reports:view` and `reports:export` are distinct: a Cashier may read the
-//     reports but may not take a file, and an unknown role is denied outright;
+//   • `reports:view`, `reports:management_view`, and `reports:export` are distinct:
+//     a Cashier may read the operational reports but not the management ones and may
+//     not take a file, and an unknown role is denied outright;
 //   • the report routes perform NO insert, update, or delete;
 //   • a Collector is still restricted to their own batches on the remittance report.
 
@@ -347,6 +348,19 @@ describe("GET /api/dashboard/kpis", () => {
     const response = await app.inject({ method: "GET", url: "/api/dashboard/kpis" });
 
     expect(response.statusCode).toBe(401);
+  });
+
+  it("denies the Cashier and the Collector the dashboard, a management view", async () => {
+    for (const token of [cashierToken, collectorAToken]) {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/dashboard/kpis",
+        headers: authorizationHeader(token),
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error.code).toBe("FORBIDDEN");
+    }
   });
 });
 
@@ -778,6 +792,59 @@ describe("report permissions", () => {
     expect(viewResponse.statusCode).toBe(200);
     expect(exportResponse.statusCode).toBe(403);
     expect(exportResponse.json().error.code).toBe("FORBIDDEN");
+    expect(recordedWrites()).toBe(0);
+  });
+
+  it("denies a Cashier the management reports but allows the operational ones", async () => {
+    // Phase 8 §9: "Cashier role can view Daily Collection but not all management
+    // reports." The management reports expose the whole ledger, so the server must
+    // refuse them for a Cashier — not merely hide them in the UI.
+    const managementUrls = [
+      "/api/reports/monthly-billing?year=2025&month=1",
+      "/api/reports/ar-aging?asOf=2025-04-01",
+      "/api/reports/outstanding-by-collector?asOf=2025-04-01",
+    ];
+
+    for (const url of managementUrls) {
+      const response = await app.inject({
+        method: "GET",
+        url,
+        headers: authorizationHeader(cashierToken),
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error.code).toBe("FORBIDDEN");
+    }
+
+    queueReportRows([]);
+    const operational = await app.inject({
+      method: "GET",
+      url: "/api/reports/daily-collection?date=2025-01-24",
+      headers: authorizationHeader(cashierToken),
+    });
+
+    expect(operational.statusCode).toBe(200);
+    expect(recordedWrites()).toBe(0);
+  });
+
+  it("lets the Billing Clerk view the management reports", async () => {
+    const managementUrls = [
+      "/api/reports/monthly-billing?year=2025&month=1",
+      "/api/reports/ar-aging?asOf=2025-04-01",
+      "/api/reports/outstanding-by-collector?asOf=2025-04-01",
+    ];
+
+    for (const url of managementUrls) {
+      queueReportRows([]);
+      const response = await app.inject({
+        method: "GET",
+        url,
+        headers: authorizationHeader(billingClerkToken),
+      });
+
+      expect(response.statusCode).toBe(200);
+    }
+
     expect(recordedWrites()).toBe(0);
   });
 

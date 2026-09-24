@@ -192,7 +192,7 @@ export function App(): ReactNode {
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute requiredPermission="reports:view">
+            <ProtectedRoute requiredPermission="reports:management_view">
               <DashboardPage />
             </ProtectedRoute>
           }

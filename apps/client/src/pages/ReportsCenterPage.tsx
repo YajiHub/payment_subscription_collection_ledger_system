@@ -6,6 +6,7 @@ import {
   REPORT_TYPES,
   REPORT_TYPE_DESCRIPTIONS,
   REPORT_TYPE_LABELS,
+  REPORT_TYPE_VIEW_PERMISSIONS,
   roleHasPermission,
   type ReportType,
 } from "@bcis/shared";
@@ -206,12 +207,16 @@ function ReportTableView({ table }: { table: DisplayTable }): ReactNode {
  * The Reports Center: pick a report, set its parameters, generate it on screen,
  * then export it or print it.
  *
- * The export buttons are hidden from a role without `reports:export`, and the server
- * refuses the same request anyway — the hidden button is only a convenience.
+ * The sidebar lists only the reports the role may view, and the export buttons are
+ * hidden from a role without `reports:export`. The server enforces the same
+ * boundaries per route — the hidden entry is only a convenience.
  */
 export function ReportsCenterPage(): ReactNode {
   const user = useAuthStore((state) => state.user);
   const canExportReports = user !== null && roleHasPermission(user.role, "reports:export");
+  const visibleReportTypes = REPORT_TYPES.filter(
+    (type) => user !== null && roleHasPermission(user.role, REPORT_TYPE_VIEW_PERMISSIONS[type])
+  );
 
   const [reportType, setReportType] = useState<ReportType>("daily_collection");
   const [parameters, setParameters] = useState<ReportParameters>(initialParameters);
@@ -307,7 +312,7 @@ export function ReportsCenterPage(): ReactNode {
 
       <div className="grid gap-6 lg:grid-cols-[16rem_1fr]">
         <nav className="space-y-1 rounded-lg border border-slate-200 bg-white p-2 shadow-sm print:hidden">
-          {REPORT_TYPES.map((type) => (
+          {visibleReportTypes.map((type) => (
             <button
               key={type}
               type="button"

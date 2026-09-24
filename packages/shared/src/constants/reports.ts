@@ -1,4 +1,4 @@
-// Report vocabulary shared by the client and the server.
+// The report vocabulary shared by the client and the server.
 //
 // The strings here are the contract between the Reports Center and the report
 // endpoints: a report is chosen by one of these names, and an export is asked for
@@ -7,6 +7,8 @@
 // Money never appears here. Every amount in a report is an integer number of
 // centavos (see types/money.ts); the client formats them for display and the
 // export generators format them for the document they produce.
+
+import type { Permission } from "./permissions";
 
 // ─── Report types ─────────────────────────────────────────────────────────────
 
@@ -41,7 +43,24 @@ export const REPORT_TYPE_DESCRIPTIONS = {
   outstanding_by_collector: "Which collector's assigned accounts carry the most overdue balance.",
 } as const satisfies Record<ReportType, string>;
 
-// ─── Export formats ───────────────────────────────────────────────────────────
+/**
+ * The permission a role needs to view each report (Phase 8 §9).
+ *
+ * Daily collection and the collector remittance are operational reports: the Cashier
+ * runs the cash count and reviews the batch, and the Collector reads their own batch.
+ * The monthly billing, AR aging, and outstanding-by-collector reports summarise the
+ * business's money, so they are management views — a Cashier may not read them.
+ * The server enforces this per route; the Reports Center uses the same map to hide
+ * the sidebar entries a role cannot open.
+ */
+export const REPORT_TYPE_VIEW_PERMISSIONS = {
+  daily_collection: "reports:view",
+  monthly_billing: "reports:management_view",
+  ar_aging: "reports:management_view",
+  subscriber_soa: "reports:view",
+  collector_remittance: "reports:view",
+  outstanding_by_collector: "reports:management_view",
+} as const satisfies Record<ReportType, Permission>;
 
 /** The file formats a report can be exported to. */
 export const REPORT_EXPORT_FORMATS = ["pdf", "xlsx"] as const;

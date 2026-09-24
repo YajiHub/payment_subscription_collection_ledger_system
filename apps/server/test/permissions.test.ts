@@ -116,6 +116,17 @@ describe("role permission matrix", () => {
     expect(roleHasPermission("collector", "reports:export")).toBe(false);
   });
 
+  it("reserves reports:management_view for the Admin, Billing Clerk, and Manager", () => {
+    // Phase 8 §9: a Cashier may view the daily collection report but not the
+    // management reports (monthly billing, AR aging, outstanding by collector).
+    expect(roleHasPermission("admin", "reports:management_view")).toBe(true);
+    expect(roleHasPermission("billing_clerk", "reports:management_view")).toBe(true);
+    expect(roleHasPermission("manager", "reports:management_view")).toBe(true);
+
+    expect(roleHasPermission("cashier", "reports:management_view")).toBe(false);
+    expect(roleHasPermission("collector", "reports:management_view")).toBe(false);
+  });
+
   it("denies a role the matrix does not know rather than crashing on the lookup", () => {
     // A token minted by an older build can carry a role this matrix has no entry
     // for; the safe answer is a denial, not an exception while reading the matrix.
