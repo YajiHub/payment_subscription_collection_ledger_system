@@ -43,6 +43,13 @@
       "when": 1790207560344,
       "tag": "0005_silent_enchantress",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790209171256,
+      "tag": "0006_narrow_shape",
+      "breakpoints": true
     }
   ]
 }
