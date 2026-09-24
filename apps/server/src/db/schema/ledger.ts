@@ -14,9 +14,19 @@
 // the balance can always be recomputed from the entries themselves.
 
 import { relations } from "drizzle-orm";
-import { integer, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 import { invoices } from "./billing";
+import { payments } from "./payments";
 import { serviceAccounts } from "./subscribers";
 import { users } from "./users";
 
@@ -63,6 +73,12 @@ export const ledgerEntries = pgTable("ledger_entries", {
   // Amount in centavos, ALWAYS POSITIVE (the type tells you the direction).
   amountCentavos: integer("amount_centavos").notNull(),
 
+  // The position of this entry in the account's ledger chain, starting at 1 and
+  // increasing by exactly one per new entry. It is what makes the running balance
+  // provably an unbroken chain: a gap means a row was deleted, a duplicate means
+  // two writers raced. The unique index below is the database-level backstop.
+  sequenceNumber: integer("sequence_number").notNull().default(0),
+
   // Running balance AFTER this entry (debit adds, credit subtracts).
   runningBalanceCentavos: integer("running_balance_centavos").notNull(),
 
@@ -70,17 +86,27 @@ export const ledgerEntries = pgTable("ledger_entries", {
   // e.g. "Invoice INV-2025-01-000042 — January 2025"
   description: text("description").notNull(),
 
-  // The source document. A payment reference is added in Phase 5; until the
-  // payments table exists this column is a plain id so this phase stays self-contained.
+  // The source document. Only one of these is populated per entry.
   invoiceId: uuid("invoice_id").references(() => invoices.id),
-  paymentId: uuid("payment_id"),
+  paymentId: uuid("payment_id").references(() => payments.id),
 
   entryDate: timestamp("entry_date", { withTimezone: true }).notNull().defaultNow(),
 
   createdBy: uuid("created_by")
     .notNull()
     .references(() => users.id),
-});
+},
+(table) => [
+  // One service account can never hold two entries with the same sequence number.
+  // Even if the per-account advisory lock were bypassed, this refuses the write.
+  uniqueIndex("ledger_entries_account_sequence_uq").on(
+    table.serviceAccountId,
+    table.sequenceNumber
+  ),
+  // The ledger page and the balance lookup both filter by account and read in
+  // sequence order; this index serves both.
+  index("ledger_entries_service_account_idx").on(table.serviceAccountId),
+]);
 
 export const ledgerEntriesRelations = relations(ledgerEntries, ({ one }) => ({
   serviceAccount: one(serviceAccounts, {
@@ -90,6 +116,10 @@ export const ledgerEntriesRelations = relations(ledgerEntries, ({ one }) => ({
   invoice: one(invoices, {
     fields: [ledgerEntries.invoiceId],
     references: [invoices.id],
+  }),
+  payment: one(payments, {
+    fields: [ledgerEntries.paymentId],
+    references: [payments.id],
   }),
 }));
 
