@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 import { db, type DbExecutor } from "../../db/connection";
 import { invoices } from "../../db/schema/billing";
 import { paymentAllocations, paymentReversals, payments } from "../../db/schema/payments";
+import { audit, type AuditActor } from "../../shared/audit/audit-logger";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { recordPaymentReversed } from "../ledger/ledger.service";
 import { getNextReversalReceiptNumber } from "./receipt-number.service";
@@ -31,10 +32,11 @@ export interface ReversePaymentResult {
 export async function reversePayment(
   paymentId: string,
   reason: string,
-  reversedByUserId: string
+  reversedByUserId: string,
+  actor?: AuditActor
 ): Promise<ReversePaymentResult> {
   return db.transaction((tx) =>
-    reversePaymentWithinTransaction(tx, paymentId, reason, reversedByUserId)
+    reversePaymentWithinTransaction(tx, paymentId, reason, reversedByUserId, actor)
   );
 }
 
@@ -45,12 +47,17 @@ export async function reversePayment(
  * that reversal and the assignment update must commit together, so it calls this
  * function with its own transaction instead of letting `reversePayment` open a
  * second one.
+ *
+ * The audit entry is written HERE, not in the route handler, so every caller that
+ * reverses a payment — the office route and the field-collection void alike — is
+ * guaranteed to leave a `payment.reversed` row on the trail.
  */
 export async function reversePaymentWithinTransaction(
   executor: DbExecutor,
   paymentId: string,
   reason: string,
-  reversedByUserId: string
+  reversedByUserId: string,
+  actor?: AuditActor
 ): Promise<ReversePaymentResult> {
   if (reason.trim().length < 10) {
     throw new ValidationError("Reversal reason must be at least 10 characters");
@@ -89,6 +96,12 @@ export async function reversePaymentWithinTransaction(
   });
 
   await recordPaymentReversed(executor, payment, reason, reversedByUserId);
+  await audit.paymentReversed(
+    paymentId,
+    payment.receiptNumber,
+    reason,
+    actor ?? { userId: reversedByUserId }
+  );
 
   return { paymentId, receiptNumber: payment.receiptNumber, reversalReceiptNumber, reversedAt };
 }

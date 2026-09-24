@@ -35,6 +35,7 @@ import {
 import { payments } from "../../db/schema/payments";
 import { serviceAccounts, subscribers, subscriptionPlans } from "../../db/schema/subscribers";
 import { users } from "../../db/schema/users";
+import { type AuditActor } from "../../shared/audit/audit-logger";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { isUniqueViolation } from "../../shared/unique-violation";
 import { getNextCollectorBatchNumber } from "./collector-batch-number.service";
@@ -45,6 +46,18 @@ import { reversePaymentWithinTransaction } from "../payments/reverse-payment.ser
 export interface BatchActor {
   id: string;
   role: UserRole;
+  /** Where the caller connected from, carried through to the audit trail. */
+  clientIpAddress?: string;
+}
+
+/**
+ * The batch actor as the audit logger needs it.
+ *
+ * The user id is the same as the acting user's; the IP is optional because a
+ * non-HTTP caller may not know it.
+ */
+function actorForAudit(actor: BatchActor): AuditActor {
+  return { userId: actor.id, clientIpAddress: actor.clientIpAddress ?? null };
 }
 
 /** A batch as the list and header screens show it. */
@@ -524,6 +537,7 @@ export async function recordCollection(
         paymentDate: batch.collectionDate,
         notes: `Field collection ${batch.batchNumber}`,
         postedByUserId: actor.id,
+        actor: actorForAudit(actor),
         gcash: command.gcash,
       });
       paymentId = posted.payment.id;
@@ -577,7 +591,13 @@ export async function voidCollection(
     }
 
     if (assignment.paymentId !== null) {
-      await reversePaymentWithinTransaction(tx, assignment.paymentId, reason, actor.id);
+      await reversePaymentWithinTransaction(
+        tx,
+        assignment.paymentId,
+        reason,
+        actor.id,
+        actorForAudit(actor)
+      );
     }
 
     await tx

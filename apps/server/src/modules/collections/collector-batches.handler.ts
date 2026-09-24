@@ -33,7 +33,11 @@ import {
 
 /** The caller reduced to what the batch services need. */
 function callerAsActor(request: FastifyRequest): BatchActor {
-  return { id: request.user?.id ?? "", role: request.user?.role ?? "collector" };
+  return {
+    id: request.user?.id ?? "",
+    role: request.user?.role ?? "collector",
+    clientIpAddress: request.ip,
+  };
 }
 
 /** A batch id path parameter. */

@@ -31,6 +31,7 @@ vi.mock("../src/db/connection", async () => {
 });
 
 import { buildServer } from "../src/index.ts";
+import { auditLogs } from "../src/db/schema/audit";
 import { batchAssignments, collectorBatches } from "../src/db/schema/collections";
 import { ledgerEntries } from "../src/db/schema/ledger";
 import { payments } from "../src/db/schema/payments";
@@ -164,6 +165,11 @@ function updatedValuesFor(table: unknown): Array<Record<string, unknown>> {
   return fakeDatabase.updatedRows
     .filter((row) => row.table === table)
     .map((row) => row.values as Record<string, unknown>);
+}
+
+/** The audit rows written so far, in the order they were recorded. */
+function auditWrites(): Array<Record<string, unknown>> {
+  return insertedInto(auditLogs).map((row) => row.values as Record<string, unknown>);
 }
 
 describe("collector batch routes", () => {
@@ -464,6 +470,89 @@ describe("collector batch routes", () => {
 
     const batchUpdates = updatedValuesFor(collectorBatches);
     expect(batchUpdates).toContainEqual({ expectedRemittanceCentavos: 0 });
+  });
+
+  it("audits the payment a field collection creates as a financial event", async () => {
+    const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
+    const createdPayment = paymentRow();
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([batchRow()]); // the batch (locked)
+    fakeDatabase.queueSelectRows([assignmentRow()]); // the assignment (locked)
+    fakeDatabase.queueSelectRows([{ id: SERVICE_ACCOUNT_A }]); // account exists
+    fakeDatabase.queueSelectRows([
+      {
+        id: randomUUID(),
+        invoiceNumber: "INV-2025-01-000001",
+        totalAmountCentavos: 50000,
+        paidAmountCentavos: 0,
+        remainingBalanceCentavos: 50000,
+      },
+    ]); // outstanding invoices
+    fakeDatabase.queueSelectRows([]); // existing receipt numbers
+    fakeDatabase.queueInsertRows([createdPayment]); // the payment insert
+    fakeDatabase.queueInsertRows([]); // allocation rows
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0, sequenceNumber: 0 }]); // ledger state
+    fakeDatabase.queueSelectRows([{ collectedAmountCentavos: 50000 }]); // expected recompute
+
+    const response = await server.inject({
+      method: "PUT",
+      url: `/api/collector-batches/${BATCH_ID}/assignments/${SERVICE_ACCOUNT_A}`,
+      headers: authorizationHeader(token),
+      payload: { result: "collected", collectedAmountCentavos: 50000, collectedMethod: "cash" },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const auditRow = auditWrites().find((row) => row.action === "payment.posted");
+    expect(auditRow).toBeDefined();
+    expect(auditRow).toMatchObject({
+      entityType: "payment",
+      entityId: createdPayment.id,
+      performedBy: COLLECTOR_A_ID,
+    });
+    expect(String(auditRow?.description)).toContain(createdPayment.receiptNumber);
+    expect(typeof auditRow?.clientIpAddress).toBe("string");
+  });
+
+  it("audits the reversal when a field collection is voided", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
+    const paymentId = randomUUID();
+    const reason = "Collector wrote the wrong amount on the slip";
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([batchRow({ expectedRemittanceCentavos: 50000 })]); // the batch
+    fakeDatabase.queueSelectRows([
+      assignmentRow({
+        collectionResult: "collected",
+        collectedAmountCentavos: 50000,
+        collectedMethod: "cash",
+        paymentId,
+      }),
+    ]); // the assignment
+    fakeDatabase.queueSelectRows([paymentRow({ id: paymentId })]); // the payment (locked)
+    fakeDatabase.queueSelectRows([]); // allocations to restore
+    fakeDatabase.queueSelectRows([]); // existing reversal receipt numbers
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0, sequenceNumber: 1 }]); // ledger state
+    fakeDatabase.queueSelectRows([{ collectedAmountCentavos: null }]); // expected recompute
+
+    const response = await server.inject({
+      method: "PUT",
+      url: `/api/collector-batches/${BATCH_ID}/assignments/${SERVICE_ACCOUNT_A}/void`,
+      headers: authorizationHeader(token),
+      payload: { reason },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const auditRow = auditWrites().find((row) => row.action === "payment.reversed");
+    expect(auditRow).toBeDefined();
+    expect(auditRow).toMatchObject({
+      entityType: "payment",
+      entityId: paymentId,
+      performedBy: CASHIER_ID,
+    });
+    expect(String(auditRow?.description)).toContain(reason);
   });
 
   it("stores an exact remittance with zero variance", async () => {

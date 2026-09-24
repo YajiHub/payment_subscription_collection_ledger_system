@@ -18,6 +18,7 @@ import {
   type Payment,
 } from "../../db/schema/payments";
 import { serviceAccounts } from "../../db/schema/subscribers";
+import { audit, type AuditActor } from "../../shared/audit/audit-logger";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { isUniqueViolation } from "../../shared/unique-violation";
 import { recordPaymentPosted } from "../ledger/ledger.service";
@@ -44,6 +45,11 @@ export interface PostPaymentInput {
   paymentDate: string;
   notes?: string;
   postedByUserId: string;
+  /**
+   * Who performed the post and from where, for the audit trail. Optional so a
+   * non-HTTP caller (field collection) still records the user id it has.
+   */
+  actor?: AuditActor;
   gcash?: GcashDetailsInput;
 }
 
@@ -125,6 +131,10 @@ export async function postPayment(input: PostPaymentInput): Promise<PostPaymentR
  * allocations, its receipt, and its ledger credits to commit together with the
  * batch assignment that points at them, so it calls this function with its own
  * transaction instead of letting `postPayment` open a second one.
+ *
+ * The audit entry is written HERE, not in the route handler, so every caller that
+ * posts a payment — the office route and the field-collection flow alike — is
+ * guaranteed to leave a `payment.posted` row on the trail.
  */
 export async function postPaymentWithinTransaction(
   executor: DbExecutor,
@@ -216,6 +226,7 @@ export async function postPaymentWithinTransaction(
   }
 
   await recordPaymentPosted(executor, insertedPayment, input.postedByUserId);
+  await audit.paymentPosted({ ...insertedPayment }, input.actor ?? { userId: input.postedByUserId });
 
   return {
     payment: insertedPayment,
