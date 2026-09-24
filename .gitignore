@@ -34,3 +34,10 @@ Thumbs.db
 
 # Uploaded GCash proof screenshots live on the server, never in git
 uploads/
+
+# Phase 10 artifacts — database backups and the assembled submission folder
+backups/
+submission/
+
+# Electron installer output (built on Windows with `pnpm build:installer`)
+apps/client/installer/

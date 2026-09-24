@@ -58,6 +58,16 @@ export default tseslint.config(
     },
   },
 
+  // The electron-builder configuration is CommonJS (electron-builder reads it
+  // with require), so it needs the CommonJS globals rather than module scope.
+  {
+    files: ["apps/client/electron-builder.config.js"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: { ...globals.node },
+    },
+  },
+
   // Must stay last: turns off every rule that would fight Prettier's formatting.
   prettier
 );
