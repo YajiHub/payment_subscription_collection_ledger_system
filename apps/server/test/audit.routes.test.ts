@@ -281,6 +281,63 @@ describe("audit trail through the API", () => {
     expect(JSON.stringify(auditRow)).not.toContain("brand-new-password");
   });
 
+  it("audits a posted payment as a financial event", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+    const serviceAccountId = randomUUID();
+    const invoiceId = randomUUID();
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([{ id: serviceAccountId }]); // service account exists
+    fakeDatabase.queueSelectRows([
+      {
+        id: invoiceId,
+        invoiceNumber: "INV-2025-03-000001",
+        totalAmountCentavos: 50000,
+        paidAmountCentavos: 0,
+        remainingBalanceCentavos: 50000,
+      },
+    ]); // outstanding invoices
+    fakeDatabase.queueSelectRows([]); // existing receipt numbers
+    fakeDatabase.queueInsertRows([
+      {
+        id: randomUUID(),
+        receiptNumber: "OR-2025-000001",
+        serviceAccountId,
+        paymentMethod: "cash",
+        amountCentavos: 50000,
+        allocatedCentavos: 50000,
+        advanceCreditCentavos: 0,
+        paymentDate: "2025-03-01",
+        status: "posted",
+        postedBy: ADMIN_ID,
+        notes: null,
+        createdAt: new Date(),
+        reversedAt: null,
+        reversedBy: null,
+      },
+    ]); // payment row
+    fakeDatabase.queueInsertRows([]); // allocation rows
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0, sequenceNumber: 0 }]); // ledger balance
+    fakeDatabase.queueInsertRows([]); // ledger entry
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/payments",
+      headers: authorizationHeader(token),
+      payload: {
+        serviceAccountId,
+        paymentMethod: "cash",
+        amountCentavos: 50000,
+        paymentDate: "2025-03-01",
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const auditRow = insertedAuditRows().find((row) => row.action === "payment.posted");
+    expect(auditRow).toBeDefined();
+    expect(auditRow?.entityType).toBe("payment");
+  });
+
   it("audits a role change with the previous and new roles", async () => {
     const { token } = signTestToken({ role: "admin" });
     const userId = randomUUID();
