@@ -13,6 +13,8 @@ import { PaymentHistoryPage } from "./pages/PaymentHistoryPage";
 import { PlanManagementPage } from "./pages/PlanManagementPage";
 import { PostPaymentPage } from "./pages/PostPaymentPage";
 import { ReceiptPreviewPage } from "./pages/ReceiptPreviewPage";
+import { ServiceAccountLedgerPage } from "./pages/ServiceAccountLedgerPage";
+import { StatementOfAccountPage } from "./pages/StatementOfAccountPage";
 import { SubscriberDetailPage } from "./pages/SubscriberDetailPage";
 import { SubscriberListPage } from "./pages/SubscriberListPage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
@@ -74,6 +76,22 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="plans:read">
               <PlanManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/service-accounts/:id/ledger"
+          element={
+            <ProtectedRoute requiredPermission="ledger:read">
+              <ServiceAccountLedgerPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/service-accounts/:id/statement"
+          element={
+            <ProtectedRoute requiredPermission="ledger:read">
+              <StatementOfAccountPage />
             </ProtectedRoute>
           }
         />

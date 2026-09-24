@@ -10,6 +10,8 @@ import axios, { AxiosError } from "axios";
 import type {
   InvoiceStatus,
   InvoiceType,
+  LedgerEntryType,
+  ManualLedgerEntryType,
   PaymentMethod,
   PaymentStatus,
   PostablePaymentMethod,
@@ -246,8 +248,8 @@ export interface ServiceAccount {
   terminationDate: string | null;
   assignedCollectorId: string | null;
   consecutiveOverdueMonths: number;
-  /** Populated from the ledger in Phase 6; null until then. */
-  balanceCentavos: null;
+  /** The balance computed from the ledger in Phase 6; negative means an advance credit. */
+  balanceCentavos: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -331,8 +333,8 @@ export interface StatementOfAccount {
   subscriber: Subscriber;
   generatedAt: string;
   serviceAccounts: ServiceAccount[];
-  /** Computed from the ledger in Phase 6; null until then. */
-  totalOutstandingCentavos: null;
+  /** The sum of every positive account balance, computed from the ledger. */
+  totalOutstandingCentavos: number;
 }
 
 export interface ReconnectionFeeEntry {
@@ -873,6 +875,176 @@ export async function uploadGcashScreenshot(input: {
 }): Promise<{ filePath: string; sizeBytes: number }> {
   const response = await httpClient.post<ApiSuccessEnvelope<{ filePath: string; sizeBytes: number }>>(
     "/api/payments/gcash/upload-screenshot",
+    input
+  );
+  return unwrap(response.data);
+}
+
+// ─── Phase 6: ledger, balance, and statement of account ──────────────────────
+// Same rule as above: this is the only place the renderer performs HTTP.
+
+export interface LedgerEntrySummary {
+  id: string;
+  sequenceNumber: number;
+  entryDate: string;
+  entryType: LedgerEntryType;
+  direction: "debit" | "credit";
+  amountCentavos: number;
+  debitCentavos: number;
+  creditCentavos: number;
+  runningBalanceCentavos: number;
+  description: string;
+  invoiceId: string | null;
+  paymentId: string | null;
+  referenceNumber: string;
+  createdBy: string;
+}
+
+export interface LedgerHeader {
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  planName: string;
+  serviceType: ServiceType;
+  monthlyRateCentavos: number;
+  status: ServiceAccountStatus;
+  balanceCentavos: number;
+  entryCount: number;
+  lastEntryAt: string | null;
+}
+
+export interface ServiceAccountLedger {
+  header: LedgerHeader;
+  items: LedgerEntrySummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ServiceAccountBalance {
+  serviceAccountId: string;
+  balanceCentavos: number;
+  entryCount: number;
+  lastEntryAt: string | null;
+}
+
+export interface StatementOfAccountLine {
+  id: string;
+  sequenceNumber: number;
+  date: string;
+  description: string;
+  debitCentavos: number;
+  creditCentavos: number;
+  balanceCentavos: number;
+  referenceNumber: string;
+  entryType: LedgerEntryType;
+}
+
+export interface ServiceAccountStatement {
+  serviceAccount: {
+    id: string;
+    serviceAccountNumber: string;
+    planName: string;
+    serviceType: ServiceType;
+    monthlyRateCentavos: number;
+    status: ServiceAccountStatus;
+  };
+  subscriber: {
+    id: string;
+    accountNumber: string;
+    firstName: string;
+    middleName: string | null;
+    lastName: string;
+    serviceAddress: string;
+    serviceBarangay: string;
+    serviceMunicipality: string;
+    serviceProvince: string;
+  };
+  generatedAt: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  asOfDate: string;
+  lines: StatementOfAccountLine[];
+  openingBalanceCentavos: number;
+  closingBalanceCentavos: number;
+  totalDebitsCentavos: number;
+  totalCreditsCentavos: number;
+}
+
+export interface LedgerIntegrityResult {
+  isValid: boolean;
+  failure: "duplicate_sequence_number" | "sequence_gap" | "broken_running_balance" | null;
+  discrepancyCentavos: number;
+  duplicateSequenceNumber: number | null;
+  missingSequenceNumber: number | null;
+  entryCount: number;
+  lastComputedBalanceCentavos: number;
+  lastStoredBalanceCentavos: number;
+}
+
+export interface ManualLedgerEntryInput {
+  serviceAccountId: string;
+  entryType: ManualLedgerEntryType;
+  amountCentavos: number;
+  reason: string;
+}
+
+export interface ManualLedgerEntryResult {
+  entryId: string;
+  balanceCentavos: number;
+}
+
+/** GET /api/service-accounts/:id/ledger — the header and a page of ledger entries. */
+export async function getServiceAccountLedger(
+  serviceAccountId: string,
+  filters: { fromDate?: string; toDate?: string; page?: number; pageSize?: number } = {}
+): Promise<ServiceAccountLedger> {
+  const response = await httpClient.get<ApiSuccessEnvelope<ServiceAccountLedger>>(
+    `/api/service-accounts/${serviceAccountId}/ledger`,
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/service-accounts/:id/balance — the current balance only. */
+export async function getServiceAccountBalanceApi(
+  serviceAccountId: string
+): Promise<ServiceAccountBalance> {
+  const response = await httpClient.get<ApiSuccessEnvelope<ServiceAccountBalance>>(
+    `/api/service-accounts/${serviceAccountId}/balance`
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/service-accounts/:id/statement — the full statement of account. */
+export async function getServiceAccountStatement(
+  serviceAccountId: string,
+  filters: { fromDate?: string; toDate?: string } = {}
+): Promise<ServiceAccountStatement> {
+  const response = await httpClient.get<ApiSuccessEnvelope<ServiceAccountStatement>>(
+    `/api/service-accounts/${serviceAccountId}/statement`,
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/ledger/verify/:serviceAccountId — integrity check (Admin only). */
+export async function verifyLedgerIntegrity(
+  serviceAccountId: string
+): Promise<LedgerIntegrityResult> {
+  const response = await httpClient.get<ApiSuccessEnvelope<LedgerIntegrityResult>>(
+    `/api/ledger/verify/${serviceAccountId}`
+  );
+  return unwrap(response.data);
+}
+
+/** POST /api/ledger/manual-entry — a manual debit or credit (Admin only). */
+export async function postManualLedgerEntry(
+  input: ManualLedgerEntryInput
+): Promise<ManualLedgerEntryResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<ManualLedgerEntryResult>>(
+    "/api/ledger/manual-entry",
     input
   );
   return unwrap(response.data);

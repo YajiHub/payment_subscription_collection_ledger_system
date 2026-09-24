@@ -55,6 +55,7 @@ interface ServiceAccountCardProps {
   onAction: (account: ServiceAccount, action: PendingAction) => void;
   canSuspend: boolean;
   canReconnect: boolean;
+  canViewLedger: boolean;
 }
 
 /** One card per service. The subscriber may hold Internet, Cable TV, or both. */
@@ -63,6 +64,7 @@ function ServiceAccountCard({
   onAction,
   canSuspend,
   canReconnect,
+  canViewLedger,
 }: ServiceAccountCardProps): ReactNode {
   const actions = availableActions(account.status);
 
@@ -98,9 +100,18 @@ function ServiceAccountCard({
         <dt className="text-slate-600">Terminated</dt>
         <dd>{formatDateOnly(account.terminationDate)}</dd>
         <dt className="text-slate-600">Current balance</dt>
-        {/* The ledger arrives in Phase 6; until then the balance is unknown, not zero. */}
+        {/* Computed from the ledger — never a stored column. */}
         <dd>{account.balanceCentavos === null ? "—" : formatCentavos(account.balanceCentavos)}</dd>
       </dl>
+
+      {canViewLedger && (
+        <Link
+          to={`/service-accounts/${account.id}/ledger`}
+          className="inline-block text-sm font-medium text-slate-700 underline"
+        >
+          View ledger & statement
+        </Link>
+      )}
 
       {actions.length === 0 ? (
         <p className="text-xs text-slate-500">
@@ -188,6 +199,7 @@ export function SubscriberDetailPage(): ReactNode {
   const canUpdate = user !== null && roleHasPermission(user.role, "subscribers:update");
   const canSuspend = user !== null && roleHasPermission(user.role, "subscribers:suspend");
   const canReconnect = user !== null && roleHasPermission(user.role, "subscribers:reconnect");
+  const canViewLedger = user !== null && roleHasPermission(user.role, "ledger:read");
 
   const loadSubscriber = useCallback(async (): Promise<void> => {
     if (id === undefined) {
@@ -370,6 +382,7 @@ export function SubscriberDetailPage(): ReactNode {
                 onAction={openAction}
                 canSuspend={canSuspend}
                 canReconnect={canReconnect}
+                canViewLedger={canViewLedger}
               />
             ))}
           </div>
