@@ -13,6 +13,7 @@ import { relations } from "drizzle-orm";
 import {
   boolean,
   date,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -107,41 +108,49 @@ export const subscribers = pgTable("subscribers", {
 // ─── Service Accounts ─────────────────────────────────────────────────────────
 // Each service account represents one service (Internet or Cable TV) for one subscriber.
 // Billing, ledger entries, and payments are all tied to the service account.
-export const serviceAccounts = pgTable("service_accounts", {
-  id: uuid("id").primaryKey().defaultRandom(),
+export const serviceAccounts = pgTable(
+  "service_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
 
-  // Human-readable account number for this specific service. Format: SA-YYYYMMDD-XXXXX
-  serviceAccountNumber: varchar("service_account_number", { length: 30 }).notNull().unique(),
+    // Human-readable account number for this specific service. Format: SA-YYYYMMDD-XXXXX
+    serviceAccountNumber: varchar("service_account_number", { length: 30 }).notNull().unique(),
 
-  subscriberId: uuid("subscriber_id")
-    .notNull()
-    .references(() => subscribers.id),
-  planId: uuid("plan_id")
-    .notNull()
-    .references(() => subscriptionPlans.id),
+    subscriberId: uuid("subscriber_id")
+      .notNull()
+      .references(() => subscribers.id),
+    planId: uuid("plan_id")
+      .notNull()
+      .references(() => subscriptionPlans.id),
 
-  status: serviceAccountStatusEnum("status").notNull().default("pending"),
+    status: serviceAccountStatusEnum("status").notNull().default("pending"),
 
-  // The date service began (used to determine the first billing period)
-  activationDate: date("activation_date"),
+    // The date service began (used to determine the first billing period)
+    activationDate: date("activation_date"),
 
-  // The date service was suspended or terminated (null if still active)
-  suspensionDate: date("suspension_date"),
-  terminationDate: date("termination_date"),
+    // The date service was suspended or terminated (null if still active)
+    suspensionDate: date("suspension_date"),
+    terminationDate: date("termination_date"),
 
-  // The field collector assigned to this account.
-  // null = office payment only; not assigned to a collector
-  assignedCollectorId: uuid("assigned_collector_id").references(() => users.id),
+    // The field collector assigned to this account.
+    // null = office payment only; not assigned to a collector
+    assignedCollectorId: uuid("assigned_collector_id").references(() => users.id),
 
-  // Overdue tracking: how many consecutive months unpaid
-  consecutiveOverdueMonths: integer("consecutive_overdue_months").notNull().default(0),
+    // Overdue tracking: how many consecutive months unpaid
+    consecutiveOverdueMonths: integer("consecutive_overdue_months").notNull().default(0),
 
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  createdBy: uuid("created_by")
-    .notNull()
-    .references(() => users.id),
-});
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+  },
+  (table) => [
+    // Phase 8's dashboard counts active, suspended, and terminated accounts, and the
+    // subscriber list filters by status; this index serves both.
+    index("service_accounts_status_idx").on(table.status),
+  ]
+);
 
 // ─── Suspension/Reconnection Log ─────────────────────────────────────────────
 // Complete history of every status change. Needed for the audit trail: an account

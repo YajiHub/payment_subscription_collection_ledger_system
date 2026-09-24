@@ -13,7 +13,17 @@
 // Every monetary column is an integer number of centavos (PHP 999.00 = 99900).
 
 import { relations } from "drizzle-orm";
-import { date, index, integer, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import {
+  date,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
 
 import { serviceAccounts } from "./subscribers";
 import { users } from "./users";
@@ -100,6 +110,9 @@ export const invoices = pgTable(
       table.billingPeriodYear,
       table.billingPeriodMonth
     ),
+    // Phase 8's dashboard and Monthly Billing Summary read invoices by invoice date
+    // for one calendar month, so the date is indexed on its own.
+    index("invoices_invoice_date_idx").on(table.invoiceDate),
   ]
 );
 
