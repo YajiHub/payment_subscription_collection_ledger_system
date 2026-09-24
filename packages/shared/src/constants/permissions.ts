@@ -103,6 +103,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "payments:read",
     "receipts:print",
     "ledger:read",
+    // Phase 7 §2: the Billing Clerk creates collector batches and assigns accounts.
+    "collector_batches:create",
     "reports:view",
   ],
 
@@ -113,6 +115,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "payments:read",
     "receipts:print",
     "ledger:read",
+    // Phase 7 §2: the Cashier reviews and reconciles submitted batches, but may
+    // never create or remit a collector batch — that is the field side.
+    "collector_batches:read",
+    "collector_batches:reconcile",
     "reports:view",
   ],
 

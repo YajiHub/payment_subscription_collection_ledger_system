@@ -1,0 +1,166 @@
+// Request/response validation schemas for field collection and receivables.
+//
+// These schemas are the contract between the client and the server: the server
+// parses every request body and query string with one of them before touching the
+// database, so a malformed request always becomes a readable 400.
+//
+// Every monetary field is an integer number of centavos. The schemas reject a
+// fractional amount outright, because a float peso amount would silently lose a
+// centavo somewhere in the allocation arithmetic.
+
+import { z } from "zod";
+
+import { COLLECTED_METHODS, COLLECTION_RESULTS, COLLECTOR_BATCH_STATUSES } from "../constants/collections";
+
+/** A calendar day in the office's local timezone, e.g. "2025-01-24". */
+const dateOnlySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "A date is required in YYYY-MM-DD format");
+
+/** A non-negative integer number of centavos. */
+const centavosSchema = z
+  .number()
+  .int("Amounts must be whole centavos")
+  .nonnegative("Amounts cannot be negative");
+
+/** POST /api/collector-batches — create a batch for a collector with its accounts. */
+export const createCollectorBatchSchema = z.object({
+  collectorId: z.string().uuid("A collector must be selected"),
+  collectionDate: dateOnlySchema,
+  serviceAccountIds: z
+    .array(z.string().uuid("Each service account id must be a UUID"))
+    .min(1, "Assign at least one service account to the batch"),
+});
+export type CreateCollectorBatchInput = z.infer<typeof createCollectorBatchSchema>;
+
+/** POST /api/collector-batches/:id/assignments — add more accounts to an open batch. */
+export const addBatchAssignmentsSchema = z.object({
+  serviceAccountIds: z
+    .array(z.string().uuid("Each service account id must be a UUID"))
+    .min(1, "Assign at least one service account to the batch"),
+});
+export type AddBatchAssignmentsInput = z.infer<typeof addBatchAssignmentsSchema>;
+
+/**
+ * PUT /api/collector-batches/:id/assignments/:serviceAccountId — record the
+ * result of visiting one subscriber.
+ *
+ * A result that represents money ("collected" or "partial") must carry a positive
+ * amount and the method it was received by; every other result carries no money.
+ */
+export const recordCollectionSchema = z
+  .object({
+    result: z.enum(COLLECTION_RESULTS),
+    collectedAmountCentavos: centavosSchema.optional(),
+    collectedMethod: z.enum(COLLECTED_METHODS).optional(),
+    collectorNotes: z.string().max(500).optional(),
+    gcash: z
+      .object({
+        referenceNumber: z.string().min(1).max(50),
+        senderName: z.string().max(100).optional(),
+        senderGcashNumber: z.string().max(20).optional(),
+      })
+      .optional(),
+  })
+  .superRefine((value, context) => {
+    const takesMoney = value.result === "collected" || value.result === "partial";
+
+    if (takesMoney && (value.collectedAmountCentavos ?? 0) <= 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["collectedAmountCentavos"],
+        message: "A collected amount greater than zero is required",
+      });
+    }
+
+    if (takesMoney && value.collectedMethod === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["collectedMethod"],
+        message: "The method the money was received by is required",
+      });
+    }
+
+    if (!takesMoney && value.collectedAmountCentavos !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["collectedAmountCentavos"],
+        message: "Only a collected or partial result may carry an amount",
+      });
+    }
+
+    if (value.collectedMethod === "gcash" && value.gcash === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["gcash"],
+        message: "A GCash reference number is required for a GCash collection",
+      });
+    }
+  });
+export type RecordCollectionInput = z.infer<typeof recordCollectionSchema>;
+
+/** PUT /api/collector-batches/:id/assignments/:serviceAccountId/void — undo a collection. */
+export const voidCollectionSchema = z.object({
+  reason: z.string().min(10, "A reason of at least 10 characters is required").max(500),
+});
+export type VoidCollectionInput = z.infer<typeof voidCollectionSchema>;
+
+/** POST /api/collector-batches/:id/submit — declare the cash actually handed in. */
+export const submitBatchRemittanceSchema = z.object({
+  actualRemittanceCentavos: centavosSchema,
+});
+export type SubmitBatchRemittanceInput = z.infer<typeof submitBatchRemittanceSchema>;
+
+/** POST /api/collector-batches/:id/reconcile — close the batch (notes if variance). */
+export const reconcileBatchSchema = z.object({
+  varianceNotes: z.string().max(1000).optional(),
+});
+export type ReconcileBatchInput = z.infer<typeof reconcileBatchSchema>;
+
+/** POST /api/collector-batches/:id/cancel — abandon a batch with no collections. */
+export const cancelBatchSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+export type CancelBatchInput = z.infer<typeof cancelBatchSchema>;
+
+/** GET /api/collector-batches — filters for the batch list. */
+export const listCollectorBatchesQuerySchema = z.object({
+  collectorId: z.string().uuid("The collector id must be a UUID").optional(),
+  status: z.enum(COLLECTOR_BATCH_STATUSES).optional(),
+  dateFrom: dateOnlySchema.optional(),
+  dateTo: dateOnlySchema.optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ListCollectorBatchesQuery = z.infer<typeof listCollectorBatchesQuerySchema>;
+
+/** GET /api/receivables/ar-aging — the report's "as of" date. */
+export const arAgingQuerySchema = z.object({
+  asOfDate: dateOnlySchema.optional(),
+});
+export type ArAgingQuery = z.infer<typeof arAgingQuerySchema>;
+
+/** GET /api/receivables/ar-aging/export — the format to download. */
+export const arAgingExportQuerySchema = z.object({
+  asOfDate: dateOnlySchema.optional(),
+  format: z.enum(["xlsx"]).default("xlsx"),
+});
+export type ArAgingExportQuery = z.infer<typeof arAgingExportQuerySchema>;
+
+/** GET /api/receivables/overdue — filters for the overdue account list. */
+export const overdueAccountsQuerySchema = z.object({
+  // Only accounts with no payment in the last N days (omit for any).
+  noPaymentInDays: z.coerce.number().int().min(0).optional(),
+  // Only accounts overdue for at least this many consecutive months.
+  minConsecutiveOverdueMonths: z.coerce.number().int().min(0).optional(),
+});
+export type OverdueAccountsQuery = z.infer<typeof overdueAccountsQuerySchema>;
+
+/** POST /api/receivables/overdue/suspend — bulk suspension of selected accounts. */
+export const suspendOverdueAccountsSchema = z.object({
+  serviceAccountIds: z
+    .array(z.string().uuid("Each service account id must be a UUID"))
+    .min(1, "Select at least one account to suspend"),
+  reason: z.string().min(5, "A suspension reason is required").max(500),
+});
+export type SuspendOverdueAccountsInput = z.infer<typeof suspendOverdueAccountsSchema>;
