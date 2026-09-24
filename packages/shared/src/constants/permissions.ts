@@ -35,6 +35,10 @@ export type Permission =
   | "payments:read"
   | "payments:reverse"
   | "receipts:print"
+  // Ledger and statement of account
+  | "ledger:read"
+  | "ledger:verify"
+  | "ledger:adjust"
   // Collector operations
   | "collector_batches:create"
   | "collector_batches:read"
@@ -70,6 +74,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "payments:read",
     "payments:reverse",
     "receipts:print",
+    "ledger:read",
+    "ledger:verify",
+    "ledger:adjust",
     "collector_batches:create",
     "collector_batches:read",
     "collector_batches:remit",
@@ -95,6 +102,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "invoices:read",
     "payments:read",
     "receipts:print",
+    "ledger:read",
     "reports:view",
   ],
 
@@ -104,6 +112,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "payments:post",
     "payments:read",
     "receipts:print",
+    "ledger:read",
     "reports:view",
   ],
 
@@ -122,6 +131,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "plans:read",
     "invoices:read",
     "payments:read",
+    "ledger:read",
     "collector_batches:read",
     "reports:view",
     "reports:export",
