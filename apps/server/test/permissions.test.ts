@@ -103,4 +103,22 @@ describe("role permission matrix", () => {
     expect(roleHasPermission("manager", "collector_batches:reconcile")).toBe(false);
     expect(roleHasPermission("manager", "collector_batches:remit")).toBe(false);
   });
+
+  it("grants every role reports:view but only Admin and Manager reports:export", () => {
+    for (const role of USER_ROLES) {
+      expect(roleHasPermission(role, "reports:view")).toBe(true);
+    }
+
+    expect(roleHasPermission("manager", "reports:export")).toBe(true);
+    expect(roleHasPermission("admin", "reports:export")).toBe(true);
+    expect(roleHasPermission("cashier", "reports:export")).toBe(false);
+    expect(roleHasPermission("billing_clerk", "reports:export")).toBe(false);
+    expect(roleHasPermission("collector", "reports:export")).toBe(false);
+  });
+
+  it("denies a role the matrix does not know rather than crashing on the lookup", () => {
+    // A token minted by an older build can carry a role this matrix has no entry
+    // for; the safe answer is a denial, not an exception while reading the matrix.
+    expect(roleHasPermission("auditor" as UserRole, "reports:view")).toBe(false);
+  });
 });
