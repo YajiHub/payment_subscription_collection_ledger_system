@@ -31,47 +31,64 @@ export async function reversePayment(
   reason: string,
   reversedByUserId: string
 ): Promise<ReversePaymentResult> {
+  return db.transaction((tx) =>
+    reversePaymentWithinTransaction(tx, paymentId, reason, reversedByUserId)
+  );
+}
+
+/**
+ * Reverses a payment inside a transaction the caller already owns.
+ *
+ * Phase 7 voids a recorded field collection by reversing the payment it created;
+ * that reversal and the assignment update must commit together, so it calls this
+ * function with its own transaction instead of letting `reversePayment` open a
+ * second one.
+ */
+export async function reversePaymentWithinTransaction(
+  executor: DbExecutor,
+  paymentId: string,
+  reason: string,
+  reversedByUserId: string
+): Promise<ReversePaymentResult> {
   if (reason.trim().length < 10) {
     throw new ValidationError("Reversal reason must be at least 10 characters");
   }
 
-  return db.transaction(async (tx) => {
-    const payment = await tx
-      .select()
-      .from(payments)
-      .where(eq(payments.id, paymentId))
-      .limit(1)
-      .for("update")
-      .then((rows) => rows[0]);
+  const payment = await executor
+    .select()
+    .from(payments)
+    .where(eq(payments.id, paymentId))
+    .limit(1)
+    .for("update")
+    .then((rows) => rows[0]);
 
-    if (payment === undefined) {
-      throw new NotFoundError("Payment not found");
-    }
+  if (payment === undefined) {
+    throw new NotFoundError("Payment not found");
+  }
 
-    if (payment.status === "reversed") {
-      throw new ConflictError("Payment has already been reversed");
-    }
+  if (payment.status === "reversed") {
+    throw new ConflictError("Payment has already been reversed");
+  }
 
-    await restoreInvoiceBalances(tx, paymentId);
+  await restoreInvoiceBalances(executor, paymentId);
 
-    const reversedAt = new Date();
-    await tx
-      .update(payments)
-      .set({ status: "reversed", reversedAt, reversedBy: reversedByUserId })
-      .where(eq(payments.id, paymentId));
+  const reversedAt = new Date();
+  await executor
+    .update(payments)
+    .set({ status: "reversed", reversedAt, reversedBy: reversedByUserId })
+    .where(eq(payments.id, paymentId));
 
-    const reversalReceiptNumber = await getNextReversalReceiptNumber(tx);
-    await tx.insert(paymentReversals).values({
-      originalPaymentId: paymentId,
-      reason,
-      reversalReceiptNumber,
-      reversedBy: reversedByUserId,
-    });
-
-    await recordPaymentReversed(tx, payment, reason, reversedByUserId);
-
-    return { paymentId, reversalReceiptNumber, reversedAt };
+  const reversalReceiptNumber = await getNextReversalReceiptNumber(executor);
+  await executor.insert(paymentReversals).values({
+    originalPaymentId: paymentId,
+    reason,
+    reversalReceiptNumber,
+    reversedBy: reversedByUserId,
   });
+
+  await recordPaymentReversed(executor, payment, reason, reversedByUserId);
+
+  return { paymentId, reversalReceiptNumber, reversedAt };
 }
 
 /**

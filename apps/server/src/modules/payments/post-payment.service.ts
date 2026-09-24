@@ -115,6 +115,21 @@ async function assertGcashReferenceIsUnused(
  * satisfies allocatedCentavos + advanceCreditCentavos === amountCentavos.
  */
 export async function postPayment(input: PostPaymentInput): Promise<PostPaymentResult> {
+  return db.transaction((tx) => postPaymentWithinTransaction(tx, input));
+}
+
+/**
+ * Posts a payment inside a transaction the caller already owns.
+ *
+ * Phase 7 records a field collection as a real payment; it needs the payment, its
+ * allocations, its receipt, and its ledger credits to commit together with the
+ * batch assignment that points at them, so it calls this function with its own
+ * transaction instead of letting `postPayment` open a second one.
+ */
+export async function postPaymentWithinTransaction(
+  executor: DbExecutor,
+  input: PostPaymentInput
+): Promise<PostPaymentResult> {
   if (!Number.isInteger(input.amountCentavos) || input.amountCentavos <= 0) {
     throw new ValidationError("Payment amount must be greater than zero");
   }
@@ -123,91 +138,92 @@ export async function postPayment(input: PostPaymentInput): Promise<PostPaymentR
     throw new ValidationError("A GCash reference number is required for a GCash payment");
   }
 
-  return db.transaction(async (tx) => {
-    const account = await tx
-      .select({ id: serviceAccounts.id })
-      .from(serviceAccounts)
-      .where(eq(serviceAccounts.id, input.serviceAccountId))
-      .limit(1);
+  const account = await executor
+    .select({ id: serviceAccounts.id })
+    .from(serviceAccounts)
+    .where(eq(serviceAccounts.id, input.serviceAccountId))
+    .limit(1);
 
-    if (account.length === 0) {
-      throw new NotFoundError("Service account not found");
+  if (account.length === 0) {
+    throw new NotFoundError("Service account not found");
+  }
+
+  if (input.paymentMethod === "gcash" && input.gcash !== undefined) {
+    await assertGcashReferenceIsUnused(executor, input.gcash.referenceNumber);
+  }
+
+  const outstandingInvoices = await loadOutstandingInvoicesOldestFirst(
+    executor,
+    input.serviceAccountId
+  );
+  const allocation = allocatePayment(input.amountCentavos, outstandingInvoices);
+
+  // Apply the allocation to each invoice's cached paid/remaining amounts.
+  for (const draft of allocation.allocations) {
+    const invoice = outstandingInvoices.find((candidate) => candidate.id === draft.invoiceId);
+    if (invoice === undefined) {
+      continue; // impossible: the allocation only references loaded invoices
     }
 
-    if (input.paymentMethod === "gcash" && input.gcash !== undefined) {
-      await assertGcashReferenceIsUnused(tx, input.gcash.referenceNumber);
-    }
-
-    const outstandingInvoices = await loadOutstandingInvoicesOldestFirst(tx, input.serviceAccountId);
-    const allocation = allocatePayment(input.amountCentavos, outstandingInvoices);
-
-    // Apply the allocation to each invoice's cached paid/remaining amounts.
-    for (const draft of allocation.allocations) {
-      const invoice = outstandingInvoices.find((candidate) => candidate.id === draft.invoiceId);
-      if (invoice === undefined) {
-        continue; // impossible: the allocation only references loaded invoices
-      }
-
-      const update = applyPaymentToInvoice(invoice, draft.amountCentavos);
-      await tx
-        .update(invoices)
-        .set({
-          paidAmountCentavos: update.paidAmountCentavos,
-          remainingBalanceCentavos: update.remainingBalanceCentavos,
-          status: toInvoiceStatus(update),
-        })
-        .where(eq(invoices.id, draft.invoiceId));
-    }
-
-    const receiptNumber = await getNextReceiptNumber(tx);
-
-    const insertedPayment = await tx
-      .insert(payments)
-      .values({
-        receiptNumber,
-        serviceAccountId: input.serviceAccountId,
-        paymentMethod: input.paymentMethod,
-        amountCentavos: input.amountCentavos,
-        allocatedCentavos: allocation.allocatedCentavos,
-        advanceCreditCentavos: allocation.advanceCreditCentavos,
-        paymentDate: input.paymentDate,
-        notes: input.notes ?? null,
-        postedBy: input.postedByUserId,
+    const update = applyPaymentToInvoice(invoice, draft.amountCentavos);
+    await executor
+      .update(invoices)
+      .set({
+        paidAmountCentavos: update.paidAmountCentavos,
+        remainingBalanceCentavos: update.remainingBalanceCentavos,
+        status: toInvoiceStatus(update),
       })
-      .returning()
-      .then((rows) => rows[0]);
+      .where(eq(invoices.id, draft.invoiceId));
+  }
 
-    if (insertedPayment === undefined) {
-      throw new ValidationError("Payment could not be created");
-    }
+  const receiptNumber = await getNextReceiptNumber(executor);
 
-    if (allocation.allocations.length > 0) {
-      // The bridge records how the payment was spread, and the ledger credits below
-      // depend on the same split.
-      await tx.insert(paymentAllocations).values(
-        allocation.allocations.map((draft) => ({
-          paymentId: insertedPayment.id,
-          invoiceId: draft.invoiceId,
-          allocatedAmountCentavos: draft.amountCentavos,
-        }))
-      );
-    }
-
-    let gcash: GcashPayment | null = null;
-    if (input.paymentMethod === "gcash" && input.gcash !== undefined) {
-      gcash = await insertGcashDetails(tx, insertedPayment.id, input.gcash);
-    }
-
-    await recordPaymentPosted(tx, insertedPayment, input.postedByUserId);
-
-    return {
-      payment: insertedPayment,
-      gcash,
-      allocations: allocation.allocations,
+  const insertedPayment = await executor
+    .insert(payments)
+    .values({
+      receiptNumber,
+      serviceAccountId: input.serviceAccountId,
+      paymentMethod: input.paymentMethod,
+      amountCentavos: input.amountCentavos,
       allocatedCentavos: allocation.allocatedCentavos,
       advanceCreditCentavos: allocation.advanceCreditCentavos,
-    };
-  });
+      paymentDate: input.paymentDate,
+      notes: input.notes ?? null,
+      postedBy: input.postedByUserId,
+    })
+    .returning()
+    .then((rows) => rows[0]);
+
+  if (insertedPayment === undefined) {
+    throw new ValidationError("Payment could not be created");
+  }
+
+  if (allocation.allocations.length > 0) {
+    // The bridge records how the payment was spread, and the ledger credits below
+    // depend on the same split.
+    await executor.insert(paymentAllocations).values(
+      allocation.allocations.map((draft) => ({
+        paymentId: insertedPayment.id,
+        invoiceId: draft.invoiceId,
+        allocatedAmountCentavos: draft.amountCentavos,
+      }))
+    );
+  }
+
+  let gcash: GcashPayment | null = null;
+  if (input.paymentMethod === "gcash" && input.gcash !== undefined) {
+    gcash = await insertGcashDetails(executor, insertedPayment.id, input.gcash);
+  }
+
+  await recordPaymentPosted(executor, insertedPayment, input.postedByUserId);
+
+  return {
+    payment: insertedPayment,
+    gcash,
+    allocations: allocation.allocations,
+    allocatedCentavos: allocation.allocatedCentavos,
+    advanceCreditCentavos: allocation.advanceCreditCentavos,
+  };
 }
 
 /**
