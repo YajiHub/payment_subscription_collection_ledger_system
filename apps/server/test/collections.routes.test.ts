@@ -663,6 +663,23 @@ describe("reverse-side permissions", () => {
     expect(response.statusCode).toBe(403);
   });
 
+  // Phase 7 §6 puts batch creation with office staff (Admin, Billing Clerk).
+  // A collector must not be able to create their own assignments.
+  it("denies a Collector the ability to create a batch", async () => {
+    const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
+    fakeDatabase.queueSelectRows([]); // authenticate
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/collector-batches",
+      headers: authorizationHeader(token),
+      payload: { collectorId: COLLECTOR_A_ID, collectionDate: COLLECTION_DATE, serviceAccountIds: [SERVICE_ACCOUNT_A] },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(insertedInto(collectorBatches)).toHaveLength(0);
+  });
+
   it("denies a Cashier the ability to remit a batch", async () => {
     const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
     fakeDatabase.queueSelectRows([]); // authenticate

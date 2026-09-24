@@ -48,7 +48,16 @@ describe("role permission matrix", () => {
 
   it("denies a Collector the ability to post office payments", () => {
     expect(roleHasPermission("collector", "payments:post")).toBe(false);
-    expect(roleHasPermission("collector", "collector_batches:create")).toBe(true);
+  });
+
+  it("denies a Collector creating collector batches, since office staff assign the work", () => {
+    // Phase 7 §6: POST /api/collector-batches is for Admin and Billing Clerk.
+    // A collector works the batches assigned to them and remits the cash, but
+    // creating batches would let field staff invent their own assignments.
+    expect(roleHasPermission("collector", "collector_batches:create")).toBe(false);
+    expect(roleHasPermission("billing_clerk", "collector_batches:create")).toBe(true);
+    expect(roleHasPermission("collector", "collector_batches:read")).toBe(true);
+    expect(roleHasPermission("collector", "collector_batches:remit")).toBe(true);
   });
 
   it("treats the Manager as read-only", () => {

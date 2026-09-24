@@ -130,7 +130,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "subscribers:read",
     "invoices:read",
     "payments:read",
-    "collector_batches:create",
+    // Phase 7 §6: office staff assemble a batch and assign accounts to it. A
+    // collector works the batches assigned to them and remits the cash, but
+    // does not create batches — that would let field staff invent assignments.
     "collector_batches:read",
     "collector_batches:remit",
     "reports:view",
