@@ -16,7 +16,7 @@ set -euo pipefail
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUBMISSION_DIR="${BCIS_SUBMISSION_DIR:-$REPOSITORY_ROOT/submission/BCIS-Subscription-Billing-System}"
 
-mkdir -p "$SUBMISSION_DIR"/{samples,source,installer,documentation,manual}
+mkdir -p "$SUBMISSION_DIR"/{samples,source,installer}
 
 # Quick-start guide: the repository README.
 cp "$REPOSITORY_ROOT/README.md" "$SUBMISSION_DIR/guide.md"
@@ -36,7 +36,7 @@ convert_markdown() {
     echo "Created $(basename "$destination_pdf")"
   else
     cp "$source_file" "${destination_pdf%.pdf}.md"
-    echo "pandoc not found — copied $(basename "$destination_pdf").md instead" >&2
+    echo "pandoc not found — copied $(basename "${destination_pdf%.pdf}").md instead" >&2
   fi
 }
 

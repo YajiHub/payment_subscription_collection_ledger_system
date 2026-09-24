@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "BCIS desktop client — Electron shell + React renderer. Never touches the database.",
+  "author": "BCIS",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
