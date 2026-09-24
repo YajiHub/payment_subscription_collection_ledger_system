@@ -22,6 +22,12 @@ const environmentSchema = z.object({
   // Where GCash proof screenshots are written. Relative paths resolve against the
   // server's working directory; the directory is git-ignored.
   UPLOADS_DIR: z.string().default("uploads"),
+
+  // The bootstrap Administrator that `pnpm db:seed` creates when the username is
+  // absent. Seeding is idempotent: an account whose password has already been
+  // changed is never reset. Change the password immediately after the first login.
+  SEED_ADMIN_USERNAME: z.string().min(1).default("admin"),
+  SEED_ADMIN_PASSWORD: z.string().min(8).default("Admin@1234!"),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);

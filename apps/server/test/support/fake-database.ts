@@ -78,6 +78,9 @@ function createFakeDatabase(): FakeDatabase {
         records.insertedRows.push({ table, values });
         return builder;
       },
+      // `INSERT ... ON CONFLICT DO NOTHING` is accepted and ignored: a test that
+      // seeds idempotently only needs the insert to succeed.
+      onConflictDoNothing: () => builder,
       returning: () => builder,
       then(onFulfilled: ThenResolve, onRejected?: (reason: unknown) => unknown) {
         const failure = insertFailures.shift();
