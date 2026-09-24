@@ -138,6 +138,28 @@ describe("JWT handling", () => {
   });
 });
 
+describe("GCash screenshot upload hardening", () => {
+  it("rejects a file whose bytes are not the image it claims to be", async () => {
+    const server = await createServer();
+    const { token } = signTestToken({ role: "admin" });
+    fakeDatabase.queueSelectRows([]); // authenticate
+
+    // A Windows executable renamed to .png: the declared type is accepted, the
+    // magic bytes are not.
+    const fakePng = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(64)]).toString("base64");
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/payments/gcash/upload-screenshot",
+      headers: authorizationHeader(token),
+      payload: { fileName: "proof.png", contentType: "image/png", dataBase64: fakePng },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("VALIDATION_ERROR");
+  });
+});
+
 describe("privilege escalation", () => {
   it("denies a Cashier changing any user's role to administrator", async () => {
     const server = await createServer();
