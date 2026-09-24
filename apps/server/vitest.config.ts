@@ -24,6 +24,10 @@ export default defineConfig({
         "postgresql://bcis_user:change_this@localhost:5432/bcis_test",
       JWT_SECRET: "test-only-jwt-secret-that-is-definitely-long-enough",
       BCRYPT_ROUNDS: "4", // fast hashing in tests; production default is 12
+      // The general API rate limit would otherwise trip on a busy test file; the
+      // login limit stays at its real default so the hardening test is honest.
+      RATE_LIMIT_MAX: "100000",
+      LOGIN_RATE_LIMIT_MAX: "10",
     },
   },
 });

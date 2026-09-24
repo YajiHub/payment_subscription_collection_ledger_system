@@ -27,6 +27,7 @@ import type { FastifyInstance } from "fastify";
 import { buildServer } from "../src/index.ts";
 import { closeDatabaseConnection, pool } from "../src/db/connection";
 import { authorizationHeader, signTestToken } from "./support/tokens";
+import { deleteAuditLogsForUsers } from "./support/audit-cleanup";
 
 /** A valid bcrypt hash. The value is never checked in this test — only its shape. */
 const DUMMY_PASSWORD_HASH = "$2b$12$OMlJdIjzDLp3Jfn.9NR3qOBmwx5aLVRkyrFhSH6e5J1g.kCBMSeJe";
@@ -123,6 +124,7 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     ]);
     await pool.query("DELETE FROM subscribers WHERE id = ANY($1::uuid[])", [created.subscriberIds]);
     await pool.query("DELETE FROM subscription_plans WHERE id = ANY($1::uuid[])", [created.planIds]);
+    await deleteAuditLogsForUsers(pool, created.userIds);
     await pool.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [created.userIds]);
 
     await server.close();

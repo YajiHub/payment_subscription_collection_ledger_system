@@ -21,6 +21,7 @@ vi.mock("../src/db/connection", async () => {
 });
 
 import { buildServer } from "../src/index.ts";
+import { auditLogs } from "../src/db/schema/audit";
 import { fakeDatabase } from "./support/fake-database";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 
@@ -183,12 +184,14 @@ describe("subscriber lifecycle (create → add service → verify persisted stat
     expect(secondAccountResponse.statusCode).toBe(201);
 
     // ── Verify the persisted state ───────────────────────────────────────────
-    const subscriberInsert = fakeDatabase.insertedRows[0]?.values as Record<string, unknown>;
+    // The requests also write audit rows; this test inspects the domain rows.
+    const domainInserts = fakeDatabase.insertedRows.filter((row) => row.table !== auditLogs);
+    const subscriberInsert = domainInserts[0]?.values as Record<string, unknown>;
     expect(subscriberInsert.accountNumber).toMatch(/^SUB-\d{8}-\d{5}$/);
     expect(subscriberInsert.createdBy).toBe(CLERK_ID);
     expect(subscriberInsert.firstName).toBe("Juan");
 
-    const accountInserts = fakeDatabase.insertedRows.slice(1);
+    const accountInserts = domainInserts.slice(1);
     expect(accountInserts).toHaveLength(2);
 
     const internetInsert = accountInserts[0]?.values as Record<string, unknown>;

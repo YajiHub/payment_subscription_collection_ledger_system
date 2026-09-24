@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import { describe, expect, it } from "vitest";
 
 import { hashPassword } from "../src/shared/password";
+import { config } from "../src/config";
 
 describe("password hashing", () => {
   it("produces a bcrypt hash that verifies against the original password", async () => {
@@ -26,5 +27,10 @@ describe("password hashing", () => {
   it("rejects the wrong password", async () => {
     const hash = await hashPassword("correct-password");
     expect(await bcrypt.compare("incorrect-password", hash)).toBe(false);
+  });
+
+  it("uses the configured cost factor rather than a hardcoded one", async () => {
+    const hash = await hashPassword("cost-factor-probe");
+    expect(bcrypt.getRounds(hash)).toBe(config.BCRYPT_ROUNDS);
   });
 });
