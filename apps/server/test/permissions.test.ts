@@ -79,4 +79,28 @@ describe("role permission matrix", () => {
       expect(roleHasPermission(role, "users:deactivate")).toBe(false);
     }
   });
+
+  it("lets a Billing Clerk create collector batches, as Phase 7 requires", () => {
+    expect(roleHasPermission("billing_clerk", "collector_batches:create")).toBe(true);
+    expect(roleHasPermission("billing_clerk", "collector_batches:remit")).toBe(false);
+  });
+
+  it("lets a Cashier read and reconcile batches but never create or remit them", () => {
+    expect(roleHasPermission("cashier", "collector_batches:read")).toBe(true);
+    expect(roleHasPermission("cashier", "collector_batches:reconcile")).toBe(true);
+    expect(roleHasPermission("cashier", "collector_batches:create")).toBe(false);
+    expect(roleHasPermission("cashier", "collector_batches:remit")).toBe(false);
+  });
+
+  it("denies a Collector reconciliation of their own collection work", () => {
+    expect(roleHasPermission("collector", "collector_batches:read")).toBe(true);
+    expect(roleHasPermission("collector", "collector_batches:remit")).toBe(true);
+    expect(roleHasPermission("collector", "collector_batches:reconcile")).toBe(false);
+  });
+
+  it("lets a Manager read batches but change none of them", () => {
+    expect(roleHasPermission("manager", "collector_batches:read")).toBe(true);
+    expect(roleHasPermission("manager", "collector_batches:reconcile")).toBe(false);
+    expect(roleHasPermission("manager", "collector_batches:remit")).toBe(false);
+  });
 });
