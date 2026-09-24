@@ -1,5 +1,6 @@
 export * from "./audit";
 export * from "./billing";
+export * from "./client-config";
 export * from "./collections";
 export * from "./ledger";
 export * from "./payments";
