@@ -1,18 +1,31 @@
-// Writes the financial entries that billing creates.
+// Writes the financial entries that billing, payments, and manual adjustments create.
 //
 // Ledger entries are NEVER created directly by a route or handler — always through
 // one of these functions, so the balance arithmetic and the debit/credit direction
-// stay in one place.
+// stay in one place. They are also NEVER updated and NEVER deleted: a correction is
+// always a new, offsetting entry.
 //
-// Phase 4 posts invoices (debit) and voids them (credit). Phase 5 adds payments,
-// and Phase 6 builds the Statement of Account on top of this table.
+// Ordering and concurrency
+// ------------------------
+// Every entry carries a `sequenceNumber` that starts at 1 and increases by one per
+// service account. The running balance is only meaningful as a chain, so writers
+// for the SAME service account must be serialized. Each write takes a transaction
+// advisory lock keyed by the service account id BEFORE reading the previous balance
+// and sequence number. Two concurrent postings for one account therefore queue;
+// two for different accounts do not block each other. A unique index on
+// (service_account_id, sequence_number) is the database-level backstop if the lock
+// were ever bypassed.
+//
+// The balance is COMPUTED from the entries — there is no balance column anywhere.
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
 
-import type { DbExecutor } from "../../db/connection";
+import { getMonthYearLabel, type LedgerEntryType } from "@bcis/shared";
+import { db, type DbExecutor } from "../../db/connection";
 import { DEBIT_ENTRY_TYPES, ledgerEntries } from "../../db/schema/ledger";
 import type { NewLedgerEntry } from "../../db/schema/ledger";
-import { getMonthYearLabel } from "@bcis/shared";
+import { computeRunningBalanceCentavos, verifyLedgerChain } from "./ledger-integrity";
+import type { LedgerIntegrityResult } from "./ledger-integrity";
 
 /** The invoice fields a ledger entry needs to describe its source document. */
 export interface InvoiceForLedger {
@@ -37,8 +50,76 @@ const debitTypeList = sql.join(
 
 const balanceExpression = sql<number>`coalesce(sum(case when ${ledgerEntries.entryType} in (${debitTypeList}) then ${ledgerEntries.amountCentavos} else -${ledgerEntries.amountCentavos} end), 0)`;
 
-/** The current balance of a service account: debits minus credits. */
+/** The balance and the next sequence number a writer needs, from the latest entry. */
+interface LedgerState {
+  balanceCentavos: number;
+  nextSequenceNumber: number;
+}
+
+/**
+ * Serializes writers for one service account for the rest of the current
+ * transaction. The lock is keyed by the account id and released automatically when
+ * the transaction ends, so a crash can never leave the ledger permanently locked.
+ */
+export async function lockServiceAccountLedger(
+  executor: DbExecutor,
+  serviceAccountId: string
+): Promise<void> {
+  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${serviceAccountId}))`);
+}
+
+/**
+ * Reads the latest entry of an account in ONE query: its running balance is the
+ * current balance, and its sequence number + 1 is the next free position.
+ *
+ * Reading the last entry (rather than summing every row) is what lets the ledger
+ * page show a balance in O(1) and proves the balance is derived from the entries,
+ * never stored.
+ */
+async function loadLedgerState(
+  executor: DbExecutor,
+  serviceAccountId: string
+): Promise<LedgerState> {
+  const latestEntry = await executor
+    .select({
+      balanceCentavos: ledgerEntries.runningBalanceCentavos,
+      sequenceNumber: ledgerEntries.sequenceNumber,
+    })
+    .from(ledgerEntries)
+    .where(eq(ledgerEntries.serviceAccountId, serviceAccountId))
+    .orderBy(desc(ledgerEntries.sequenceNumber), desc(ledgerEntries.id))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  return {
+    balanceCentavos: Number(latestEntry?.balanceCentavos ?? 0),
+    nextSequenceNumber: Number(latestEntry?.sequenceNumber ?? 0) + 1,
+  };
+}
+
+/**
+ * The current balance of a service account, read from its latest ledger entry.
+ *
+ * A positive balance means the subscriber owes money, zero means current, and a
+ * negative balance means they hold an advance credit. There is no balance column:
+ * this value always comes from the ledger.
+ */
 export async function getCurrentBalanceCentavos(
+  executor: DbExecutor,
+  serviceAccountId: string
+): Promise<number> {
+  const state = await loadLedgerState(executor, serviceAccountId);
+  return state.balanceCentavos;
+}
+
+/**
+ * The balance computed from scratch by summing every entry.
+ *
+ * Used by the integrity check and by tests to confirm the running-balance chain
+ * agrees with the arithmetic. Slower than reading the latest entry, which is the
+ * point — it is a second, independent way to arrive at the same number.
+ */
+export async function getComputedBalanceCentavos(
   executor: DbExecutor,
   serviceAccountId: string
 ): Promise<number> {
@@ -48,8 +129,31 @@ export async function getCurrentBalanceCentavos(
     .where(eq(ledgerEntries.serviceAccountId, serviceAccountId))
     .then((rows) => rows[0]?.balanceCentavos ?? 0);
 
-  // `pg` may hand back a string for a numeric aggregate; coerce so callers do
-  // integer arithmetic, never string concatenation.
+  return Number(balance);
+}
+
+/**
+ * The balance as it stood immediately before `instant`.
+ *
+ * This is the opening balance of a statement: the sum of every entry dated before
+ * the statement period. With no prior entries it is 0.
+ */
+export async function getBalanceBeforeCentavos(
+  executor: DbExecutor,
+  serviceAccountId: string,
+  instant: Date
+): Promise<number> {
+  const balance = await executor
+    .select({ balanceCentavos: balanceExpression })
+    .from(ledgerEntries)
+    .where(
+      and(
+        eq(ledgerEntries.serviceAccountId, serviceAccountId),
+        lt(ledgerEntries.entryDate, instant)
+      )
+    )
+    .then((rows) => rows[0]?.balanceCentavos ?? 0);
+
   return Number(balance);
 }
 
@@ -89,7 +193,7 @@ export async function getUnappliedAdvanceCreditSources(
         eq(ledgerEntries.entryType, "advance_credit")
       )
     )
-    .orderBy(asc(ledgerEntries.entryDate), asc(ledgerEntries.id));
+    .orderBy(asc(ledgerEntries.sequenceNumber), asc(ledgerEntries.id));
 
   // Anything already applied comes off the oldest credits first. Clamp at zero so
   // a balance made negative by a non-advance credit (e.g. a manual credit) never
@@ -116,6 +220,43 @@ export async function getUnappliedAdvanceCreditSources(
 }
 
 /**
+ * Builds one ledger entry bound to the transaction: it locks the account, reads the
+ * latest balance and sequence number, and computes the running balance from the
+ * direction of `entryType`.
+ */
+async function buildLedgerEntry(
+  executor: DbExecutor,
+  input: {
+    serviceAccountId: string;
+    entryType: LedgerEntryType;
+    amountCentavos: number;
+    description: string;
+    createdByUserId: string;
+    invoiceId?: string | null;
+    paymentId?: string | null;
+  }
+): Promise<NewLedgerEntry> {
+  await lockServiceAccountLedger(executor, input.serviceAccountId);
+  const state = await loadLedgerState(executor, input.serviceAccountId);
+
+  return {
+    serviceAccountId: input.serviceAccountId,
+    entryType: input.entryType,
+    amountCentavos: input.amountCentavos,
+    sequenceNumber: state.nextSequenceNumber,
+    runningBalanceCentavos: computeRunningBalanceCentavos(
+      state.balanceCentavos,
+      input.entryType,
+      input.amountCentavos
+    ),
+    description: input.description,
+    invoiceId: input.invoiceId ?? null,
+    paymentId: input.paymentId ?? null,
+    createdBy: input.createdByUserId,
+  };
+}
+
+/**
  * Records the debit that consumes an advance credit when it is applied to a new
  * invoice. The advance credit was a credit; this debit cancels it so the same money
  * cannot be spent twice.
@@ -130,17 +271,16 @@ export async function recordAdvanceCreditApplied(
     createdByUserId: string;
   }
 ): Promise<void> {
-  const previousBalance = await getCurrentBalanceCentavos(executor, input.serviceAccountId);
-
-  await executor.insert(ledgerEntries).values({
+  const entry = await buildLedgerEntry(executor, {
     serviceAccountId: input.serviceAccountId,
     entryType: "advance_credit_applied",
     amountCentavos: input.amountCentavos,
-    runningBalanceCentavos: previousBalance + input.amountCentavos,
     description: `Advance Credit Applied — Invoice ${input.invoiceNumber}`,
     invoiceId: input.invoiceId,
-    createdBy: input.createdByUserId,
+    createdByUserId: input.createdByUserId,
   });
+
+  await executor.insert(ledgerEntries).values(entry);
 }
 
 /** A human label for the invoice's billing period, or a generic fallback. */
@@ -172,23 +312,22 @@ export async function recordInvoicePosted(
     return "";
   }
 
-  const previousBalance = await getCurrentBalanceCentavos(executor, invoice.serviceAccountId);
+  const entry = await buildLedgerEntry(executor, {
+    serviceAccountId: invoice.serviceAccountId,
+    entryType: "invoice_posted",
+    amountCentavos: debitCentavos,
+    description: `Invoice ${invoice.invoiceNumber} — ${periodLabel(invoice)}`,
+    invoiceId: invoice.id,
+    createdByUserId,
+  });
 
-  const entry = await executor
+  const inserted = await executor
     .insert(ledgerEntries)
-    .values({
-      serviceAccountId: invoice.serviceAccountId,
-      entryType: "invoice_posted",
-      amountCentavos: debitCentavos,
-      runningBalanceCentavos: previousBalance + debitCentavos,
-      description: `Invoice ${invoice.invoiceNumber} — ${periodLabel(invoice)}`,
-      invoiceId: invoice.id,
-      createdBy: createdByUserId,
-    })
+    .values(entry)
     .returning({ id: ledgerEntries.id })
     .then((rows) => rows[0]);
 
-  return entry?.id ?? "";
+  return inserted?.id ?? "";
 }
 
 /** Records the credit that reverses a voided invoice. The invoice row is kept. */
@@ -198,23 +337,22 @@ export async function recordInvoiceVoided(
   reason: string,
   createdByUserId: string
 ): Promise<string> {
-  const previousBalance = await getCurrentBalanceCentavos(executor, invoice.serviceAccountId);
+  const entry = await buildLedgerEntry(executor, {
+    serviceAccountId: invoice.serviceAccountId,
+    entryType: "invoice_void",
+    amountCentavos: invoice.totalAmountCentavos,
+    description: `Invoice ${invoice.invoiceNumber} Voided — ${reason}`,
+    invoiceId: invoice.id,
+    createdByUserId,
+  });
 
-  const entry = await executor
+  const inserted = await executor
     .insert(ledgerEntries)
-    .values({
-      serviceAccountId: invoice.serviceAccountId,
-      entryType: "invoice_void",
-      amountCentavos: invoice.totalAmountCentavos,
-      runningBalanceCentavos: previousBalance - invoice.totalAmountCentavos,
-      description: `Invoice ${invoice.invoiceNumber} Voided — ${reason}`,
-      invoiceId: invoice.id,
-      createdBy: createdByUserId,
-    })
+    .values(entry)
     .returning({ id: ledgerEntries.id })
     .then((rows) => rows[0]);
 
-  return entry?.id ?? "";
+  return inserted?.id ?? "";
 }
 
 /** Records the debit created when a late fee is added to an overdue invoice. */
@@ -224,23 +362,22 @@ export async function recordLateFeeApplied(
   lateFeeCentavos: number,
   createdByUserId: string
 ): Promise<string> {
-  const previousBalance = await getCurrentBalanceCentavos(executor, invoice.serviceAccountId);
+  const entry = await buildLedgerEntry(executor, {
+    serviceAccountId: invoice.serviceAccountId,
+    entryType: "late_fee",
+    amountCentavos: lateFeeCentavos,
+    description: `Late Fee — Invoice ${invoice.invoiceNumber}`,
+    invoiceId: invoice.id,
+    createdByUserId,
+  });
 
-  const entry = await executor
+  const inserted = await executor
     .insert(ledgerEntries)
-    .values({
-      serviceAccountId: invoice.serviceAccountId,
-      entryType: "late_fee",
-      amountCentavos: lateFeeCentavos,
-      runningBalanceCentavos: previousBalance + lateFeeCentavos,
-      description: `Late Fee — Invoice ${invoice.invoiceNumber}`,
-      invoiceId: invoice.id,
-      createdBy: createdByUserId,
-    })
+    .values(entry)
     .returning({ id: ledgerEntries.id })
     .then((rows) => rows[0]);
 
-  return entry?.id ?? "";
+  return inserted?.id ?? "";
 }
 
 /** The payment fields the ledger needs to describe its source document. */
@@ -267,31 +404,44 @@ export async function recordPaymentPosted(
   payment: PaymentForLedger,
   createdByUserId: string
 ): Promise<void> {
-  const previousBalance = await getCurrentBalanceCentavos(executor, payment.serviceAccountId);
-  const entries: NewLedgerEntry[] = [];
+  await lockServiceAccountLedger(executor, payment.serviceAccountId);
+  const state = await loadLedgerState(executor, payment.serviceAccountId);
 
+  const entries: NewLedgerEntry[] = [];
   // Build the entries one after another so each carries the running balance after it.
-  let runningBalance = previousBalance;
+  let sequenceNumber = state.nextSequenceNumber;
+  let runningBalance = state.balanceCentavos;
 
   if (payment.allocatedCentavos > 0) {
-    runningBalance -= payment.allocatedCentavos;
+    runningBalance = computeRunningBalanceCentavos(
+      runningBalance,
+      "payment_received",
+      payment.allocatedCentavos
+    );
     entries.push({
       serviceAccountId: payment.serviceAccountId,
       entryType: "payment_received",
       amountCentavos: payment.allocatedCentavos,
+      sequenceNumber: sequenceNumber,
       runningBalanceCentavos: runningBalance,
       description: `Payment ${payment.receiptNumber}`,
       paymentId: payment.id,
       createdBy: createdByUserId,
     });
+    sequenceNumber += 1;
   }
 
   if (payment.advanceCreditCentavos > 0) {
-    runningBalance -= payment.advanceCreditCentavos;
+    runningBalance = computeRunningBalanceCentavos(
+      runningBalance,
+      "advance_credit",
+      payment.advanceCreditCentavos
+    );
     entries.push({
       serviceAccountId: payment.serviceAccountId,
       entryType: "advance_credit",
       amountCentavos: payment.advanceCreditCentavos,
+      sequenceNumber: sequenceNumber,
       runningBalanceCentavos: runningBalance,
       description: `Advance Credit — Payment ${payment.receiptNumber}`,
       paymentId: payment.id,
@@ -317,15 +467,76 @@ export async function recordPaymentReversed(
   reason: string,
   createdByUserId: string
 ): Promise<void> {
-  const previousBalance = await getCurrentBalanceCentavos(executor, payment.serviceAccountId);
-
-  await executor.insert(ledgerEntries).values({
+  const entry = await buildLedgerEntry(executor, {
     serviceAccountId: payment.serviceAccountId,
     entryType: "payment_reversal",
     amountCentavos: payment.amountCentavos,
-    runningBalanceCentavos: previousBalance + payment.amountCentavos,
     description: `Payment ${payment.receiptNumber} Reversed — ${reason}`,
     paymentId: payment.id,
-    createdBy: createdByUserId,
+    createdByUserId,
   });
+
+  await executor.insert(ledgerEntries).values(entry);
+}
+
+/**
+ * Records an administrator's manual adjustment (a debit or a credit).
+ *
+ * The reason becomes the entry's description, and manual entries are never
+ * updated or deleted afterwards — a mistake is corrected with another manual
+ * entry that says so.
+ */
+export async function recordManualEntry(
+  executor: DbExecutor,
+  input: {
+    serviceAccountId: string;
+    entryType: "manual_debit" | "manual_credit";
+    amountCentavos: number;
+    reason: string;
+    createdByUserId: string;
+  }
+): Promise<string> {
+  const label = input.entryType === "manual_debit" ? "Manual Debit" : "Manual Credit";
+  const entry = await buildLedgerEntry(executor, {
+    serviceAccountId: input.serviceAccountId,
+    entryType: input.entryType,
+    amountCentavos: input.amountCentavos,
+    description: `${label} — ${input.reason}`,
+    createdByUserId: input.createdByUserId,
+  });
+
+  const inserted = await executor
+    .insert(ledgerEntries)
+    .values(entry)
+    .returning({ id: ledgerEntries.id })
+    .then((rows) => rows[0]);
+
+  return inserted?.id ?? "";
+}
+
+/**
+ * Verifies that an account's running balances are internally consistent and its
+ * sequence numbers are unbroken.
+ *
+ * The pure decision lives in `verifyLedgerChain`; this function only fetches the
+ * entries. It is used as an admin diagnostic and by the acceptance tests, which
+ * inject a corrupted chain and expect `isValid: false`.
+ */
+export async function verifyLedgerIntegrity(
+  serviceAccountId: string,
+  executor: DbExecutor = db
+): Promise<LedgerIntegrityResult> {
+  const entries = await executor
+    .select({
+      id: ledgerEntries.id,
+      sequenceNumber: ledgerEntries.sequenceNumber,
+      entryType: ledgerEntries.entryType,
+      amountCentavos: ledgerEntries.amountCentavos,
+      runningBalanceCentavos: ledgerEntries.runningBalanceCentavos,
+    })
+    .from(ledgerEntries)
+    .where(eq(ledgerEntries.serviceAccountId, serviceAccountId))
+    .orderBy(asc(ledgerEntries.sequenceNumber), asc(ledgerEntries.id));
+
+  return verifyLedgerChain(entries);
 }
