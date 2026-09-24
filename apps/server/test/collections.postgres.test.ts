@@ -440,6 +440,10 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     });
     expect(response.statusCode).toBe(200);
     const totals = response.json().data.totals as { grandTotal: number };
+    const entries = response.json().data.entries as Array<{
+      serviceAccountId: string;
+      totalOutstandingCentavos: number;
+    }>;
 
     const sumResult = await pool.query(
       `SELECT coalesce(sum(remaining_balance_centavos), 0)::int AS total
@@ -450,15 +454,29 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     );
     const expectedTotal = Number(sumResult.rows[0]?.total ?? 0);
 
-    // The report covers the whole database; at minimum it must include these accounts
-    // and equal the arithmetic sum of everything outstanding.
+    // Deterministic, race-free half of the acceptance criterion: the report's rows for
+    // THIS suite's accounts must sum to the outstanding balances of those same accounts.
+    // Other suites run against the same database, but none of them touch these random ids,
+    // so this comparison holds no matter what else is writing concurrently.
+    const suiteAccountIds = new Set(created.serviceAccountIds);
+    const suiteReportTotal = entries
+      .filter((entry) => suiteAccountIds.has(entry.serviceAccountId))
+      .reduce((sum, entry) => sum + entry.totalOutstandingCentavos, 0);
+
+    expect(expectedTotal).toBeGreaterThan(0);
+    expect(suiteReportTotal).toBe(expectedTotal);
+
+    // Whole-database half of the criterion. It reads the report and then re-sums every
+    // outstanding balance with raw SQL, so it is a sound equality only while nothing
+    // else writes to the shared database between those two reads. `vitest.config.ts`
+    // disables file parallelism for exactly this reason — do not re-enable it without
+    // isolating the databases, or this assertion becomes nondeterministic.
     const fullSum = await pool.query(
       `SELECT coalesce(sum(remaining_balance_centavos), 0)::int AS total
          FROM invoices
         WHERE status IN ('posted', 'partially_paid', 'overdue') AND remaining_balance_centavos > 0`
     );
     expect(totals.grandTotal).toBe(Number(fullSum.rows[0]?.total ?? 0));
-    expect(expectedTotal).toBeGreaterThan(0);
   });
 
   it("lists overdue accounts and exports AR aging as an XLSX file", async () => {

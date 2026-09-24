@@ -11,6 +11,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    // The DB-backed suites share one bcis_test database and assert whole-database
+    // invariants (e.g. AR aging grand total = sum of all outstanding invoices).
+    // Running files in parallel lets one suite mutate balances between another
+    // suite's snapshot and its raw-SQL re-sum, so the results are nondeterministic.
+    fileParallelism: false,
     include: ["test/**/*.test.ts"],
     env: {
       NODE_ENV: "test",
