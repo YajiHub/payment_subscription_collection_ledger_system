@@ -46,6 +46,7 @@ is set). **Change that password immediately after the first login.**
 | `pnpm typecheck`        | TypeScript strict check in every workspace                             |
 | `pnpm lint`             | ESLint (flat config) across the monorepo                               |
 | `pnpm test`             | Vitest in every workspace (PostgreSQL suites skip when no DB answers)  |
+| `pnpm verify:gui`       | Launches Electron and smoke-checks the GUI (needs the renderer served) |
 | `pnpm format`           | Prettier write                                                         |
 | `pnpm build`            | Compiles the client bundles (main, preload, renderer) into `apps/client/out` |
 | `pnpm build:installer`  | Builds the Windows `.exe` installer (run on Windows)                   |

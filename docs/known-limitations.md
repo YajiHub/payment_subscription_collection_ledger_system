@@ -7,27 +7,35 @@ reviewer is never misled by a document that claims more than the code does.
 
 ---
 
-## 1. The desktop GUI was never launched in this environment
+## 1. The desktop GUI is smoke-checked, not exhaustively tested
 
-**What this means.** All development and verification happened on a headless
-Linux machine. `pnpm dev:client` starts an Electron window, which needs a
-display, so the graphical application has not been opened or clicked through
-here. The Electron main process, the preload bridge, and every React screen are
-type-checked, but their on-screen behaviour was not observed.
+**What this means.** The graphical application runs and is checked automatically,
+but nobody has walked every screen by hand. `pnpm verify:gui` launches Electron,
+signs in through the real login form, screenshots the main screens, and asserts
+that the navigation menu offers each role exactly the screens its permissions
+allow. It passes here (24/24 checks, including a non-administrator role).
 
-**What *was* verified.** `pnpm typecheck` covers `apps/client` (main, preload,
-renderer, and the Vite config). The server, which owns all business logic, is
-covered by the automated test suite.
+**What that covers.** The window opens, the renderer loads, login works, the
+menu is permission-correct per role, and User Management offers its Add User and
+per-row actions. It would have caught the bug where the dashboard gave the
+Administrator no route to User Management while every API test still passed.
 
-**Still to do.** Launch the client on Windows (or a Linux desktop), log in as each
-role, and walk the User Manual. Treat the first run as a QA pass.
+**What it does not cover.** The visual detail and step-by-step flow of every
+screen. Printing, report export dialogs, and the receipt preview are still only
+verified by code inspection. Treat a first walk through the User Manual as a QA
+pass.
 
-## 2. No automated tests for the renderer
+**Linux/WSLg caveat.** Entering fullscreen hangs the WSLg compositor, so the
+window is created with `fullscreenable: false` on Linux; maximize through the
+window manager instead. Windows fullscreen is unaffected.
 
-There are no unit or end-to-end tests for the React code: no component tests, no
-Playwright/Electron smoke test. The automated suite covers the API, Drizzle
-queries, money maths, permissions, and the HTTP surface. A renderer regression
-would only be caught by hand.
+## 2. The renderer has a smoke check but no unit tests
+
+There are no component tests and no browser-level end-to-end suite. `pnpm
+verify:gui` checks navigation and the login flow through Electron, but it asserts
+wiring, not rendering detail: a broken layout, a mislabelled field, or a wrong
+amount formatting would not be caught. The automated suite covers the API,
+Drizzle queries, money maths, permissions, and the HTTP surface.
 
 ## 3. The Windows installer has not been built or run here
 

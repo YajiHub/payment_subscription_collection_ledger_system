@@ -68,6 +68,22 @@ export default tseslint.config(
     },
   },
 
+  // The Electron GUI smoke check is CommonJS on purpose: Electron loads it as a
+  // main-process entry point, where `require("electron")` is the supported form.
+  // It also needs browser globals: the login helper in it is serialised and
+  // evaluated inside the renderer through executeJavaScript, where `document` and
+  // `window` are the page's, not Node's.
+  {
+    files: ["scripts/**/*.cjs"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+
   // Must stay last: turns off every rule that would fight Prettier's formatting.
   prettier
 );
