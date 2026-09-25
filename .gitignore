@@ -32,6 +32,10 @@ Thumbs.db
 .pi/cache/
 .pi/sessions/
 
+# Impeccable — machine-installed/updatable skill and its live runtime state
+.agents/skills/impeccable/
+.impeccable/
+
 # Uploaded GCash proof screenshots live on the server, never in git
 uploads/
 

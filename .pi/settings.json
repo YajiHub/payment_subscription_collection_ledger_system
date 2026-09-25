@@ -1,7 +1,6 @@
 {
   "packages": [
     "git:github.com/obra/superpowers",
-    "npm:pi-impeccable",
     "npm:@majorgilles/pi-grill-me"
   ]
 }
