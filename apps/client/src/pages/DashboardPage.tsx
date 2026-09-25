@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { AppNavigation } from "../components/AppNavigation";
 import { roleHasPermission } from "@bcis/shared";
 import {
   extractApiErrorMessage,
@@ -145,14 +146,7 @@ export function DashboardPage(): ReactNode {
               : `Last billing run: ${kpis.lastBillingRunDate === null ? "never" : formatDateOnly(kpis.lastBillingRunDate)}`}
           </p>
         </div>
-        <nav className="flex items-center gap-3 text-sm font-medium">
-          <Link to="/reports" className="text-slate-800 underline">
-            Reports Center
-          </Link>
-          <Link to="/" className="text-slate-800 underline">
-            Home
-          </Link>
-        </nav>
+        <AppNavigation />
       </header>
 
       {errorMessage !== null && <p className="text-sm text-red-700">{errorMessage}</p>}

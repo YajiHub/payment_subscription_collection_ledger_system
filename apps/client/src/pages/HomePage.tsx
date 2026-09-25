@@ -1,52 +1,28 @@
 import type { ReactNode } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 
-import { roleHasPermission } from "@bcis/shared";
 import { ApiStatusBadge } from "../components/ApiStatusBadge";
+import { AppNavigation } from "../components/AppNavigation";
 import { useApiHealth } from "../hooks/useApiHealth";
-import { logout as requestServerLogout } from "../lib/api-client";
 import { API_BASE_URL } from "../lib/constants";
 import { useApiStatusStore } from "../stores/api-status.store";
 import { useAuthStore } from "../stores/auth.store";
 
 /**
  * Authenticated dashboard.
- * Shows who is signed in, links to Admin-only screens when permitted,
- * and (from Phase 1) proves the client reaches the API and the database.
+ * Shows who is signed in, the full navigation menu, and (from Phase 1) proves
+ * the client reaches the API and the database.
  */
 export function HomePage(): ReactNode {
   useApiHealth();
-  const navigate = useNavigate();
 
   const user = useAuthStore((state) => state.user);
-  const clearSession = useAuthStore((state) => state.logout);
 
   const isReachable = useApiStatusStore((state) => state.isReachable);
   const serviceVersion = useApiStatusStore((state) => state.serviceVersion);
   const databaseLatencyMs = useApiStatusStore((state) => state.databaseLatencyMs);
   const databaseErrorMessage = useApiStatusStore((state) => state.databaseErrorMessage);
   const lastCheckedAt = useApiStatusStore((state) => state.lastCheckedAt);
-
-  const canManageUsers = user !== null && roleHasPermission(user.role, "users:read");
-  const canViewAuditLogs = user !== null && roleHasPermission(user.role, "audit:read");
-  const canManageSettings = user !== null && roleHasPermission(user.role, "system:settings");
-  const canViewSubscribers = user !== null && roleHasPermission(user.role, "subscribers:read");
-  const canViewPlans = user !== null && roleHasPermission(user.role, "plans:read");
-  const canViewInvoices = user !== null && roleHasPermission(user.role, "invoices:read");
-  const canViewPayments = user !== null && roleHasPermission(user.role, "payments:read");
-  const canPostPayments = user !== null && roleHasPermission(user.role, "payments:post");
-  const canViewBatches = user !== null && roleHasPermission(user.role, "collector_batches:read");
-  const canViewReports = user !== null && roleHasPermission(user.role, "reports:view");
-
-  async function handleLogout(): Promise<void> {
-    try {
-      await requestServerLogout();
-    } catch {
-      // Even if the server is unreachable, clear the local session so the user can leave.
-    }
-    clearSession();
-    navigate("/login", { replace: true });
-  }
 
   // Phase 8 §8: the Management Dashboard is the first screen after login for the
   // Administrator and the Manager. Everyone else stays on this page.
@@ -65,80 +41,7 @@ export function HomePage(): ReactNode {
             Signed in as {user?.fullName ?? "unknown user"} ({user?.role ?? "no role"}).
           </p>
         </div>
-        <nav className="flex items-center gap-3 text-sm font-medium">
-          {canViewSubscribers && (
-            <Link to="/subscribers" className="text-slate-800 underline">
-              Subscribers
-            </Link>
-          )}
-          {canViewPlans && (
-            <Link to="/plans" className="text-slate-800 underline">
-              Plans
-            </Link>
-          )}
-          {canViewInvoices && (
-            <Link to="/billing" className="text-slate-800 underline">
-              Billing
-            </Link>
-          )}
-          {canViewPayments && (
-            <Link to="/payments" className="text-slate-800 underline">
-              Payments
-            </Link>
-          )}
-          {canPostPayments && (
-            <Link to="/payments/new" className="text-slate-800 underline">
-              Post Payment
-            </Link>
-          )}
-          {canViewBatches && (
-            <Link to="/collector-batches" className="text-slate-800 underline">
-              Collector Batches
-            </Link>
-          )}
-          {canViewReports && (
-            <Link to="/dashboard" className="text-slate-800 underline">
-              Dashboard
-            </Link>
-          )}
-          {canViewReports && (
-            <Link to="/reports" className="text-slate-800 underline">
-              Reports
-            </Link>
-          )}
-          {canViewReports && (
-            <Link to="/receivables/aging" className="text-slate-800 underline">
-              AR Aging
-            </Link>
-          )}
-          {canViewReports && (
-            <Link to="/receivables/overdue" className="text-slate-800 underline">
-              Overdue Accounts
-            </Link>
-          )}
-          {canManageUsers && (
-            <Link to="/users" className="text-slate-800 underline">
-              User Management
-            </Link>
-          )}
-          {canViewAuditLogs && (
-            <Link to="/audit-logs" className="text-slate-800 underline">
-              Audit Trail
-            </Link>
-          )}
-          {canManageSettings && (
-            <Link to="/settings" className="text-slate-800 underline">
-              System Settings
-            </Link>
-          )}
-          <button
-            type="button"
-            onClick={() => void handleLogout()}
-            className="text-red-700 underline"
-          >
-            Log out
-          </button>
-        </nav>
+        <AppNavigation />
       </header>
 
       <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">

@@ -34,7 +34,14 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "bcis-auth", // localStorage key
-      partialize: (state) => ({ token: state.token, user: state.user }),
+      // `isAuthenticated` is persisted too: without it a page reload restored the
+      // token and user but reset the flag to false, and ProtectedRoute bounced the
+      // user back to /login even though their session was still valid.
+      partialize: (state) => ({
+        token: state.token,
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+      }),
     }
   )
 );

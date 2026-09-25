@@ -8,6 +8,9 @@ import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
+// Prevent GPU process crashes and fullscreen/resize hangs in WSLg / Linux
+app.disableHardwareAcceleration();
+
 // electron-vite sets ELECTRON_RENDERER_URL while the Vite dev server is running.
 const rendererDevServerUrl = process.env.ELECTRON_RENDERER_URL;
 
@@ -67,7 +70,16 @@ function createMainWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    show: false, // revealed once the renderer is ready — avoids a white flash
+    x: 100,
+    y: 100,
+    minWidth: 1024,
+    minHeight: 700,
+    center: true,
+    show: true, // Show immediately so Windows/WSLg renders the window on screen
+    // Clicking the fullscreen control under Linux/WSLg hangs the GPU compositor and
+    // the window stops repainting. Windows fullscreen works normally, so only Linux
+    // loses the control; maximize through the window manager there instead.
+    fullscreenable: process.platform !== "linux",
     title: "BCIS Subscription Billing and Collection System",
     webPreferences: {
       nodeIntegration: false, // renderer cannot use Node APIs
@@ -77,8 +89,40 @@ function createMainWindow(): BrowserWindow {
     },
   });
 
+  mainWindow.center();
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+
   mainWindow.once("ready-to-show", () => {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
     mainWindow.show();
+    mainWindow.focus();
+  });
+
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+    console.error(`Renderer failed to load (${errorCode}): ${errorDescription}`);
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
+  });
+
+  // A hung renderer previously left the app frozen with no way back: the window
+  // stayed on screen and the only recovery was killing the process from a
+  // terminal. Reload the renderer instead, so the app recovers by itself.
+  mainWindow.on("unresponsive", () => {
+    console.error("Renderer became unresponsive; reloading it.");
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.reload();
+    }
+  });
+
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error(`Renderer process gone: ${details.reason} (exit code ${details.exitCode})`);
   });
 
   if (rendererDevServerUrl !== undefined) {
