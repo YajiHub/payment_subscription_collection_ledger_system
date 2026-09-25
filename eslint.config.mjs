@@ -19,6 +19,8 @@ export default tseslint.config(
       "**/build/**",
       "**/coverage/**",
       "**/.pi/**",
+      ".agents/**",
+      ".impeccable/**",
       "apps/server/src/db/migrations/**",
     ],
   },
