@@ -63,7 +63,7 @@ the installed desktop app.
 
    ```dotenv
    NODE_ENV=production
-   PORT=3001
+   PORT=3003
    DATABASE_URL=postgresql://bcis_user:choose_a_strong_password@localhost:5432/bcis_db
    JWT_SECRET=a_long_random_string_at_least_32_characters_long
    # Development browser origin, plus "null" for the packaged desktop clients.
@@ -114,8 +114,8 @@ the installed desktop app.
 7. Check it answers:
 
    ```bash
-   curl http://localhost:3001/health
-   curl http://localhost:3001/health/db
+   curl http://localhost:3003/health
+   curl http://localhost:3003/health/db
    ```
 
    The second command returns `200` when PostgreSQL is reachable, and `503` with
@@ -148,13 +148,13 @@ the installed desktop app.
 4. On PC-1 the default is correct and can stay as it is:
 
    ```json
-   { "apiBaseUrl": "http://localhost:3001" }
+   { "apiBaseUrl": "http://localhost:3003" }
    ```
 
 5. On PC-2 and PC-3, close the app and edit that file to PC-1's address:
 
    ```json
-   { "apiBaseUrl": "http://192.168.1.100:3001" }
+   { "apiBaseUrl": "http://192.168.1.100:3003" }
    ```
 
 6. Start the app again. It reads `config.json` at startup, so a change takes
@@ -164,7 +164,7 @@ the installed desktop app.
    below and that PC-1's server is running.
 
 The client's API URL is resolved in this order: `config.json` → the URL compiled
-into the build → `http://localhost:3001`. A value that is not a full `http` or
+into the build → `http://localhost:3003`. A value that is not a full `http` or
 `https` URL is ignored, so a typo falls back rather than breaking the app.
 
 ---
@@ -214,7 +214,7 @@ User Manual §1.4).
 
 ## Multi-PC notes
 
-- The API server listens on `0.0.0.0:3001`, so other PCs can reach it.
+- The API server listens on `0.0.0.0:3003`, so other PCs can reach it.
 - Two cashiers may post payments at the same time. Payment posting runs inside a
   database transaction and locks the service account row, so one waits for the
   other rather than corrupting the balance.
@@ -224,11 +224,11 @@ User Manual §1.4).
 
 ### Firewall
 
-If PC-2 or PC-3 cannot reach the server, allow inbound TCP 3001 on PC-1:
+If PC-2 or PC-3 cannot reach the server, allow inbound TCP 3003 on PC-1:
 
 ```
 Windows Defender Firewall → Advanced settings → Inbound Rules → New Rule
-Port → TCP → 3001 → Allow the connection → All profiles → Name: "BCIS API"
+Port → TCP → 3003 → Allow the connection → All profiles → Name: "BCIS API"
 ```
 
 ---
@@ -246,7 +246,7 @@ the scripts, the schedule, and how to restore:
 
 | Symptom                              | Likely cause and fix                                                        |
 | ------------------------------------ | --------------------------------------------------------------------------- |
-| App badge says **API offline**       | PC-1's server is stopped, or the firewall blocks port 3001, or `config.json` has the wrong IP |
+| App badge says **API offline**       | PC-1's server is stopped, or the firewall blocks port 3003, or `config.json` has the wrong IP |
 | `/health/db` returns `503`           | PostgreSQL is stopped on PC-1, or `DATABASE_URL` is wrong                    |
 | Login fails with "invalid credentials" | Wrong password, or the account is deactivated (Admin → Users)               |
 | Server exits immediately at startup  | `.env` is missing or malformed; the error message names the variable         |

@@ -21,7 +21,7 @@ Every PC runs the desktop client.
   ┌───────────────────────────┐        ┌───────────────────────────┐
   │  BCIS desktop client      │        │  Fastify API server        │
   │  (Electron + React)       │  HTTP  │  node + TypeScript         │
-  │                           │ ─────► │  http://0.0.0.0:3001       │
+  │                           │ ─────► │  http://0.0.0.0:3003       │
   └───────────────────────────┘        │                            │
                                        │  Drizzle ORM               │
   PC-2 / PC-3                          │        │                   │
@@ -420,7 +420,7 @@ stops the server immediately with a readable message instead of failing later.
 | Variable                | Default                     | Meaning                                                          |
 | ----------------------- | --------------------------- | ---------------------------------------------------------------- |
 | `NODE_ENV`              | `development`               | `development` \| `production` \| `test`. Controls SQL/pretty logs |
-| `PORT`                  | `3001`                      | The port the API listens on                                      |
+| `PORT`                  | `3003`                      | The port the API listens on                                      |
 | `DATABASE_URL`          | *(required)*                | PostgreSQL connection string, e.g. `postgresql://user:pw@host:5432/bcis_db` |
 | `JWT_SECRET`            | *(required, ≥ 32 chars)*    | Signing key for session tokens. Generate a fresh random string    |
 | `CORS_ORIGIN`           | `http://localhost:5173`     | Comma-separated browser origins allowed to call the API           |
@@ -430,13 +430,13 @@ stops the server immediately with a readable message instead of failing later.
 | `UPLOADS_DIR`           | `uploads`                   | Where GCash proof screenshots are written                         |
 | `SEED_ADMIN_USERNAME`   | `admin`                     | Username `pnpm db:seed` creates when it is absent                  |
 | `SEED_ADMIN_PASSWORD`   | `Admin@1234!`               | Password for that account. **Change it after the first login**    |
-| `VITE_API_BASE_URL`     | `http://localhost:3001`     | API URL compiled into the client; overridable per install (below) |
+| `VITE_API_BASE_URL`     | `http://localhost:3003`     | API URL compiled into the client; overridable per install (below) |
 
 The renderer's API URL is resolved in this order:
 
-1. `%APPDATA%\BCIS\config.json` → `{ "apiBaseUrl": "http://192.168.1.100:3001" }`
+1. `%APPDATA%\BCIS\config.json` → `{ "apiBaseUrl": "http://192.168.1.100:3003" }`
 2. `VITE_API_BASE_URL` (build time)
-3. `http://localhost:3001`
+3. `http://localhost:3003`
 
 A config value that is not an absolute `http`/`https` URL is ignored, so a typo
 cannot point the app at nothing. See `docs/deployment/README.md`.

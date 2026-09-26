@@ -112,7 +112,7 @@ BCIS-Subscription-Billing-System/
 2. Create a `.env` file in the server folder:
 
    NODE_ENV=production
-   PORT=3001
+   PORT=3003
    DATABASE_URL=postgresql://bcis_user:your_password@localhost:5432/bcis_db
    JWT_SECRET=a_long_random_string_at_least_32_characters
    CORS_ORIGIN=http://localhost:5173  # Will be replaced by Electron origin
@@ -145,10 +145,10 @@ Note the IPv4 address under "Ethernet adapter" (e.g., 192.168.1.100)
 2. Run the installer (double-click, follow prompts)
 3. After installation, before first launch:
 
-   On PC-1: The app will connect to http://localhost:3001 automatically.
+   On PC-1: The app will connect to http://localhost:3003 automatically.
    On PC-2 and PC-3: Open C:\Users\[username]\AppData\Roaming\BCIS\config.json
    and set:
-   { "apiBaseUrl": "http://192.168.1.100:3001" }
+   { "apiBaseUrl": "http://192.168.1.100:3003" }
    (Replace 192.168.1.100 with PC-1's actual IP address)
 
 ## Step 5: First Login
@@ -161,9 +161,9 @@ Default admin account (created by seed):
 
 ## Firewall Configuration (if clients cannot reach the server)
 
-On PC-1, allow inbound connections on port 3001:
+On PC-1, allow inbound connections on port 3003:
   Windows Defender Firewall → Advanced Settings → Inbound Rules → New Rule
-  Port → TCP → 3001 → Allow the connection → All profiles → Name: "BCIS API"
+  Port → TCP → 3003 → Allow the connection → All profiles → Name: "BCIS API"
 ```
 
 ---

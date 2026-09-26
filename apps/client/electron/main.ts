@@ -17,7 +17,7 @@ const rendererDevServerUrl = process.env.ELECTRON_RENDERER_URL;
 /** Where an administrator edits the API server this installation talks to. */
 const CLIENT_CONFIG_DIRECTORY_NAME = "BCIS";
 const CLIENT_CONFIG_FILE_NAME = "config.json";
-const DEFAULT_API_BASE_URL = "http://localhost:3001";
+const DEFAULT_API_BASE_URL = "http://localhost:3003";
 
 /** The path documented in docs/deployment/README.md: %APPDATA%\BCIS\config.json. */
 function clientConfigFilePath(): string {

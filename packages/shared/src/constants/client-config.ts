@@ -14,7 +14,7 @@ export interface ClientConfigFile {
 }
 
 /** The API server a client uses when no run-time value is configured. */
-export const DEFAULT_API_BASE_URL = "http://localhost:3001";
+export const DEFAULT_API_BASE_URL = "http://localhost:3003";
 
 /**
  * Returns the API base URL named by a parsed `config.json`, or `fallback` when
@@ -46,7 +46,7 @@ export function resolveApiBaseUrl(configFile: unknown, fallback: string): string
   try {
     parsedCandidate = new URL(trimmedCandidate);
   } catch {
-    // Not an absolute URL at all (for example "192.168.1.100:3001").
+    // Not an absolute URL at all (for example "192.168.1.100:3003").
     return fallback;
   }
 

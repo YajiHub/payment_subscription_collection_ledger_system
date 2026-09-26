@@ -6,13 +6,13 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_API_BASE_URL, resolveApiBaseUrl } from "@bcis/shared";
 
-const FALLBACK = "http://localhost:3001";
+const FALLBACK = "http://localhost:3003";
 
 describe("resolveApiBaseUrl", () => {
   it("uses a configured LAN address and trims a trailing slash", () => {
-    const resolved = resolveApiBaseUrl({ apiBaseUrl: "http://192.168.1.100:3001/" }, FALLBACK);
+    const resolved = resolveApiBaseUrl({ apiBaseUrl: "http://192.168.1.100:3003/" }, FALLBACK);
 
-    expect(resolved).toBe("http://192.168.1.100:3001");
+    expect(resolved).toBe("http://192.168.1.100:3003");
   });
 
   it("accepts an https address", () => {
@@ -26,7 +26,7 @@ describe("resolveApiBaseUrl", () => {
   });
 
   it("falls back when apiBaseUrl is not a string", () => {
-    expect(resolveApiBaseUrl({ apiBaseUrl: 3001 }, FALLBACK)).toBe(FALLBACK);
+    expect(resolveApiBaseUrl({ apiBaseUrl: 3003 }, FALLBACK)).toBe(FALLBACK);
   });
 
   it("falls back when the value is empty or only whitespace", () => {
@@ -34,7 +34,7 @@ describe("resolveApiBaseUrl", () => {
   });
 
   it("falls back for a bare host and port, which is not an absolute URL", () => {
-    expect(resolveApiBaseUrl({ apiBaseUrl: "192.168.1.100:3001" }, FALLBACK)).toBe(FALLBACK);
+    expect(resolveApiBaseUrl({ apiBaseUrl: "192.168.1.100:3003" }, FALLBACK)).toBe(FALLBACK);
   });
 
   it("falls back for a non-http protocol", () => {
@@ -43,7 +43,7 @@ describe("resolveApiBaseUrl", () => {
 
   it("falls back when the file contents are not an object", () => {
     expect(resolveApiBaseUrl(null, FALLBACK)).toBe(FALLBACK);
-    expect(resolveApiBaseUrl("http://192.168.1.100:3001", FALLBACK)).toBe(FALLBACK);
+    expect(resolveApiBaseUrl("http://192.168.1.100:3003", FALLBACK)).toBe(FALLBACK);
   });
 
   it("documents the compiled-in default", () => {
