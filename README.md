@@ -39,7 +39,7 @@ is set). **Change that password immediately after the first login.**
 
 | Command                 | What it does                                                          |
 | ----------------------- | --------------------------------------------------------------------- |
-| `pnpm dev`              | Starts Fastify (`:3001`) and the Electron client together              |
+| `pnpm dev`              | Starts Fastify (`:3003`) and the Electron client together              |
 | `pnpm dev:server`       | API server only                                                        |
 | `pnpm dev:client`       | Electron client only                                                   |
 | `pnpm start`            | Runs the API server without watch mode (for production / pm2)          |
@@ -75,7 +75,7 @@ which validates the environment with Zod and fails fast on a missing or malforme
 real secrets. See `.env.example` for the annotated list.
 
 An installed desktop client can also be pointed at another PC's API server without a
-rebuild, by editing `%APPDATA%\BCIS\config.json` → `{ "apiBaseUrl": "http://192.168.1.100:3001" }`.
+rebuild, by editing `%APPDATA%\BCIS\config.json` → `{ "apiBaseUrl": "http://192.168.1.100:3003" }`.
 
 ## Money
 

@@ -160,7 +160,7 @@ import { z } from "zod";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  PORT: z.coerce.number().default(3001),
+  PORT: z.coerce.number().default(3003),
   DATABASE_URL: z.string().url(),
   JWT_SECRET: z.string().min(32, "JWT secret must be at least 32 characters"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
@@ -175,7 +175,7 @@ export const config = envSchema.parse(process.env);
 `.env.example` (committed, no real secrets):
 ```env
 NODE_ENV=development
-PORT=3001
+PORT=3003
 DATABASE_URL=postgresql://bcis_user:change_this@localhost:5432/bcis_db
 JWT_SECRET=change_this_to_a_long_random_string_at_least_32_chars
 CORS_ORIGIN=http://localhost:5173
