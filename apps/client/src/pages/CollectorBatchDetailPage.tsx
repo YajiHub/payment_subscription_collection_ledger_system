@@ -36,10 +36,19 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
 import { TableSkeleton } from "../components/ui/Skeleton";
 
+/**
+ * The six-state collection lifecycle, plus cancellation. Only five badge tones exist
+ * for seven states, so neighbouring steps deliberately share a tone and the label text
+ * always carries the meaning: not-started and finished read neutral, work in flight
+ * reads info, and money still to be reconciled reads warning.
+ */
 const STATUS_BADGE_VARIANTS = {
-  open: "info",
+  open: "neutral",
+  in_progress: "info",
   submitted: "warning",
+  remitted: "warning",
   reconciled: "success",
+  closed: "neutral",
   cancelled: "neutral",
 } satisfies Record<CollectorBatchStatus, BadgeVariant>;
 

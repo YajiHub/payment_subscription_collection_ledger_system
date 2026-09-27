@@ -25,10 +25,19 @@ import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
 
+/**
+ * The six-state collection lifecycle, plus cancellation. Tones are chosen so the list
+ * scans at a glance — neutral for not-started and finished, info for work in flight,
+ * warning while money is still to be reconciled. The label text always carries the
+ * meaning; the colour only supports it.
+ */
 const STATUS_BADGE_VARIANTS = {
-  open: "info",
+  open: "neutral",
+  in_progress: "info",
   submitted: "warning",
+  remitted: "warning",
   reconciled: "success",
+  closed: "neutral",
   cancelled: "neutral",
 } satisfies Record<CollectorBatchStatus, BadgeVariant>;
 
