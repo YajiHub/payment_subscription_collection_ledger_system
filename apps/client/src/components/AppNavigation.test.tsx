@@ -103,8 +103,8 @@ describe("AppNavigation", () => {
     );
 
     expect(hrefByLabel.get("Dashboard")).toBe("/dashboard");
-    expect(hrefByLabel.get("Service Accounts")).toBe("/subscribers");
-    expect(hrefByLabel.get("Suspension & Reconnection")).toBe("/receivables/overdue");
+    expect(hrefByLabel.get("Service Accounts")).toBe("/services/accounts");
+    expect(hrefByLabel.get("Suspension & Reconnection")).toBe("/services/suspension");
     expect(hrefByLabel.get("Collector Batches")).toBe("/collector-batches");
   });
 

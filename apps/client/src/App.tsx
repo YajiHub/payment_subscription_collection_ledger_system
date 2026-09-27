@@ -7,6 +7,7 @@ import { AuditLogPage } from "./pages/AuditLogPage";
 import { BillingDashboardPage } from "./pages/BillingDashboardPage";
 import { CollectorBatchDetailPage } from "./pages/CollectorBatchDetailPage";
 import { CollectorBatchListPage } from "./pages/CollectorBatchListPage";
+import { CollectorBatchRouteSheetPage } from "./pages/CollectorBatchRouteSheetPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HomePage } from "./pages/HomePage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
@@ -21,7 +22,9 @@ import { ReportsCenterPage } from "./pages/ReportsCenterPage";
 import { OverdueAccountsPage } from "./pages/OverdueAccountsPage";
 import { ReceiptPreviewPage } from "./pages/ReceiptPreviewPage";
 import { ServiceAccountLedgerPage } from "./pages/ServiceAccountLedgerPage";
+import { ServiceAccountsPage } from "./pages/ServiceAccountsPage";
 import { StatementOfAccountPage } from "./pages/StatementOfAccountPage";
+import { SuspensionOperationsPage } from "./pages/SuspensionOperationsPage";
 import { SubscriberDetailPage } from "./pages/SubscriberDetailPage";
 import { SubscriberListPage } from "./pages/SubscriberListPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
@@ -188,6 +191,30 @@ export function App(): ReactNode {
           element={
             <ProtectedRoute requiredPermission="collector_batches:read">
               <CollectorBatchDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/collector-batches/:id/route-sheet"
+          element={
+            <ProtectedRoute requiredPermission="collector_batches:read">
+              <CollectorBatchRouteSheetPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/services/accounts"
+          element={
+            <ProtectedRoute requiredPermission="subscribers:read">
+              <ServiceAccountsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/services/suspension"
+          element={
+            <ProtectedRoute requiredPermission="subscribers:read">
+              <SuspensionOperationsPage />
             </ProtectedRoute>
           }
         />

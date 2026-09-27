@@ -1,8 +1,18 @@
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { extractApiErrorMessage, downloadArAgingXlsx, getArAging, type ArAgingEntry, type ArAgingReport } from "../lib/api-client";
+import { SERVICE_TYPES, SERVICE_TYPE_LABELS, type ServiceType } from "@bcis/shared";
+import {
+  extractApiErrorMessage,
+  downloadArAgingXlsx,
+  getArAging,
+  listAssignableCollectors,
+  listPlans,
+  type ArAgingEntry,
+  type ArAgingReport,
+  type ReportFilterParams,
+} from "../lib/api-client";
 import { formatCentavos } from "../lib/format";
 import { AppShell } from "../components/layout/AppShell";
 import { DataTable, type TableColumn } from "../components/table/DataTable";
@@ -112,30 +122,77 @@ const AGING_COLUMNS: TableColumn<ArAgingEntry>[] = [
 const FIELD_CLASS =
   "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
+/** Non-empty text, or undefined: an unfilled filter is omitted, never sent blank. */
+function optionalText(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
 /** AR aging report: buckets of outstanding invoices by how long they are overdue. */
 export function ReceivablesAgingPage(): ReactNode {
   const navigate = useNavigate();
   const [asOfDate, setAsOfDate] = useState(todayDateOnly());
+  const [collectorId, setCollectorId] = useState("");
+  const [areaId, setAreaId] = useState("");
+  const [planId, setPlanId] = useState("");
+  const [serviceType, setServiceType] = useState<ServiceType | "">("");
+  const [collectors, setCollectors] = useState<{ id: string; fullName: string }[]>([]);
+  const [plans, setPlans] = useState<{ id: string; name: string }[]>([]);
   const [report, setReport] = useState<ArAgingReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  /**
+   * The account filters the aging endpoint honours (S4-6, S6-2). The same object
+   * feeds the on-screen report and the XLSX export, so a filtered screen and its
+   * file agree. A blank control is omitted rather than sent empty.
+   */
+  const filters = useMemo<ReportFilterParams>(
+    () => ({
+      collectorId: optionalText(collectorId),
+      areaId: optionalText(areaId),
+      planId: optionalText(planId),
+      serviceType: serviceType === "" ? undefined : serviceType,
+    }),
+    [collectorId, areaId, planId, serviceType]
+  );
+
   const loadReport = useCallback(async (): Promise<void> => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      setReport(await getArAging(asOfDate));
+      setReport(await getArAging(asOfDate, filters));
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, [asOfDate]);
+  }, [asOfDate, filters]);
 
   useEffect(() => {
     void loadReport();
   }, [loadReport]);
+
+  // The collector and plan pickers are best effort: a role that cannot read them
+  // types the id instead, so a filter the endpoint honours is never unreachable.
+  useEffect(() => {
+    async function loadFilterOptions(): Promise<void> {
+      try {
+        const assignable = await listAssignableCollectors();
+        setCollectors(assignable.map((c) => ({ id: c.id, fullName: c.fullName })));
+      } catch {
+        setCollectors([]);
+      }
+      try {
+        const loadedPlans = await listPlans();
+        setPlans(loadedPlans.map((plan) => ({ id: plan.id, name: plan.name })));
+      } catch {
+        setPlans([]);
+      }
+    }
+    void loadFilterOptions();
+  }, []);
 
   function printReport(): void {
     // Electron's print dialog can "Save as PDF"; in a plain browser, window.print does.
@@ -150,7 +207,7 @@ export function ReceivablesAgingPage(): ReactNode {
     setIsExporting(true);
     setErrorMessage(null);
     try {
-      const { fileName, bytes } = await downloadArAgingXlsx(asOfDate);
+      const { fileName, bytes } = await downloadArAgingXlsx(asOfDate, filters);
       const blob = new Blob([bytes], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
@@ -191,6 +248,81 @@ export function ReceivablesAgingPage(): ReactNode {
                 onChange={(event) => setAsOfDate(event.target.value)}
                 className={`${FIELD_CLASS} w-40`}
               />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Collector</span>
+              {collectors.length > 0 ? (
+                <select
+                  value={collectorId}
+                  onChange={(event) => setCollectorId(event.target.value)}
+                  className={`${FIELD_CLASS} w-52`}
+                >
+                  <option value="">All collectors</option>
+                  {collectors.map((collector) => (
+                    <option key={collector.id} value={collector.id}>
+                      {collector.fullName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={collectorId}
+                  onChange={(event) => setCollectorId(event.target.value)}
+                  placeholder="Paste the collector id"
+                  className={`${FIELD_CLASS} w-52`}
+                />
+              )}
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Area id</span>
+              <input
+                type="text"
+                value={areaId}
+                onChange={(event) => setAreaId(event.target.value)}
+                placeholder="Paste the collection area id"
+                className={`${FIELD_CLASS} w-52`}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Plan</span>
+              {plans.length > 0 ? (
+                <select
+                  value={planId}
+                  onChange={(event) => setPlanId(event.target.value)}
+                  className={`${FIELD_CLASS} w-52`}
+                >
+                  <option value="">All plans</option>
+                  {plans.map((plan) => (
+                    <option key={plan.id} value={plan.id}>
+                      {plan.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={planId}
+                  onChange={(event) => setPlanId(event.target.value)}
+                  placeholder="Paste the plan id"
+                  className={`${FIELD_CLASS} w-52`}
+                />
+              )}
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Service type</span>
+              <select
+                value={serviceType}
+                onChange={(event) => setServiceType(event.target.value as ServiceType | "")}
+                className={`${FIELD_CLASS} w-40`}
+              >
+                <option value="">All service types</option>
+                {SERVICE_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {SERVICE_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
             </label>
             <Button type="button" variant="secondary" onClick={printReport}>
               Export PDF

@@ -8,7 +8,6 @@ import {
   COLLECTION_RESULTS,
   COLLECTION_RESULT_LABELS,
   COLLECTOR_BATCH_STATUS_LABELS,
-  roleHasPermission,
   type CollectedMethod,
   type CollectionResult,
   type CollectorBatchStatus,
@@ -17,15 +16,25 @@ import { ServiceAccountPicker } from "../components/ServiceAccountPicker";
 import {
   addBatchAssignments,
   cancelCollectorBatch,
+  closeBatch,
   extractApiErrorMessage,
   getCollectorBatch,
-  reconcileBatch,
+  listBatchRemittances,
+  recordBatchRemittance,
   recordCollection,
-  submitBatchRemittance,
+  reconcileBatch,
+  submitBatch,
   voidCollection,
   type BatchAssignmentSummary,
+  type BatchMethodSummary,
+  type BatchRemittanceSummary,
   type CollectorBatchDetail,
 } from "../lib/api-client";
+import {
+  assessBatchRemittance,
+  permittedCollectorBatchActions,
+  type CollectorBatchAction,
+} from "../lib/collector-batch-actions";
 import { formatCentavos, formatDateOnly, parsePesosToCentavos } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
 import { AppShell } from "../components/layout/AppShell";
@@ -34,13 +43,14 @@ import { Button } from "../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { Modal } from "../components/ui/Modal";
 import { TableSkeleton } from "../components/ui/Skeleton";
 
 /**
- * The six-state collection lifecycle, plus cancellation. Only five badge tones exist
- * for seven states, so neighbouring steps deliberately share a tone and the label text
- * always carries the meaning: not-started and finished read neutral, work in flight
- * reads info, and money still to be reconciled reads warning.
+ * The seven-state collection lifecycle. Only five badge tones exist, so
+ * neighbouring steps deliberately share a tone and the label text always carries
+ * the meaning: not-started and finished read neutral, work in flight reads info,
+ * and money still to be reconciled reads warning.
  */
 const STATUS_BADGE_VARIANTS = {
   open: "neutral",
@@ -52,13 +62,23 @@ const STATUS_BADGE_VARIANTS = {
   cancelled: "neutral",
 } satisfies Record<CollectorBatchStatus, BadgeVariant>;
 
+/** The forward path of the lifecycle, in order. `cancelled` is shown separately. */
+const LIFECYCLE_STEPS: readonly CollectorBatchStatus[] = [
+  "open",
+  "in_progress",
+  "submitted",
+  "remitted",
+  "reconciled",
+  "closed",
+];
+
 const FIELD_CLASS =
   "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
 /** The variance as text, coloured: green exact, amber overage, red shortage. */
 function formatVariance(varianceCentavos: number | null): ReactNode {
   if (varianceCentavos === null) {
-    return <span className="text-content-secondary">Not yet submitted</span>;
+    return <span className="text-content-secondary">Not yet remitted</span>;
   }
   if (varianceCentavos === 0) {
     return <span className="tabular-nums text-success-strong">{formatCentavos(0)} (exact)</span>;
@@ -72,10 +92,83 @@ function formatVariance(varianceCentavos: number | null): ReactNode {
   );
 }
 
+/** Where the batch sits on the lifecycle, so its next legal step is obvious. */
+function BatchLifecycleStepper({ status }: { status: CollectorBatchStatus }): ReactNode {
+  if (status === "cancelled") {
+    return (
+      <ol aria-label="Batch lifecycle" className="flex flex-wrap items-center gap-1.5 text-xs">
+        <li className="rounded-full border border-danger-line bg-danger-soft px-2.5 py-1 font-medium text-danger-strong">
+          Cancelled
+        </li>
+      </ol>
+    );
+  }
+
+  const currentIndex = LIFECYCLE_STEPS.indexOf(status);
+
+  return (
+    <ol aria-label="Batch lifecycle" className="flex flex-wrap items-center gap-1.5 text-xs">
+      {LIFECYCLE_STEPS.map((step, index) => {
+        const isCurrent = step === status;
+        const isDone = index < currentIndex;
+        const tone = isCurrent
+          ? "border-accent-line bg-accent-soft text-accent-strong"
+          : isDone
+            ? "border-success-line bg-success-soft text-success-strong"
+            : "border-line text-content-secondary";
+
+        return (
+          <li key={step} className="flex items-center gap-1.5">
+            <span
+              aria-current={isCurrent ? "step" : undefined}
+              className={`rounded-full border px-2.5 py-1 font-medium ${tone}`}
+            >
+              {COLLECTOR_BATCH_STATUS_LABELS[step]}
+            </span>
+            {index < LIFECYCLE_STEPS.length - 1 && (
+              <span aria-hidden="true" className="text-content-secondary/60">
+                →
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** The S4-4 split: what the run was worth, and how the money came back. */
+function MethodSummary({ summary }: { summary: BatchMethodSummary }): ReactNode {
+  const items = [
+    {
+      label: "Expected receivable",
+      value: summary.expectedReceivableCentavos,
+      tone: "text-content-primary",
+    },
+    { label: "Cash", value: summary.cashCollectedCentavos, tone: "text-content-primary" },
+    { label: "Non-cash (GCash/other)", value: summary.nonCashCollectedCentavos, tone: "text-content-primary" },
+    {
+      label: "Uncollected",
+      value: summary.uncollectedCentavos,
+      tone: summary.uncollectedCentavos > 0 ? "text-warning-strong" : "text-content-secondary",
+    },
+  ];
+
+  return (
+    <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+      {items.map((item) => (
+        <div key={item.label} className="space-y-1">
+          <dt className="text-content-secondary">{item.label}</dt>
+          <dd className={`text-lg tabular-nums ${item.tone}`}>{formatCentavos(item.value)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 /** One assignment row plus the office actions available on it. */
 interface AssignmentRowProps {
   assignment: BatchAssignmentSummary;
-  isOpen: boolean;
   canRecord: boolean;
   canVoid: boolean;
   onRecord: (assignment: BatchAssignmentSummary) => void;
@@ -84,7 +177,6 @@ interface AssignmentRowProps {
 
 function AssignmentRow({
   assignment,
-  isOpen,
   canRecord,
   canVoid,
   onRecord,
@@ -113,35 +205,91 @@ function AssignmentRow({
         {assignment.collectionResult === null
           ? "Pending"
           : COLLECTION_RESULT_LABELS[assignment.collectionResult]}
-        {isVoided && <Badge variant="danger" size="sm" className="ml-2">voided</Badge>}
+        {isVoided && (
+          <Badge variant="danger" size="sm" className="ml-2">
+            voided
+          </Badge>
+        )}
       </td>
       <td className="px-4 py-3 text-xs text-content-secondary">{assignment.collectorNotes ?? "—"}</td>
       <td className="px-4 py-3">
-        {isOpen && !isVoided && (
-          <div className="flex gap-2">
-            {canRecord && assignment.collectionResult === null && (
-              <Button variant="secondary" size="sm" onClick={() => onRecord(assignment)}>
-                Record Collection
-              </Button>
-            )}
-            {canVoid && assignment.collectionResult !== null && (
-              <Button variant="danger" size="sm" onClick={() => onVoid(assignment)}>
-                Void
-              </Button>
-            )}
-          </div>
-        )}
+        <div className="flex gap-2">
+          {canRecord && assignment.collectionResult === null && (
+            <Button variant="secondary" size="sm" onClick={() => onRecord(assignment)}>
+              Record Collection
+            </Button>
+          )}
+          {canVoid && assignment.collectionResult !== null && (
+            <Button variant="danger" size="sm" onClick={() => onVoid(assignment)}>
+              Void
+            </Button>
+          )}
+        </div>
       </td>
     </tr>
   );
 }
 
-/** Batch detail: record field collections, submit the cash, and reconcile. */
+/** The remittance history: the rows the batch total is the signed sum of (S4-2). */
+function RemittanceHistory({ remittances }: { remittances: BatchRemittanceSummary[] }): ReactNode {
+  if (remittances.length === 0) {
+    return (
+      <EmptyState
+        title="No remittances recorded"
+        description="The cash hand-in has not been recorded for this batch yet. Record it once the collector pays in."
+      />
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-canvas text-content-secondary">
+          <tr>
+            <th className="px-4 py-3 font-medium">Recorded</th>
+            <th className="px-4 py-3 font-medium">By</th>
+            <th className="px-4 py-3 text-right font-medium">Amount</th>
+            <th className="px-4 py-3 text-right font-medium">Cash</th>
+            <th className="px-4 py-3 text-right font-medium">GCash</th>
+            <th className="px-4 py-3 font-medium">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {remittances.map((remittance) => (
+            <tr key={remittance.id} className="border-t border-line">
+              <td className="px-4 py-3 text-content-secondary">
+                {formatDateOnly(remittance.remittedAt.slice(0, 10))}
+              </td>
+              <td className="px-4 py-3">{remittance.remittedByName}</td>
+              <td
+                className={`px-4 py-3 text-right tabular-nums ${
+                  remittance.amountCentavos < 0 ? "text-danger-strong" : ""
+                }`}
+              >
+                {formatCentavos(remittance.amountCentavos)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {formatCentavos(remittance.cashAmountCentavos)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {formatCentavos(remittance.gcashAmountCentavos)}
+              </td>
+              <td className="px-4 py-3 text-content-secondary">{remittance.notes ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Batch detail: work the lifecycle, record the money, and remit it. */
 export function CollectorBatchDetailPage(): ReactNode {
   const { id = "" } = useParams();
   const user = useAuthStore((state) => state.user);
 
   const [batch, setBatch] = useState<CollectorBatchDetail | null>(null);
+  const [remittances, setRemittances] = useState<BatchRemittanceSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -153,9 +301,18 @@ export function CollectorBatchDetailPage(): ReactNode {
   const [recordGcashReference, setRecordGcashReference] = useState("");
   const [recordNotes, setRecordNotes] = useState("");
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [actualCash, setActualCash] = useState("");
+  // One dialog per lifecycle action that needs input. Keeping them separate is
+  // what makes the remittance a deliberate, auditable step rather than a second
+  // meaning bolted onto submit.
+  const [activeDialog, setActiveDialog] = useState<CollectorBatchAction | null>(null);
+  const [isWorking, setIsWorking] = useState(false);
+
+  const [remitAmount, setRemitAmount] = useState("");
+  const [remitIsCorrection, setRemitIsCorrection] = useState(false);
+  const [remitNotes, setRemitNotes] = useState("");
   const [varianceNotes, setVarianceNotes] = useState("");
+  const [closeNotes, setCloseNotes] = useState("");
+  const [cancelReason, setCancelReason] = useState("");
   const [isAddingAccounts, setIsAddingAccounts] = useState(false);
   const [newAccountIds, setNewAccountIds] = useState<string[]>([]);
 
@@ -166,7 +323,12 @@ export function CollectorBatchDetailPage(): ReactNode {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      setBatch(await getCollectorBatch(id));
+      const [detail, history] = await Promise.all([
+        getCollectorBatch(id),
+        listBatchRemittances(id),
+      ]);
+      setBatch(detail);
+      setRemittances(history);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
@@ -178,11 +340,20 @@ export function CollectorBatchDetailPage(): ReactNode {
     void loadBatch();
   }, [loadBatch]);
 
-  const canRecord = user !== null && roleHasPermission(user.role, "collector_batches:remit");
-  const canReconcile = user !== null && roleHasPermission(user.role, "collector_batches:reconcile");
-  const canCreate = user !== null && roleHasPermission(user.role, "collector_batches:create");
-  const isOpen = batch?.status === "open";
+  const permittedActions: readonly CollectorBatchAction[] =
+    batch === null || user === null ? [] : permittedCollectorBatchActions(batch.status, user.role);
+  const offers = (action: CollectorBatchAction): boolean => permittedActions.includes(action);
   const takesMoney = recordResult === "collected" || recordResult === "partial";
+
+  function closeDialog(): void {
+    setActiveDialog(null);
+    setRemitAmount("");
+    setRemitIsCorrection(false);
+    setRemitNotes("");
+    setVarianceNotes("");
+    setCloseNotes("");
+    setCancelReason("");
+  }
 
   async function handleRecord(event: FormEvent): Promise<void> {
     event.preventDefault();
@@ -237,29 +408,57 @@ export function CollectorBatchDetailPage(): ReactNode {
     }
   }
 
-  async function handleSubmit(event: FormEvent): Promise<void> {
-    event.preventDefault();
+  async function handleSubmit(): Promise<void> {
     if (batch === null) {
       return;
     }
-    const actualCentavos = parsePesosToCentavos(actualCash);
-    if (actualCentavos === null) {
-      setActionMessage("Enter the cash handed in as a peso amount, e.g. 4500.00.");
+    setIsWorking(true);
+    setActionMessage(null);
+    try {
+      // Submitting carries NO body: it only declares the run finished. The cash
+      // handed in is the separate remittance step (S4-2).
+      await submitBatch(batch.id);
+      closeDialog();
+      setActionMessage("Run submitted. Record the cash handed in as the next step.");
+      await loadBatch();
+    } catch (error) {
+      setActionMessage(extractApiErrorMessage(error));
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  async function handleRemit(): Promise<void> {
+    if (batch === null) {
       return;
     }
 
+    const parsed = parsePesosToCentavos(remitAmount);
+    if (parsed === null || parsed <= 0) {
+      setActionMessage("Enter the amount handed in as a peso amount greater than zero, e.g. 4500.00.");
+      return;
+    }
+
+    setIsWorking(true);
     setActionMessage(null);
     try {
-      const result = await submitBatchRemittance(batch.id, actualCentavos);
-      setIsSubmitting(false);
+      // A correction is an offsetting row BESIDE the one it fixes, never an edit.
+      const amountCentavos = remitIsCorrection ? -parsed : parsed;
+      const result = await recordBatchRemittance(batch.id, {
+        amountCentavos,
+        notes: remitNotes === "" ? undefined : remitNotes,
+      });
+      closeDialog();
       setActionMessage(
         result.hasVariance
-          ? `Submitted with a variance of ${formatCentavos(result.varianceCentavos)}.`
-          : "Submitted with no variance."
+          ? `Remittance recorded. The batch now stands at ${formatCentavos(result.varianceCentavos)} variance.`
+          : "Remittance recorded with no variance."
       );
       await loadBatch();
     } catch (error) {
       setActionMessage(extractApiErrorMessage(error));
+    } finally {
+      setIsWorking(false);
     }
   }
 
@@ -267,14 +466,39 @@ export function CollectorBatchDetailPage(): ReactNode {
     if (batch === null) {
       return;
     }
+    setIsWorking(true);
     setActionMessage(null);
     try {
-      await reconcileBatch(batch.id, varianceNotes === "" ? undefined : varianceNotes);
-      setVarianceNotes("");
-      setActionMessage("Batch reconciled.");
+      const result = await reconcileBatch(batch.id, varianceNotes === "" ? undefined : varianceNotes);
+      closeDialog();
+      setActionMessage(
+        result.ledgerReconciles
+          ? "Batch reconciled; the ledger matches the run exactly."
+          : "Batch reconciled. The ledger and the run differ — review the variance."
+      );
       await loadBatch();
     } catch (error) {
       setActionMessage(extractApiErrorMessage(error));
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  async function handleClose(): Promise<void> {
+    if (batch === null) {
+      return;
+    }
+    setIsWorking(true);
+    setActionMessage(null);
+    try {
+      await closeBatch(batch.id, closeNotes === "" ? undefined : closeNotes);
+      closeDialog();
+      setActionMessage("Batch closed.");
+      await loadBatch();
+    } catch (error) {
+      setActionMessage(extractApiErrorMessage(error));
+    } finally {
+      setIsWorking(false);
     }
   }
 
@@ -282,13 +506,17 @@ export function CollectorBatchDetailPage(): ReactNode {
     if (batch === null) {
       return;
     }
-    const reason = window.prompt("Why is this batch being cancelled?") ?? undefined;
+    setIsWorking(true);
     setActionMessage(null);
     try {
-      await cancelCollectorBatch(batch.id, reason);
+      await cancelCollectorBatch(batch.id, cancelReason === "" ? undefined : cancelReason);
+      closeDialog();
+      setActionMessage("Batch cancelled.");
       await loadBatch();
     } catch (error) {
       setActionMessage(extractApiErrorMessage(error));
+    } finally {
+      setIsWorking(false);
     }
   }
 
@@ -336,16 +564,33 @@ export function CollectorBatchDetailPage(): ReactNode {
     );
   }
 
-  const canAddAccounts = isOpen && canCreate;
+  const alreadyRemittedCentavos = batch.actualRemittanceCentavos ?? 0;
+  const parsedRemitAmount = parsePesosToCentavos(remitAmount);
+  const remittanceAssessment =
+    parsedRemitAmount === null
+      ? null
+      : assessBatchRemittance(
+          batch.expectedRemittanceCentavos,
+          alreadyRemittedCentavos,
+          remitIsCorrection ? -parsedRemitAmount : parsedRemitAmount
+        );
 
   return (
     <AppShell
       pageTitle={batch.batchNumber}
       pageDescription={`${batch.collectorName} · field date ${formatDateOnly(batch.collectionDate)}`}
       headerActions={
-        <Badge variant={STATUS_BADGE_VARIANTS[batch.status]} size="md" dot>
-          {COLLECTOR_BATCH_STATUS_LABELS[batch.status]}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Link
+            to={`/collector-batches/${batch.id}/route-sheet`}
+            className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
+          >
+            Route sheet
+          </Link>
+          <Badge variant={STATUS_BADGE_VARIANTS[batch.status]} size="md" dot>
+            {COLLECTOR_BATCH_STATUS_LABELS[batch.status]}
+          </Badge>
+        </div>
       }
     >
       <div className="mx-auto max-w-5xl space-y-6">
@@ -354,35 +599,53 @@ export function CollectorBatchDetailPage(): ReactNode {
         </Link>
 
         <Card>
-          <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
-            <p>
-              <span className="block text-content-secondary">Expected (collected)</span>
-              <span className="text-lg tabular-nums">
-                {formatCentavos(batch.expectedRemittanceCentavos)}
-              </span>
-            </p>
-            <p>
-              <span className="block text-content-secondary">Actual (cash in hand)</span>
-              <span className="text-lg tabular-nums">
-                {batch.actualRemittanceCentavos === null
-                  ? "—"
-                  : formatCentavos(batch.actualRemittanceCentavos)}
-              </span>
-            </p>
-            <p>
-              <span className="block text-content-secondary">Variance</span>
-              <span className="text-lg">{formatVariance(batch.varianceCentavos)}</span>
-            </p>
+          <CardHeader>
+            <CardTitle>Lifecycle</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <BatchLifecycleStepper status={batch.status} />
+            <dl className="grid gap-3 text-sm sm:grid-cols-3">
+              <div>
+                <dt className="text-content-secondary">Expected (collected)</dt>
+                <dd className="text-lg tabular-nums">
+                  {formatCentavos(batch.expectedRemittanceCentavos)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-content-secondary">Remitted (cash in hand)</dt>
+                <dd className="text-lg tabular-nums">
+                  {batch.actualRemittanceCentavos === null
+                    ? "—"
+                    : formatCentavos(batch.actualRemittanceCentavos)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-content-secondary">Variance</dt>
+                <dd className="text-lg">{formatVariance(batch.varianceCentavos)}</dd>
+              </div>
+            </dl>
             {batch.varianceNotes !== null && (
-              <p className="text-content-secondary sm:col-span-3">
+              <p className="text-sm text-content-secondary">
                 <span className="font-medium">Variance notes:</span> {batch.varianceNotes}
               </p>
             )}
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle>Collection summary by method</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MethodSummary summary={batch.methodSummary} />
+          </CardContent>
+        </Card>
+
         {actionMessage !== null && (
-          <p className="rounded-xl border border-line bg-canvas px-4 py-3 text-sm text-content-primary">
+          <p
+            role="status"
+            className="rounded-xl border border-line bg-canvas px-4 py-3 text-sm text-content-primary"
+          >
             {actionMessage}
           </p>
         )}
@@ -390,22 +653,58 @@ export function CollectorBatchDetailPage(): ReactNode {
           <ErrorBanner message={errorMessage} onRetry={() => void loadBatch()} />
         )}
 
-        {isOpen && canCreate && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setIsAddingAccounts((open) => !open)}
-            >
-              {isAddingAccounts ? "Close add accounts" : "Add accounts"}
-            </Button>
-            <Button variant="danger" size="sm" onClick={() => void handleCancel()}>
-              Cancel batch
-            </Button>
-          </div>
-        )}
+        <Card>
+          <CardHeader>
+            <CardTitle>Actions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {permittedActions.length === 0 ? (
+              <p className="text-sm text-content-secondary">
+                This batch is {COLLECTOR_BATCH_STATUS_LABELS[batch.status].toLowerCase()}; there is
+                nothing left to do.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {offers("add_accounts") && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setIsAddingAccounts((open) => !open)}
+                  >
+                    {isAddingAccounts ? "Close add accounts" : "Add accounts"}
+                  </Button>
+                )}
+                {offers("submit") && (
+                  <Button variant="secondary" size="sm" onClick={() => setActiveDialog("submit")}>
+                    Submit run
+                  </Button>
+                )}
+                {offers("remit") && (
+                  <Button variant="secondary" size="sm" onClick={() => setActiveDialog("remit")}>
+                    Record remittance
+                  </Button>
+                )}
+                {offers("reconcile") && (
+                  <Button variant="secondary" size="sm" onClick={() => setActiveDialog("reconcile")}>
+                    Reconcile
+                  </Button>
+                )}
+                {offers("close") && (
+                  <Button variant="secondary" size="sm" onClick={() => setActiveDialog("close")}>
+                    Close batch
+                  </Button>
+                )}
+                {offers("cancel") && (
+                  <Button variant="danger" size="sm" onClick={() => setActiveDialog("cancel")}>
+                    Cancel batch
+                  </Button>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-        {isAddingAccounts && (
+        {isAddingAccounts && offers("add_accounts") && (
           <Card>
             <CardContent>
               <form onSubmit={(event) => void handleAddAccounts(event)} className="space-y-3">
@@ -424,8 +723,8 @@ export function CollectorBatchDetailPage(): ReactNode {
               <EmptyState
                 title="No service accounts assigned"
                 description="This batch has no assigned accounts yet. Add accounts to start recording field collections."
-                actionLabel={canAddAccounts ? "Add accounts" : undefined}
-                onAction={canAddAccounts ? () => setIsAddingAccounts(true) : undefined}
+                actionLabel={offers("add_accounts") ? "Add accounts" : undefined}
+                onAction={offers("add_accounts") ? () => setIsAddingAccounts(true) : undefined}
               />
             </CardContent>
           </Card>
@@ -437,8 +736,8 @@ export function CollectorBatchDetailPage(): ReactNode {
                   <tr>
                     <th className="px-4 py-3 font-medium">Subscriber</th>
                     <th className="px-4 py-3 font-medium">Service</th>
-                    <th className="px-4 py-3 font-medium text-right">Outstanding</th>
-                    <th className="px-4 py-3 font-medium text-right">Collected</th>
+                    <th className="px-4 py-3 text-right font-medium">Outstanding</th>
+                    <th className="px-4 py-3 text-right font-medium">Collected</th>
                     <th className="px-4 py-3 font-medium">Method</th>
                     <th className="px-4 py-3 font-medium">Result</th>
                     <th className="px-4 py-3 font-medium">Notes</th>
@@ -450,9 +749,8 @@ export function CollectorBatchDetailPage(): ReactNode {
                     <AssignmentRow
                       key={assignment.id}
                       assignment={assignment}
-                      isOpen={isOpen}
-                      canRecord={canRecord}
-                      canVoid={canReconcile}
+                      canRecord={offers("record_collection")}
+                      canVoid={offers("void_collection")}
                       onRecord={setRecordingFor}
                       onVoid={(target) => void handleVoid(target)}
                     />
@@ -463,11 +761,12 @@ export function CollectorBatchDetailPage(): ReactNode {
           </Card>
         )}
 
-        {recordingFor !== null && (
+        {recordingFor !== null && offers("record_collection") && (
           <Card>
             <CardHeader>
               <CardTitle>
-                Record collection — {recordingFor.subscriberName} ({recordingFor.serviceAccountNumber})
+                Record collection — {recordingFor.subscriberName} (
+                {recordingFor.serviceAccountNumber})
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -504,9 +803,7 @@ export function CollectorBatchDetailPage(): ReactNode {
                         <span className="text-xs font-medium text-content-secondary">Method</span>
                         <select
                           value={recordMethod}
-                          onChange={(event) =>
-                            setRecordMethod(event.target.value as CollectedMethod)
-                          }
+                          onChange={(event) => setRecordMethod(event.target.value as CollectedMethod)}
                           className={FIELD_CLASS}
                         >
                           {COLLECTED_METHODS.map((method) => (
@@ -561,69 +858,230 @@ export function CollectorBatchDetailPage(): ReactNode {
           </Card>
         )}
 
-        {isOpen && canRecord && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Submit remittance</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={(event) => void handleSubmit(event)} className="space-y-3">
-                <p className="text-sm text-content-secondary">
-                  Enter the cash you are handing in. It will be compared with the{" "}
-                  <span className="tabular-nums">{formatCentavos(batch.expectedRemittanceCentavos)}</span> you
-            collected.
-                </p>
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-content-secondary">Cash in hand (₱)</span>
-                  <input
-                    type="text"
-                    value={actualCash}
-                    onChange={(event) => setActualCash(event.target.value)}
-                    placeholder="4500.00"
-                    className={FIELD_CLASS}
-                  />
-                </label>
-                <Button
-                  type="submit"
-                  variant="secondary"
-                  size="sm"
-                  isLoading={isSubmitting}
-                  onClick={() => setIsSubmitting(true)}
-                >
-                  Submit remittance
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        )}
+        <Card>
+          <CardHeader>
+            <CardTitle>Remittance history</CardTitle>
+          </CardHeader>
+          <RemittanceHistory remittances={remittances} />
+        </Card>
 
-        {batch.status === "submitted" && canReconcile && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Reconcile batch</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {batch.varianceCentavos !== 0 && (
-                <p className="text-sm text-warning-strong tabular-nums">
-                  This batch has a variance of {formatCentavos(batch.varianceCentavos ?? 0)}. Notes
-                  are required.
-                </p>
-              )}
-              <label className="block space-y-1.5">
-                <span className="text-xs font-medium text-content-secondary">Variance notes</span>
-                <input
-                  type="text"
-                  value={varianceNotes}
-                  onChange={(event) => setVarianceNotes(event.target.value)}
-                  className={FIELD_CLASS}
-                />
-              </label>
-              <Button variant="secondary" size="sm" onClick={() => void handleReconcile()}>
+        {/* Submit: declares the run finished. No amount is collected here. */}
+        <Modal
+          isOpen={activeDialog === "submit"}
+          onClose={closeDialog}
+          title="Submit run"
+          description="This freezes the field collections. The cash handed in is recorded separately as a remittance."
+          footer={
+            <>
+              <Button variant="outline" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button variant="primary" isLoading={isWorking} onClick={() => void handleSubmit()}>
+                Submit run
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-content-secondary">
+            The run collected{" "}
+            <span className="tabular-nums text-content-primary">
+              {formatCentavos(batch.expectedRemittanceCentavos)}
+            </span>
+            . Submitting records no cash and takes no further input; the remittance
+            step records the money.
+          </p>
+        </Modal>
+
+        {/* Remittance: its own dialog, with the variance shown before it is saved. */}
+        <Modal
+          isOpen={activeDialog === "remit"}
+          onClose={closeDialog}
+          title="Record remittance"
+          description="Record the cash handed in. A batch may be remitted more than once, and a correction is a separate negative row."
+          footer={
+            <>
+              <Button variant="outline" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                isLoading={isWorking}
+                onClick={() => void handleRemit()}
+              >
+                Record remittance
+              </Button>
+            </>
+          }
+        >
+          <dl className="grid gap-3 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-content-secondary">Expected</dt>
+              <dd className="tabular-nums">{formatCentavos(batch.expectedRemittanceCentavos)}</dd>
+            </div>
+            <div>
+              <dt className="text-content-secondary">Already remitted</dt>
+              <dd className="tabular-nums">{formatCentavos(alreadyRemittedCentavos)}</dd>
+            </div>
+            <div>
+              <dt className="text-content-secondary">This remittance</dt>
+              <dd className="tabular-nums">
+                {parsedRemitAmount === null
+                  ? "—"
+                  : formatCentavos(remitIsCorrection ? -parsedRemitAmount : parsedRemitAmount)}
+              </dd>
+            </div>
+          </dl>
+
+          <label className="mt-4 block space-y-1.5">
+            <span className="text-xs font-medium text-content-secondary">Amount handed in (₱)</span>
+            <input
+              type="text"
+              value={remitAmount}
+              onChange={(event) => setRemitAmount(event.target.value)}
+              placeholder="4500.00"
+              className={FIELD_CLASS}
+            />
+          </label>
+
+          <label className="mt-3 flex items-center gap-2 text-sm text-content-primary">
+            <input
+              type="checkbox"
+              checked={remitIsCorrection}
+              onChange={(event) => setRemitIsCorrection(event.target.checked)}
+            />
+            This is a correction (recorded as a negative row)
+          </label>
+
+          <label className="mt-3 block space-y-1.5">
+            <span className="text-xs font-medium text-content-secondary">Notes (optional)</span>
+            <input
+              type="text"
+              value={remitNotes}
+              onChange={(event) => setRemitNotes(event.target.value)}
+              className={FIELD_CLASS}
+            />
+          </label>
+
+          {remittanceAssessment !== null && (
+            <div
+              role="status"
+              className={`mt-4 space-y-1 rounded-lg border px-3 py-2 text-sm ${
+                remittanceAssessment.tone === "success"
+                  ? "border-success-line bg-success-soft text-success-strong"
+                  : "border-warning-line bg-warning-soft text-warning-strong"
+              }`}
+            >
+              <p>
+                Resulting total{" "}
+                <span className="tabular-nums">
+                  {formatCentavos(remittanceAssessment.resultingTotalCentavos)}
+                </span>{" "}
+                · variance{" "}
+                <span className="tabular-nums">
+                  {formatCentavos(remittanceAssessment.varianceCentavos)}
+                </span>
+              </p>
+              <p>{remittanceAssessment.message}</p>
+            </div>
+          )}
+        </Modal>
+
+        {/* Reconcile: confirms the amounts, requiring notes for any variance (AT-08). */}
+        <Modal
+          isOpen={activeDialog === "reconcile"}
+          onClose={closeDialog}
+          title="Reconcile batch"
+          description="Confirm the remitted amounts against the ledger. This is not the final sign-off; closing is a separate step."
+          footer={
+            <>
+              <Button variant="outline" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button variant="primary" isLoading={isWorking} onClick={() => void handleReconcile()}>
                 Reconcile
               </Button>
-            </CardContent>
-          </Card>
-        )}
+            </>
+          }
+        >
+          {batch.varianceCentavos !== 0 && (
+            <p className="text-sm tabular-nums text-warning-strong">
+              This batch has a variance of {formatCentavos(batch.varianceCentavos ?? 0)}. Notes are
+              required.
+            </p>
+          )}
+          <label className="mt-3 block space-y-1.5">
+            <span className="text-xs font-medium text-content-secondary">Variance notes</span>
+            <input
+              type="text"
+              value={varianceNotes}
+              onChange={(event) => setVarianceNotes(event.target.value)}
+              className={FIELD_CLASS}
+            />
+          </label>
+        </Modal>
+
+        {/* Close: the supervisor's separate final sign-off. */}
+        <Modal
+          isOpen={activeDialog === "close"}
+          onClose={closeDialog}
+          title="Close batch"
+          description="Final sign-off. A closed batch cannot be changed again."
+          footer={
+            <>
+              <Button variant="outline" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button variant="primary" isLoading={isWorking} onClick={() => void handleClose()}>
+                Close batch
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-content-secondary">
+            Closing confirms the reconciled batch of{" "}
+            <span className="tabular-nums text-content-primary">
+              {formatCentavos(batch.actualRemittanceCentavos ?? 0)}
+            </span>{" "}
+            is final.
+          </p>
+          <label className="mt-4 block space-y-1.5">
+            <span className="text-xs font-medium text-content-secondary">Note (optional)</span>
+            <input
+              type="text"
+              value={closeNotes}
+              onChange={(event) => setCloseNotes(event.target.value)}
+              className={FIELD_CLASS}
+            />
+          </label>
+        </Modal>
+
+        {/* Cancel: abandons an open batch that collected nothing. */}
+        <Modal
+          isOpen={activeDialog === "cancel"}
+          onClose={closeDialog}
+          title="Cancel batch"
+          description="Abandon an open batch that recorded no collections."
+          footer={
+            <>
+              <Button variant="outline" onClick={closeDialog}>
+                Keep batch
+              </Button>
+              <Button variant="danger" isLoading={isWorking} onClick={() => void handleCancel()}>
+                Cancel batch
+              </Button>
+            </>
+          }
+        >
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-content-secondary">Reason</span>
+            <input
+              type="text"
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              className={FIELD_CLASS}
+            />
+          </label>
+        </Modal>
       </div>
     </AppShell>
   );

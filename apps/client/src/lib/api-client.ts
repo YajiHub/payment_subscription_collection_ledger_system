@@ -1123,6 +1123,23 @@ export interface CollectorBatchSummary {
   createdAt: string;
   submittedAt: string | null;
   reconciledAt: string | null;
+  closedAt: string | null;
+}
+
+/**
+ * The batch money split by method (S4-4).
+ *
+ * By construction `cash + nonCash = collectedTotal` and `collectedTotal +
+ * uncollected = expectedReceivable`. The split is what tells an operator that a
+ * batch brought back more GCash than cash before they reconcile it.
+ */
+export interface BatchMethodSummary {
+  expectedReceivableCentavos: number;
+  cashCollectedCentavos: number;
+  gcashCollectedCentavos: number;
+  nonCashCollectedCentavos: number;
+  collectedTotalCentavos: number;
+  uncollectedCentavos: number;
 }
 
 export interface BatchAssignmentSummary {
@@ -1146,6 +1163,7 @@ export interface CollectorBatchDetail extends CollectorBatchSummary {
   assignments: BatchAssignmentSummary[];
   collectedTotalCentavos: number;
   outstandingTotalCentavos: number;
+  methodSummary: BatchMethodSummary;
 }
 
 export interface CollectorBatchList {
@@ -1185,12 +1203,87 @@ export interface RecordCollectionResult {
   paymentId: string | null;
 }
 
-export interface SubmitRemittanceResult {
+/** POST /api/collector-batches/:id/submit — declares the field run finished. */
+export interface SubmitBatchResult {
   batchId: string;
+  status: CollectorBatchStatus;
+  submittedAt: string;
+  assignmentCount: number;
+  expectedRemittanceCentavos: number;
+}
+
+/** POST /api/collector-batches/:id/remit — the cash hand-in (S4-2). */
+export interface RecordBatchRemittanceInput {
+  /** The total handed in. Negative only when correcting an earlier remittance. */
+  amountCentavos: number;
+  cashAmountCentavos?: number;
+  gcashAmountCentavos?: number;
+  notes?: string;
+}
+
+export interface RemitBatchResult {
+  batchId: string;
+  remittanceId: string;
+  status: CollectorBatchStatus;
   expectedRemittanceCentavos: number;
   actualRemittanceCentavos: number;
   varianceCentavos: number;
   hasVariance: boolean;
+  remittanceCount: number;
+}
+
+/** One row of a batch's remittance history. */
+export interface BatchRemittanceSummary {
+  id: string;
+  batchId: string;
+  amountCentavos: number;
+  cashAmountCentavos: number;
+  gcashAmountCentavos: number;
+  remittedById: string;
+  remittedByName: string;
+  remittedAt: string;
+  notes: string | null;
+}
+
+/** POST /api/collector-batches/:id/close — the separate final sign-off (S4-1). */
+export interface CloseBatchResult {
+  batchId: string;
+  batchNumber: string;
+  status: CollectorBatchStatus;
+  closedAt: string;
+  varianceCentavos: number;
+  reconciledAt: string | null;
+}
+
+/** One line of the printable route sheet (S4-3). */
+export interface BatchRouteSheetRow {
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  address: string;
+  currentBillCentavos: number;
+  arrearsCentavos: number;
+  totalDueCentavos: number;
+  collectorName: string;
+  areaName: string;
+}
+
+export interface RouteSheetTotals {
+  accountCount: number;
+  currentBillCentavos: number;
+  arrearsCentavos: number;
+  totalDueCentavos: number;
+}
+
+export interface BatchRouteSheet {
+  batchId: string;
+  batchNumber: string;
+  collectorName: string;
+  collectionDate: string;
+  areaName: string | null;
+  rows: BatchRouteSheetRow[];
+  totals: RouteSheetTotals;
 }
 
 export interface ReconcileBatchResult {
@@ -1251,6 +1344,12 @@ export interface OverdueAccount {
   collectorId: string | null;
   collectorName: string | null;
   lastPaymentDate: string | null;
+  /** S4-5: the collection area the account sits in. */
+  areaName: string | null;
+  /** S4-5: the invoice number of the oldest unpaid invoice. */
+  oldestUnpaidInvoiceNumber: string | null;
+  /** S4-5: the due date of that oldest invoice. */
+  oldestUnpaidDueDate: string | null;
 }
 
 export interface OverdueAccountsResult {
@@ -1345,14 +1444,79 @@ export async function voidCollection(
   return unwrap(response.data);
 }
 
-/** POST /api/collector-batches/:id/submit — declares the cash handed in. */
-export async function submitBatchRemittance(
-  batchId: string,
-  actualRemittanceCentavos: number
-): Promise<SubmitRemittanceResult> {
-  const response = await httpClient.post<ApiSuccessEnvelope<SubmitRemittanceResult>>(
+/**
+ * POST /api/collector-batches/:id/submit — declares the field run finished.
+ *
+ * The body is deliberately EMPTY: submitting carries no amount and no note. The
+ * cash handed in is the separate remittance step below, so declaring the run over
+ * and paying the money in can never be confused (S4-2).
+ */
+export async function submitBatch(batchId: string): Promise<SubmitBatchResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<SubmitBatchResult>>(
     `/api/collector-batches/${batchId}/submit`,
-    { actualRemittanceCentavos }
+    {}
+  );
+  return unwrap(response.data);
+}
+
+/**
+ * POST /api/collector-batches/:id/remit — records the cash handed in (S4-2).
+ *
+ * A batch may be remitted more than once (instalments), and a negative amount is
+ * the correcting row that sits beside the one it fixes. The result carries the
+ * recomputed batch total and variance.
+ */
+export async function recordBatchRemittance(
+  batchId: string,
+  input: RecordBatchRemittanceInput
+): Promise<RemitBatchResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<RemitBatchResult>>(
+    `/api/collector-batches/${batchId}/remit`,
+    input
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/collector-batches/:id/remittances — the batch's remittance history. */
+export async function listBatchRemittances(
+  batchId: string
+): Promise<BatchRemittanceSummary[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<{ items: BatchRemittanceSummary[] }>>(
+    `/api/collector-batches/${batchId}/remittances`
+  );
+  return unwrap(response.data).items;
+}
+
+/** GET /api/collector-batches/:id/route-sheet — the printable route sheet (S4-3). */
+export async function getBatchRouteSheet(batchId: string): Promise<BatchRouteSheet> {
+  const response = await httpClient.get<ApiSuccessEnvelope<BatchRouteSheet>>(
+    `/api/collector-batches/${batchId}/route-sheet`
+  );
+  return unwrap(response.data);
+}
+
+/**
+ * GET /api/collector-batches/:id/route-sheet/export — the sheet as a file (S4-3).
+ *
+ * The response is a file, not the JSON envelope, so it is fetched as an array
+ * buffer and handed to Electron's save dialog / a download.
+ */
+export async function downloadBatchRouteSheet(
+  batchId: string,
+  format: "pdf" | "xlsx"
+): Promise<{ fileName: string; bytes: ArrayBuffer }> {
+  const response = await httpClient.get<ArrayBuffer>(
+    `/api/collector-batches/${batchId}/route-sheet/export`,
+    { params: { format }, responseType: "arraybuffer" }
+  );
+  return { fileName: `route-sheet-${batchId}.${format}`, bytes: response.data };
+}
+
+/** POST /api/collector-batches/:id/close — the separate final sign-off (S4-1). */
+export async function closeBatch(batchId: string, notes?: string): Promise<CloseBatchResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<CloseBatchResult>>(
+    `/api/collector-batches/${batchId}/close`,
+    notes === undefined || notes === "" ? {} : { notes }
   );
   return unwrap(response.data);
 }
@@ -1381,11 +1545,20 @@ export async function cancelCollectorBatch(
   return unwrap(response.data);
 }
 
-/** GET /api/receivables/ar-aging — the AR aging report as of a calendar day. */
-export async function getArAging(asOfDate?: string): Promise<ArAgingReport> {
+/**
+ * GET /api/receivables/ar-aging — the AR aging report as of a calendar day.
+ *
+ * The report honours the shared account filters as well as the as-of day (S4-6,
+ * S6-2), so the aging screen can narrow the book by collector, area, plan or
+ * service type. Every supplied filter is sent; an omitted one is left off.
+ */
+export async function getArAging(
+  asOfDate?: string,
+  filters: ReportFilterParams = {}
+): Promise<ArAgingReport> {
   const response = await httpClient.get<ApiSuccessEnvelope<ArAgingReport>>(
     "/api/receivables/ar-aging",
-    { params: { asOfDate } }
+    { params: { asOfDate, ...filters } }
   );
   return unwrap(response.data);
 }
@@ -1395,21 +1568,41 @@ export async function getArAging(asOfDate?: string): Promise<ArAgingReport> {
  *
  * The response is a file, not the JSON envelope, so it is fetched as an array
  * buffer. The renderer then hands the bytes to Electron's save dialog / a download.
+ * The same filters the screen applied travel into the export, so a filtered screen
+ * and its file agree.
  */
 export async function downloadArAgingXlsx(
-  asOfDate?: string
+  asOfDate?: string,
+  filters: ReportFilterParams = {}
 ): Promise<{ fileName: string; bytes: ArrayBuffer }> {
   const response = await httpClient.get<ArrayBuffer>("/api/receivables/ar-aging/export", {
-    params: { asOfDate, format: "xlsx" },
+    params: { asOfDate, format: "xlsx", ...filters },
     responseType: "arraybuffer",
   });
   const fileName = `AR-aging-${asOfDate ?? new Date().toISOString().slice(0, 10)}.xlsx`;
   return { fileName, bytes: response.data };
 }
 
+/**
+ * The filters the overdue list honours (S4-5, S6-2).
+ *
+ * `minOverdueDays` is the delinquency-age filter: only accounts whose OLDEST
+ * unpaid invoice is at least that many days past due. The account filters are the
+ * same ones every report accepts, so the list can be narrowed to one collector,
+ * area, plan or service type.
+ */
+export interface OverdueAccountFilters extends ReportFilterParams {
+  /** Only accounts with no payment in the last N days (omit for any). */
+  noPaymentInDays?: number;
+  /** Only accounts overdue for at least this many consecutive months. */
+  minConsecutiveOverdueMonths?: number;
+  /** Only accounts whose oldest unpaid invoice is at least this many days past due. */
+  minOverdueDays?: number;
+}
+
 /** GET /api/receivables/overdue — the overdue service accounts. */
 export async function getOverdueAccounts(
-  filters: { noPaymentInDays?: number; minConsecutiveOverdueMonths?: number } = {}
+  filters: OverdueAccountFilters = {}
 ): Promise<OverdueAccountsResult> {
   const response = await httpClient.get<ApiSuccessEnvelope<OverdueAccountsResult>>(
     "/api/receivables/overdue",
@@ -1420,7 +1613,7 @@ export async function getOverdueAccounts(
 
 /** GET /api/receivables/overdue-summary — counts and totals by overdue duration. */
 export async function getOverdueSummary(
-  filters: { noPaymentInDays?: number; minConsecutiveOverdueMonths?: number } = {}
+  filters: OverdueAccountFilters = {}
 ): Promise<OverdueSummaryResult> {
   const response = await httpClient.get<ApiSuccessEnvelope<OverdueSummaryResult>>(
     "/api/receivables/overdue-summary",
@@ -1437,6 +1630,75 @@ export async function suspendOverdueAccounts(
   const response = await httpClient.post<ApiSuccessEnvelope<SuspendOverdueResult>>(
     "/api/receivables/overdue/suspend",
     { serviceAccountIds, reason }
+  );
+  return unwrap(response.data);
+}
+
+/** One account a suspension run would cut off (S4-7). */
+export interface SuspensionCandidate {
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  /** The due date of the oldest unpaid invoice. */
+  oldestDueDate: string;
+  /** Whole days that oldest invoice is past due, as of the run day. */
+  daysPastDue: number;
+  totalOverdueCentavos: number;
+}
+
+/** GET /api/service-accounts/suspension-candidates — who WOULD be suspended. */
+export interface SuspensionCandidatesResult {
+  thresholdDays: number;
+  asOfDate: string;
+  candidates: SuspensionCandidate[];
+  candidateCount: number;
+  totalOverdueCentavos: number;
+}
+
+/** POST /api/service-accounts/suspension-candidates/run — performs the suspensions. */
+export interface SuspensionRunResult {
+  thresholdDays: number;
+  asOfDate: string;
+  suspended: SuspensionCandidate[];
+  failed: { serviceAccountId: string; message: string }[];
+}
+
+/** The threshold override an on-demand suspension run may carry. */
+export interface SuspensionRunInput {
+  thresholdDays?: number;
+  reason?: string;
+}
+
+/**
+ * GET /api/service-accounts/suspension-candidates — the suspension PREVIEW (S4-7).
+ *
+ * Reads the configured threshold (or an override) and reports who qualifying
+ * accounts are. Nothing is changed: this is the list an operator looks at before
+ * deciding to run the suspensions.
+ */
+export async function getSuspensionCandidates(
+  thresholdDays?: number
+): Promise<SuspensionCandidatesResult> {
+  const response = await httpClient.get<ApiSuccessEnvelope<SuspensionCandidatesResult>>(
+    "/api/service-accounts/suspension-candidates",
+    { params: { thresholdDays } }
+  );
+  return unwrap(response.data);
+}
+
+/**
+ * POST /api/service-accounts/suspension-candidates/run — performs the suspensions.
+ *
+ * Explicit and separate from the preview: nothing is suspended by reading the
+ * candidate list. Requires `subscribers:suspend` on the server.
+ */
+export async function runSuspensionCandidates(
+  input: SuspensionRunInput = {}
+): Promise<SuspensionRunResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<SuspensionRunResult>>(
+    "/api/service-accounts/suspension-candidates/run",
+    input
   );
   return unwrap(response.data);
 }

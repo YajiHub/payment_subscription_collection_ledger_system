@@ -36,8 +36,8 @@ interface NavigationSection {
  *
  * Two screens cannot be linked from here because they need an account id in the
  * route: the account ledger (`/service-accounts/:id/ledger`) and the statement of
- * account. They are reached from a service account's row on the subscriber
- * directory and the ledger, which is why "Service Accounts" points there.
+ * account. They are reached from a service account's row on the Service Accounts
+ * screen and the subscriber directory, which is why that screen links to both.
  */
 const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
   {
@@ -86,14 +86,15 @@ const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
   {
     label: "Services",
     links: [
-      // The directory lists each subscriber's service accounts and carries the
-      // per-account suspend/reconnect/terminate controls.
-      { label: "Service Accounts", to: "/subscribers", permission: "subscribers:read" },
-      // The suspension queue: select overdue accounts and suspend them in bulk.
+      // S4-9: the Services section has its own screens rather than aliasing the
+      // subscriber directory and the overdue list. The Service Accounts screen
+      // lists every account and links to its ledger; the suspension screen keeps
+      // the threshold preview and the run apart.
+      { label: "Service Accounts", to: "/services/accounts", permission: "subscribers:read" },
       {
         label: "Suspension & Reconnection",
-        to: "/receivables/overdue",
-        permission: "reports:view",
+        to: "/services/suspension",
+        permission: "subscribers:read",
       },
     ],
   },

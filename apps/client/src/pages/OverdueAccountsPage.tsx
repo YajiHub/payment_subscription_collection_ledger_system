@@ -3,12 +3,20 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { CheckCircle2 } from "lucide-react";
 
-import { roleHasPermission } from "@bcis/shared";
+import {
+  SERVICE_TYPES,
+  SERVICE_TYPE_LABELS,
+  roleHasPermission,
+  type ServiceType,
+} from "@bcis/shared";
 import {
   extractApiErrorMessage,
   getOverdueAccounts,
+  listAssignableCollectors,
+  listPlans,
   suspendOverdueAccounts,
   type OverdueAccount,
+  type OverdueAccountFilters,
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
@@ -22,7 +30,31 @@ import { ErrorBanner } from "../components/ui/ErrorBanner";
 const FIELD_CLASS =
   "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
-/** Overdue service accounts, with bulk suspension of the selected ones. */
+/** A whole-number filter value, or undefined when the box is empty or not a number. */
+function optionalWholeNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return undefined;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/** Non-empty text, or undefined: an unfilled filter is omitted, never sent blank. */
+function optionalText(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * Overdue service accounts, with the filters the endpoint honours (S4-5, S6-2).
+ *
+ * Every control below is read by `/api/receivables/overdue`: the collector, area,
+ * plan and service-type account filters, the no-payment-in-N-days and consecutive
+ * months thresholds, and the delinquency age. Nothing is rendered that the query
+ * ignores, and nothing it accepts is omitted. The list also carries the area and
+ * the oldest unpaid invoice the audit found missing.
+ */
 export function OverdueAccountsPage(): ReactNode {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
@@ -30,10 +62,31 @@ export function OverdueAccountsPage(): ReactNode {
   const [accounts, setAccounts] = useState<OverdueAccount[]>([]);
   const [noPaymentInDays, setNoPaymentInDays] = useState("");
   const [minMonths, setMinMonths] = useState("");
+  const [minOverdueDays, setMinOverdueDays] = useState("");
+  const [collectorId, setCollectorId] = useState("");
+  const [areaId, setAreaId] = useState("");
+  const [planId, setPlanId] = useState("");
+  const [serviceType, setServiceType] = useState<ServiceType | "">("");
+  const [collectors, setCollectors] = useState<{ id: string; fullName: string }[]>([]);
+  const [plans, setPlans] = useState<{ id: string; name: string }[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  /** The query the screen sends. Only filled controls become parameters. */
+  const filters = useMemo<OverdueAccountFilters>(
+    () => ({
+      noPaymentInDays: optionalWholeNumber(noPaymentInDays),
+      minConsecutiveOverdueMonths: optionalWholeNumber(minMonths),
+      minOverdueDays: optionalWholeNumber(minOverdueDays),
+      collectorId: optionalText(collectorId),
+      areaId: optionalText(areaId),
+      planId: optionalText(planId),
+      serviceType: serviceType === "" ? undefined : serviceType,
+    }),
+    [noPaymentInDays, minMonths, minOverdueDays, collectorId, areaId, planId, serviceType]
+  );
 
   const loadAccounts = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -42,11 +95,7 @@ export function OverdueAccountsPage(): ReactNode {
       // `/api/receivables/overdue` is not paged: it returns the bounded overdue
       // set for the current filters, so the table sorts in place and renders no
       // pagination footer.
-      const result = await getOverdueAccounts({
-        noPaymentInDays: noPaymentInDays === "" ? undefined : Number.parseInt(noPaymentInDays, 10),
-        minConsecutiveOverdueMonths:
-          minMonths === "" ? undefined : Number.parseInt(minMonths, 10),
-      });
+      const result = await getOverdueAccounts(filters);
       setAccounts(result.items);
       setSelectedIds([]);
     } catch (error) {
@@ -54,11 +103,31 @@ export function OverdueAccountsPage(): ReactNode {
     } finally {
       setIsLoading(false);
     }
-  }, [noPaymentInDays, minMonths]);
+  }, [filters]);
 
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
+
+  // The collector and plan pickers are best effort: a role that cannot read them
+  // types the id instead, so a filter the endpoint honours is never unreachable.
+  useEffect(() => {
+    async function loadFilterOptions(): Promise<void> {
+      try {
+        const assignable = await listAssignableCollectors();
+        setCollectors(assignable.map((c) => ({ id: c.id, fullName: c.fullName })));
+      } catch {
+        setCollectors([]);
+      }
+      try {
+        const loadedPlans = await listPlans();
+        setPlans(loadedPlans.map((plan) => ({ id: plan.id, name: plan.name })));
+      } catch {
+        setPlans([]);
+      }
+    }
+    void loadFilterOptions();
+  }, []);
 
   const canSuspend = user !== null && roleHasPermission(user.role, "subscribers:suspend");
 
@@ -108,11 +177,35 @@ export function OverdueAccountsPage(): ReactNode {
         cell: (account) => account.planName,
       },
       {
+        id: "areaName",
+        header: "Area",
+        cellClassName: "text-content-secondary",
+        sortValue: (account) => account.areaName ?? "",
+        cell: (account) => account.areaName ?? "—",
+      },
+      {
         id: "consecutiveOverdueMonths",
-        header: "Consecutive Overdue Months",
+        header: "Overdue Months",
         cellClassName: "text-content-secondary",
         sortValue: (account) => account.consecutiveOverdueMonths,
         cell: (account) => account.consecutiveOverdueMonths,
+      },
+      {
+        id: "oldestUnpaidInvoiceNumber",
+        header: "Oldest Unpaid",
+        cellClassName: "font-mono text-xs text-content-secondary",
+        sortValue: (account) => account.oldestUnpaidDueDate ?? "",
+        cell: (account) =>
+          account.oldestUnpaidInvoiceNumber === null ? (
+            "—"
+          ) : (
+            <span>
+              {account.oldestUnpaidInvoiceNumber}
+              <span className="block text-content-secondary">
+                {formatDateOnly(account.oldestUnpaidDueDate)}
+              </span>
+            </span>
+          ),
       },
       {
         id: "totalOverdueCentavos",
@@ -191,7 +284,9 @@ export function OverdueAccountsPage(): ReactNode {
               />
             </label>
             <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-content-secondary">Consecutive overdue months ≥</span>
+              <span className="text-xs font-medium text-content-secondary">
+                Consecutive overdue months ≥
+              </span>
               <input
                 type="number"
                 min={0}
@@ -200,6 +295,94 @@ export function OverdueAccountsPage(): ReactNode {
                 placeholder="e.g. 3"
                 className={`${FIELD_CLASS} w-32`}
               />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">
+                Delinquency age ≥ (days)
+              </span>
+              <input
+                type="number"
+                min={0}
+                value={minOverdueDays}
+                onChange={(event) => setMinOverdueDays(event.target.value)}
+                placeholder="e.g. 90"
+                className={`${FIELD_CLASS} w-32`}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Collector</span>
+              {collectors.length > 0 ? (
+                <select
+                  value={collectorId}
+                  onChange={(event) => setCollectorId(event.target.value)}
+                  className={`${FIELD_CLASS} w-52`}
+                >
+                  <option value="">All collectors</option>
+                  {collectors.map((collector) => (
+                    <option key={collector.id} value={collector.id}>
+                      {collector.fullName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={collectorId}
+                  onChange={(event) => setCollectorId(event.target.value)}
+                  placeholder="Paste the collector id"
+                  className={`${FIELD_CLASS} w-52`}
+                />
+              )}
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Area id</span>
+              <input
+                type="text"
+                value={areaId}
+                onChange={(event) => setAreaId(event.target.value)}
+                placeholder="Paste the collection area id"
+                className={`${FIELD_CLASS} w-52`}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Plan</span>
+              {plans.length > 0 ? (
+                <select
+                  value={planId}
+                  onChange={(event) => setPlanId(event.target.value)}
+                  className={`${FIELD_CLASS} w-52`}
+                >
+                  <option value="">All plans</option>
+                  {plans.map((plan) => (
+                    <option key={plan.id} value={plan.id}>
+                      {plan.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={planId}
+                  onChange={(event) => setPlanId(event.target.value)}
+                  placeholder="Paste the plan id"
+                  className={`${FIELD_CLASS} w-52`}
+                />
+              )}
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Service type</span>
+              <select
+                value={serviceType}
+                onChange={(event) => setServiceType(event.target.value as ServiceType | "")}
+                className={`${FIELD_CLASS} w-40`}
+              >
+                <option value="">All service types</option>
+                {SERVICE_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {SERVICE_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
             </label>
             {canSuspend && (
               <Button
