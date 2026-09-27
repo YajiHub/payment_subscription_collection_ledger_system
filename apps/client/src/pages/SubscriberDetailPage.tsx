@@ -1,6 +1,6 @@
 import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
   SERVICE_ACCOUNT_STATUS_LABELS,
@@ -20,13 +20,21 @@ import {
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly, formatSubscriberName } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { AppShell } from "../components/layout/AppShell";
+import { Badge, type BadgeVariant } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card, CardContent } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { Modal } from "../components/ui/Modal";
+import { Skeleton } from "../components/ui/Skeleton";
 
-const STATUS_BADGE_CLASSES = {
-  active: "bg-emerald-50 text-emerald-700",
-  suspended: "bg-amber-50 text-amber-700",
-  terminated: "bg-slate-100 text-slate-600",
-  pending: "bg-sky-50 text-sky-700",
-} satisfies Record<ServiceAccountStatus, string>;
+const STATUS_BADGE_VARIANTS = {
+  active: "success",
+  suspended: "warning",
+  terminated: "neutral",
+  pending: "info",
+} satisfies Record<ServiceAccountStatus, BadgeVariant>;
 
 type PendingAction = "suspend" | "reconnect" | "terminate";
 
@@ -69,86 +77,86 @@ function ServiceAccountCard({
   const actions = availableActions(account.status);
 
   return (
-    <article className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <header className="flex items-start justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-              {SERVICE_TYPE_LABELS[account.serviceType]}
-            </span>
-            <span className="font-mono text-xs text-slate-500">
-              {account.serviceAccountNumber}
-            </span>
+    <Card>
+      <CardContent className="space-y-3">
+        <header className="flex items-start justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Badge variant="neutral" size="sm">
+                {SERVICE_TYPE_LABELS[account.serviceType]}
+              </Badge>
+              <span className="font-mono text-xs text-content-secondary">
+                {account.serviceAccountNumber}
+              </span>
+            </div>
+            <h3 className="text-base font-medium">{account.planName}</h3>
+            <p className="text-sm text-content-secondary tabular-nums">
+              {formatCentavos(account.monthlyRateCentavos)} per month
+            </p>
           </div>
-          <h3 className="text-base font-medium">{account.planName}</h3>
-          <p className="text-sm text-slate-600">
-            {formatCentavos(account.monthlyRateCentavos)} per month
+          <Badge variant={STATUS_BADGE_VARIANTS[account.status]} size="sm" dot>
+            {SERVICE_ACCOUNT_STATUS_LABELS[account.status]}
+          </Badge>
+        </header>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+          <dt className="text-content-secondary">Activated</dt>
+          <dd>{formatDateOnly(account.activationDate)}</dd>
+          <dt className="text-content-secondary">Suspended</dt>
+          <dd>{formatDateOnly(account.suspensionDate)}</dd>
+          <dt className="text-content-secondary">Terminated</dt>
+          <dd>{formatDateOnly(account.terminationDate)}</dd>
+          <dt className="text-content-secondary">Current balance</dt>
+          {/* Computed from the ledger — never a stored column. */}
+          <dd className="tabular-nums">
+            {account.balanceCentavos === null ? "—" : formatCentavos(account.balanceCentavos)}
+          </dd>
+        </dl>
+
+        {canViewLedger && (
+          <Link
+            to={`/service-accounts/${account.id}/ledger`}
+            className="inline-block text-sm font-medium text-content-primary underline"
+          >
+            View ledger & statement
+          </Link>
+        )}
+
+        {actions.length === 0 ? (
+          <p className="text-xs text-content-secondary">
+            This service is terminated. It stays in history and cannot be reactivated.
           </p>
-        </div>
-        <span
-          className={`rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE_CLASSES[account.status]}`}
-        >
-          {SERVICE_ACCOUNT_STATUS_LABELS[account.status]}
-        </span>
-      </header>
-
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-        <dt className="text-slate-600">Activated</dt>
-        <dd>{formatDateOnly(account.activationDate)}</dd>
-        <dt className="text-slate-600">Suspended</dt>
-        <dd>{formatDateOnly(account.suspensionDate)}</dd>
-        <dt className="text-slate-600">Terminated</dt>
-        <dd>{formatDateOnly(account.terminationDate)}</dd>
-        <dt className="text-slate-600">Current balance</dt>
-        {/* Computed from the ledger — never a stored column. */}
-        <dd>{account.balanceCentavos === null ? "—" : formatCentavos(account.balanceCentavos)}</dd>
-      </dl>
-
-      {canViewLedger && (
-        <Link
-          to={`/service-accounts/${account.id}/ledger`}
-          className="inline-block text-sm font-medium text-slate-700 underline"
-        >
-          View ledger & statement
-        </Link>
-      )}
-
-      {actions.length === 0 ? (
-        <p className="text-xs text-slate-500">
-          This service is terminated. It stays in history and cannot be reactivated.
-        </p>
-      ) : (
-        <div className="flex flex-wrap gap-3">
-          {actions.includes("suspend") && canSuspend && (
-            <button
-              type="button"
-              onClick={() => onAction(account, "suspend")}
-              className="rounded border border-amber-400 px-3 py-1.5 text-sm text-amber-800"
-            >
-              Suspend
-            </button>
-          )}
-          {actions.includes("reconnect") && canReconnect && (
-            <button
-              type="button"
-              onClick={() => onAction(account, "reconnect")}
-              className="rounded border border-emerald-400 px-3 py-1.5 text-sm text-emerald-800"
-            >
-              Reconnect
-            </button>
-          )}
-          {actions.includes("terminate") && canSuspend && (
-            <button
-              type="button"
-              onClick={() => onAction(account, "terminate")}
-              className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700"
-            >
-              Terminate
-            </button>
-          )}
-        </div>
-      )}
-    </article>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {actions.includes("suspend") && canSuspend && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-warning-line text-warning-strong"
+                onClick={() => onAction(account, "suspend")}
+              >
+                Suspend
+              </Button>
+            )}
+            {actions.includes("reconnect") && canReconnect && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-success-line text-success-strong"
+                onClick={() => onAction(account, "reconnect")}
+              >
+                Reconnect
+              </Button>
+            )}
+            {actions.includes("terminate") && canSuspend && (
+              <Button variant="outline" size="sm" className="border-danger-line text-danger-strong" onClick={() => onAction(account, "terminate")}>
+                Terminate
+              </Button>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -182,6 +190,7 @@ function toEditForm(subscriber: Subscriber): EditFormState {
  */
 export function SubscriberDetailPage(): ReactNode {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
 
   const [subscriber, setSubscriber] = useState<Subscriber | null>(null);
@@ -299,22 +308,29 @@ export function SubscriberDetailPage(): ReactNode {
 
   if (isLoading) {
     return (
-      <main className="mx-auto max-w-4xl p-8">
-        <p className="text-sm text-slate-500">Loading subscriber…</p>
-      </main>
+      <AppShell pageTitle="Subscriber" pageDescription="Loading subscriber…">
+        <div className="mx-auto max-w-4xl space-y-6">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      </AppShell>
     );
   }
 
   if (subscriber === null) {
     return (
-      <main className="mx-auto max-w-4xl space-y-4 p-8">
-        <p role="alert" className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {errorMessage ?? "Subscriber not found."}
-        </p>
-        <Link to="/subscribers" className="text-sm font-medium text-slate-700 underline">
-          Back to list
-        </Link>
-      </main>
+      <AppShell pageTitle="Subscriber" pageDescription="The requested subscriber could not be loaded">
+        <div className="mx-auto max-w-4xl space-y-4">
+          <ErrorBanner
+            message={errorMessage ?? "Subscriber not found."}
+            onRetry={() => void loadSubscriber()}
+          />
+          <Link to="/subscribers" className="text-sm font-medium text-content-primary underline">
+            Back to list
+          </Link>
+        </div>
+      </AppShell>
     );
   }
 
@@ -322,136 +338,133 @@ export function SubscriberDetailPage(): ReactNode {
   const reasonIsTooShort = reasonIsRequired && reason.trim().length < 10;
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-8">
-      <header className="flex items-start justify-between">
-        <div className="space-y-1">
-          <p className="font-mono text-sm text-slate-500">{subscriber.accountNumber}</p>
-          <h1 className="text-2xl font-semibold">{formatSubscriberName(subscriber)}</h1>
-          <p className="text-sm text-slate-600">
-            {subscriber.primaryPhone}
-            {subscriber.emailAddress !== null && ` · ${subscriber.emailAddress}`}
-          </p>
-          <p className="text-sm text-slate-600">
-            {subscriber.serviceAddress}, {subscriber.serviceBarangay},{" "}
-            {subscriber.serviceMunicipality}, {subscriber.serviceProvince}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link to="/subscribers" className="text-sm font-medium text-slate-700 underline">
+    <AppShell
+      pageTitle={formatSubscriberName(subscriber)}
+      pageDescription={`${subscriber.accountNumber} · ${subscriber.primaryPhone}`}
+      headerActions={
+        canUpdate ? (
+          <Button size="md" onClick={() => setEditForm(toEditForm(subscriber))}>
+            Edit
+          </Button>
+        ) : undefined
+      }
+    >
+      <div className="mx-auto max-w-4xl space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-sm text-content-secondary">
+              {subscriber.primaryPhone}
+              {subscriber.emailAddress !== null && ` · ${subscriber.emailAddress}`}
+            </p>
+            <p className="text-sm text-content-secondary">
+              {subscriber.serviceAddress}, {subscriber.serviceBarangay},{" "}
+              {subscriber.serviceMunicipality}, {subscriber.serviceProvince}
+            </p>
+          </div>
+          <Link to="/subscribers" className="text-sm font-medium text-content-primary underline">
             Back to list
           </Link>
-          {canUpdate && (
-            <button
-              type="button"
-              onClick={() => setEditForm(toEditForm(subscriber))}
-              className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-            >
-              Edit
-            </button>
-          )}
         </div>
-      </header>
 
-      {errorMessage !== null && (
-        <p
-          role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage}
-        </p>
-      )}
-
-      {statusMessage !== null && (
-        <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          {statusMessage}
-        </p>
-      )}
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-medium">Service Accounts</h2>
-        {subscriber.serviceAccounts.length === 0 ? (
-          <p className="rounded border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-            This subscriber has no services yet.
-          </p>
-        ) : (
-          <div className="space-y-4">
-            {subscriber.serviceAccounts.map((account) => (
-              <ServiceAccountCard
-                key={account.id}
-                account={account}
-                onAction={openAction}
-                canSuspend={canSuspend}
-                canReconnect={canReconnect}
-                canViewLedger={canViewLedger}
-              />
-            ))}
-          </div>
+        {errorMessage !== null && (
+          <ErrorBanner message={errorMessage} onRetry={() => void loadSubscriber()} />
         )}
-      </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-medium">Recent Payment History</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Payments are recorded in Phase 5. Until then this section stays empty.
-        </p>
-      </section>
+        {statusMessage !== null && (
+          <p className="rounded-xl border border-success-line bg-success-soft px-4 py-3 text-sm text-success-strong">
+            {statusMessage}
+          </p>
+        )}
 
-      {pendingAction !== null && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md space-y-4 rounded-lg bg-white p-6 shadow-lg">
-            <h2 className="text-lg font-semibold">
-              {ACTION_TITLES[pendingAction.action]} — {pendingAction.account.serviceAccountNumber}
-            </h2>
-            <p className="text-sm text-slate-600">
-              {pendingAction.action === "reconnect"
-                ? "Reconnecting creates a reconnection fee entry for this account."
-                : "Give a reason. It is written to the account's status history."}
-            </p>
-
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">
-                Reason {reasonIsRequired ? "(at least 10 characters)" : "(optional)"}
-              </span>
-              <textarea
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                rows={3}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setPendingAction(null)}
-                className="rounded border border-slate-300 px-4 py-2 text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmAction()}
-                disabled={isSubmitting || reasonIsTooShort}
-                className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
-              >
-                {isSubmitting ? "Working…" : "Confirm"}
-              </button>
+        <section className="space-y-4">
+          <h2 className="text-lg font-medium">Service Accounts</h2>
+          {subscriber.serviceAccounts.length === 0 ? (
+            <EmptyState
+              title="No services yet"
+              description="This subscriber has no service accounts. Create one from the subscriber list to start billing."
+              actionLabel="Back to subscribers"
+              onAction={() => navigate("/subscribers")}
+            />
+          ) : (
+            <div className="space-y-4">
+              {subscriber.serviceAccounts.map((account) => (
+                <ServiceAccountCard
+                  key={account.id}
+                  account={account}
+                  onAction={openAction}
+                  canSuspend={canSuspend}
+                  canReconnect={canReconnect}
+                  canViewLedger={canViewLedger}
+                />
+              ))}
             </div>
-          </div>
-        </div>
-      )}
+          )}
+        </section>
 
-      {editForm !== null && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/40 p-4">
-          <form
-            onSubmit={saveEdits}
-            className="w-full max-w-lg space-y-4 rounded-lg bg-white p-6 shadow-lg"
-          >
-            <h2 className="text-lg font-semibold">Edit Subscriber</h2>
+        <Card>
+          <CardContent>
+            <h2 className="text-base font-medium">Recent Payment History</h2>
+            <p className="mt-1 text-sm text-content-secondary">
+              Payments are recorded in Phase 5. Until then this section stays empty.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
+      <Modal
+        isOpen={pendingAction !== null}
+        onClose={() => setPendingAction(null)}
+        title={
+          pendingAction === null
+            ? ""
+            : `${ACTION_TITLES[pendingAction.action]} — ${pendingAction.account.serviceAccountNumber}`
+        }
+        description={
+          pendingAction?.action === "reconnect"
+            ? "Reconnecting creates a reconnection fee entry for this account."
+            : "Give a reason. It is written to the account's status history."
+        }
+        footer={
+          <>
+            <Button variant="outline" size="md" onClick={() => setPendingAction(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              isLoading={isSubmitting}
+              disabled={reasonIsTooShort}
+              onClick={() => void confirmAction()}
+            >
+              Confirm
+            </Button>
+          </>
+        }
+      >
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium text-content-secondary">
+            Reason {reasonIsRequired ? "(at least 10 characters)" : "(optional)"}
+          </span>
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={3}
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          />
+        </label>
+      </Modal>
+
+      <Modal
+        isOpen={editForm !== null}
+        onClose={() => setEditForm(null)}
+        title="Edit Subscriber"
+        maxWidth="lg"
+      >
+        {editForm !== null && (
+          <form onSubmit={saveEdits} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Primary Phone</span>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-content-secondary">Primary Phone</span>
                 <input
                   type="tel"
                   value={editForm.primaryPhone}
@@ -459,34 +472,34 @@ export function SubscriberDetailPage(): ReactNode {
                     setEditForm({ ...editForm, primaryPhone: event.target.value })
                   }
                   required
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  className="h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 />
               </label>
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Secondary Phone</span>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-content-secondary">Secondary Phone</span>
                 <input
                   type="tel"
                   value={editForm.secondaryPhone}
                   onChange={(event) =>
                     setEditForm({ ...editForm, secondaryPhone: event.target.value })
                   }
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  className="h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 />
               </label>
             </div>
 
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Email</span>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Email</span>
               <input
                 type="email"
                 value={editForm.emailAddress}
                 onChange={(event) => setEditForm({ ...editForm, emailAddress: event.target.value })}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                className="h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               />
             </label>
 
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Service Address</span>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Service Address</span>
               <input
                 type="text"
                 value={editForm.serviceAddress}
@@ -494,13 +507,13 @@ export function SubscriberDetailPage(): ReactNode {
                   setEditForm({ ...editForm, serviceAddress: event.target.value })
                 }
                 required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                className="h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               />
             </label>
 
             <div className="grid grid-cols-3 gap-4">
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Barangay</span>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-content-secondary">Barangay</span>
                 <input
                   type="text"
                   value={editForm.serviceBarangay}
@@ -508,11 +521,11 @@ export function SubscriberDetailPage(): ReactNode {
                     setEditForm({ ...editForm, serviceBarangay: event.target.value })
                   }
                   required
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  className="h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 />
               </label>
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Municipality</span>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-content-secondary">Municipality</span>
                 <input
                   type="text"
                   value={editForm.serviceMunicipality}
@@ -520,11 +533,11 @@ export function SubscriberDetailPage(): ReactNode {
                     setEditForm({ ...editForm, serviceMunicipality: event.target.value })
                   }
                   required
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  className="h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 />
               </label>
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Province</span>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-content-secondary">Province</span>
                 <input
                   type="text"
                   value={editForm.serviceProvince}
@@ -532,42 +545,34 @@ export function SubscriberDetailPage(): ReactNode {
                     setEditForm({ ...editForm, serviceProvince: event.target.value })
                   }
                   required
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  className="h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 />
               </label>
             </div>
 
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Internal Notes</span>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Internal Notes</span>
               <textarea
                 value={editForm.internalNotes}
                 onChange={(event) =>
                   setEditForm({ ...editForm, internalNotes: event.target.value })
                 }
                 rows={3}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               />
             </label>
 
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setEditForm(null)}
-                className="rounded border border-slate-300 px-4 py-2 text-sm"
-              >
+            <div className="flex justify-end gap-3 pt-1">
+              <Button type="button" variant="outline" size="md" onClick={() => setEditForm(null)}>
                 Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
-              >
-                {isSubmitting ? "Saving…" : "Save"}
-              </button>
+              </Button>
+              <Button type="submit" size="md" isLoading={isSubmitting}>
+                Save
+              </Button>
             </div>
           </form>
-        </div>
-      )}
-    </main>
+        )}
+      </Modal>
+    </AppShell>
   );
 }

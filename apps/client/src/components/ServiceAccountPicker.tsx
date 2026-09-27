@@ -70,7 +70,7 @@ export function ServiceAccountPicker({
   }
 
   return (
-    <div className="space-y-3 rounded border border-slate-200 p-3">
+    <div className="space-y-3 rounded border border-line p-3">
       <div className="flex gap-2">
         <input
           type="text"
@@ -83,29 +83,29 @@ export function ServiceAccountPicker({
             }
           }}
           placeholder="Search a subscriber by name, account number, or phone"
-          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+          className="w-full rounded border border-line-strong px-2 py-1 text-sm"
         />
         <button
           type="button"
           onClick={() => void handleSearch()}
-          className="rounded bg-slate-800 px-3 py-1 text-sm text-white"
+          className="rounded bg-navy px-3 py-1 text-sm text-surface"
         >
           {isSearching ? "Searching…" : "Search"}
         </button>
       </div>
 
-      {errorMessage !== null && <p className="text-sm text-red-700">{errorMessage}</p>}
+      {errorMessage !== null && <p className="text-sm text-danger-strong">{errorMessage}</p>}
 
       {options.length > 0 && (
         <ul className="space-y-2">
           {options.map((option) => (
-            <li key={option.id} className="rounded border border-slate-100 p-2">
+            <li key={option.id} className="rounded border border-line p-2">
               <p className="text-sm font-medium">
                 {option.name}{" "}
-                <span className="font-mono text-xs text-slate-500">{option.accountNumber}</span>
+                <span className="font-mono text-xs text-content-secondary">{option.accountNumber}</span>
               </p>
               {option.serviceAccounts.length === 0 ? (
-                <p className="text-xs text-slate-500">No service accounts.</p>
+                <p className="text-xs text-content-secondary">No service accounts.</p>
               ) : (
                 <ul className="mt-1 space-y-1">
                   {option.serviceAccounts.map((account) => (
@@ -128,7 +128,7 @@ export function ServiceAccountPicker({
         </ul>
       )}
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-content-secondary">
         {selectedIds.length} service account{selectedIds.length === 1 ? "" : "s"} selected.
       </p>
     </div>

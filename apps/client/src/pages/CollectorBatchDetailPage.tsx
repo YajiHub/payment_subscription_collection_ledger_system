@@ -11,6 +11,7 @@ import {
   roleHasPermission,
   type CollectedMethod,
   type CollectionResult,
+  type CollectorBatchStatus,
 } from "@bcis/shared";
 import { ServiceAccountPicker } from "../components/ServiceAccountPicker";
 import {
@@ -27,17 +28,36 @@ import {
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly, parsePesosToCentavos } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { AppShell } from "../components/layout/AppShell";
+import { Badge, type BadgeVariant } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { TableSkeleton } from "../components/ui/Skeleton";
+
+const STATUS_BADGE_VARIANTS = {
+  open: "info",
+  submitted: "warning",
+  reconciled: "success",
+  cancelled: "neutral",
+} satisfies Record<CollectorBatchStatus, BadgeVariant>;
+
+const FIELD_CLASS =
+  "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
 /** The variance as text, coloured: green exact, amber overage, red shortage. */
 function formatVariance(varianceCentavos: number | null): ReactNode {
   if (varianceCentavos === null) {
-    return <span className="text-slate-400">Not yet submitted</span>;
+    return <span className="text-content-secondary">Not yet submitted</span>;
   }
   if (varianceCentavos === 0) {
-    return <span className="text-emerald-700">{formatCentavos(0)} (exact)</span>;
+    return <span className="tabular-nums text-success-strong">{formatCentavos(0)} (exact)</span>;
   }
   return (
-    <span className={varianceCentavos > 0 ? "text-amber-700" : "text-red-700"}>
+    <span
+      className={`tabular-nums ${varianceCentavos > 0 ? "text-warning-strong" : "text-danger-strong"}`}
+    >
       {formatCentavos(varianceCentavos)} ({varianceCentavos > 0 ? "overage" : "shortage"})
     </span>
   );
@@ -64,11 +84,13 @@ function AssignmentRow({
   const isVoided = assignment.voidedAt !== null;
 
   return (
-    <tr className="border-t border-slate-100">
+    <tr className="border-t border-line transition-colors hover:bg-canvas/60">
       <td className="px-4 py-3">{assignment.subscriberName}</td>
       <td className="px-4 py-3 font-mono text-xs">{assignment.serviceAccountNumber}</td>
-      <td className="px-4 py-3">{formatCentavos(assignment.outstandingBalanceCentavos)}</td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 text-right tabular-nums">
+        {formatCentavos(assignment.outstandingBalanceCentavos)}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums">
         {assignment.collectedAmountCentavos === null
           ? "—"
           : formatCentavos(assignment.collectedAmountCentavos)}
@@ -82,29 +104,21 @@ function AssignmentRow({
         {assignment.collectionResult === null
           ? "Pending"
           : COLLECTION_RESULT_LABELS[assignment.collectionResult]}
-        {isVoided && <span className="ml-2 text-xs text-red-700">voided</span>}
+        {isVoided && <Badge variant="danger" size="sm" className="ml-2">voided</Badge>}
       </td>
-      <td className="px-4 py-3 text-xs text-slate-600">{assignment.collectorNotes ?? "—"}</td>
+      <td className="px-4 py-3 text-xs text-content-secondary">{assignment.collectorNotes ?? "—"}</td>
       <td className="px-4 py-3">
         {isOpen && !isVoided && (
           <div className="flex gap-2">
             {canRecord && assignment.collectionResult === null && (
-              <button
-                type="button"
-                onClick={() => onRecord(assignment)}
-                className="rounded bg-slate-800 px-2 py-1 text-xs text-white"
-              >
+              <Button variant="secondary" size="sm" onClick={() => onRecord(assignment)}>
                 Record Collection
-              </button>
+              </Button>
             )}
             {canVoid && assignment.collectionResult !== null && (
-              <button
-                type="button"
-                onClick={() => onVoid(assignment)}
-                className="rounded bg-red-700 px-2 py-1 text-xs text-white"
-              >
+              <Button variant="danger" size="sm" onClick={() => onVoid(assignment)}>
                 Void
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -286,279 +300,322 @@ export function CollectorBatchDetailPage(): ReactNode {
   }
 
   if (isLoading) {
-    return <main className="mx-auto max-w-5xl p-8 text-slate-500">Loading batch…</main>;
+    return (
+      <AppShell pageTitle="Collector Batch" pageDescription="Loading batch…">
+        <div className="mx-auto max-w-5xl space-y-6">
+          <Card>
+            <TableSkeleton rows={5} columns={8} />
+          </Card>
+        </div>
+      </AppShell>
+    );
   }
 
   if (batch === null) {
     return (
-      <main className="mx-auto max-w-5xl space-y-4 p-8">
-        <p className="text-red-700">{errorMessage ?? "Batch not found."}</p>
-        <Link to="/collector-batches" className="text-slate-800 underline">
-          Back to batches
-        </Link>
-      </main>
+      <AppShell pageTitle="Collector Batch" pageDescription="The requested batch could not be loaded">
+        <div className="mx-auto max-w-5xl space-y-4">
+          <ErrorBanner
+            message={errorMessage ?? "Batch not found."}
+            onRetry={() => void loadBatch()}
+          />
+          <Link to="/collector-batches" className="text-sm font-medium text-content-primary underline">
+            Back to batches
+          </Link>
+        </div>
+      </AppShell>
     );
   }
 
+  const canAddAccounts = isOpen && canCreate;
+
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-8">
-      <header className="space-y-1">
-        <Link to="/collector-batches" className="text-sm text-slate-600 underline">
+    <AppShell
+      pageTitle={batch.batchNumber}
+      pageDescription={`${batch.collectorName} · field date ${formatDateOnly(batch.collectionDate)}`}
+      headerActions={
+        <Badge variant={STATUS_BADGE_VARIANTS[batch.status]} size="md" dot>
+          {COLLECTOR_BATCH_STATUS_LABELS[batch.status]}
+        </Badge>
+      }
+    >
+      <div className="mx-auto max-w-5xl space-y-6">
+        <Link to="/collector-batches" className="text-sm text-content-secondary underline">
           ← Back to batches
         </Link>
-        <div className="flex items-center justify-between">
-          <h1 className="font-mono text-2xl font-semibold">{batch.batchNumber}</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm">
-            {COLLECTOR_BATCH_STATUS_LABELS[batch.status]}
-          </span>
-        </div>
-        <p className="text-sm text-slate-600">
-          {batch.collectorName} · field date {formatDateOnly(batch.collectionDate)}
-        </p>
-      </header>
 
-      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 text-sm shadow-sm sm:grid-cols-3">
-        <p>
-          <span className="block text-slate-600">Expected (collected)</span>
-          <span className="text-lg">{formatCentavos(batch.expectedRemittanceCentavos)}</span>
-        </p>
-        <p>
-          <span className="block text-slate-600">Actual (cash in hand)</span>
-          <span className="text-lg">
-            {batch.actualRemittanceCentavos === null
-              ? "—"
-              : formatCentavos(batch.actualRemittanceCentavos)}
-          </span>
-        </p>
-        <p>
-          <span className="block text-slate-600">Variance</span>
-          <span className="text-lg">{formatVariance(batch.varianceCentavos)}</span>
-        </p>
-        {batch.varianceNotes !== null && (
-          <p className="sm:col-span-3 text-slate-600">
-            <span className="font-medium">Variance notes:</span> {batch.varianceNotes}
+        <Card>
+          <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
+            <p>
+              <span className="block text-content-secondary">Expected (collected)</span>
+              <span className="text-lg tabular-nums">
+                {formatCentavos(batch.expectedRemittanceCentavos)}
+              </span>
+            </p>
+            <p>
+              <span className="block text-content-secondary">Actual (cash in hand)</span>
+              <span className="text-lg tabular-nums">
+                {batch.actualRemittanceCentavos === null
+                  ? "—"
+                  : formatCentavos(batch.actualRemittanceCentavos)}
+              </span>
+            </p>
+            <p>
+              <span className="block text-content-secondary">Variance</span>
+              <span className="text-lg">{formatVariance(batch.varianceCentavos)}</span>
+            </p>
+            {batch.varianceNotes !== null && (
+              <p className="text-content-secondary sm:col-span-3">
+                <span className="font-medium">Variance notes:</span> {batch.varianceNotes}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {actionMessage !== null && (
+          <p className="rounded-xl border border-line bg-canvas px-4 py-3 text-sm text-content-primary">
+            {actionMessage}
           </p>
         )}
-      </section>
+        {errorMessage !== null && (
+          <ErrorBanner message={errorMessage} onRetry={() => void loadBatch()} />
+        )}
 
-      {actionMessage !== null && (
-        <p className="rounded bg-slate-50 px-3 py-2 text-sm text-slate-800">{actionMessage}</p>
-      )}
-      {errorMessage !== null && <p className="text-sm text-red-700">{errorMessage}</p>}
+        {isOpen && canCreate && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsAddingAccounts((open) => !open)}
+            >
+              {isAddingAccounts ? "Close add accounts" : "Add accounts"}
+            </Button>
+            <Button variant="danger" size="sm" onClick={() => void handleCancel()}>
+              Cancel batch
+            </Button>
+          </div>
+        )}
 
-      {isOpen && canCreate && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setIsAddingAccounts((open) => !open)}
-            className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white"
-          >
-            {isAddingAccounts ? "Close add accounts" : "Add accounts"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleCancel()}
-            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white"
-          >
-            Cancel batch
-          </button>
-        </div>
-      )}
+        {isAddingAccounts && (
+          <Card>
+            <CardContent>
+              <form onSubmit={(event) => void handleAddAccounts(event)} className="space-y-3">
+                <ServiceAccountPicker selectedIds={newAccountIds} onChange={setNewAccountIds} />
+                <Button type="submit" variant="secondary" size="sm">
+                  Add to batch
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        )}
 
-      {isAddingAccounts && (
-        <form onSubmit={(event) => void handleAddAccounts(event)} className="space-y-3">
-          <ServiceAccountPicker selectedIds={newAccountIds} onChange={setNewAccountIds} />
-          <button type="submit" className="rounded bg-emerald-700 px-3 py-1.5 text-sm text-white">
-            Add to batch
-          </button>
-        </form>
-      )}
+        {batch.assignments.length === 0 ? (
+          <Card>
+            <CardContent>
+              <EmptyState
+                title="No service accounts assigned"
+                description="This batch has no assigned accounts yet. Add accounts to start recording field collections."
+                actionLabel={canAddAccounts ? "Add accounts" : undefined}
+                onAction={canAddAccounts ? () => setIsAddingAccounts(true) : undefined}
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-canvas text-content-secondary">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Subscriber</th>
+                    <th className="px-4 py-3 font-medium">Service</th>
+                    <th className="px-4 py-3 font-medium text-right">Outstanding</th>
+                    <th className="px-4 py-3 font-medium text-right">Collected</th>
+                    <th className="px-4 py-3 font-medium">Method</th>
+                    <th className="px-4 py-3 font-medium">Result</th>
+                    <th className="px-4 py-3 font-medium">Notes</th>
+                    <th className="px-4 py-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batch.assignments.map((assignment) => (
+                    <AssignmentRow
+                      key={assignment.id}
+                      assignment={assignment}
+                      isOpen={isOpen}
+                      canRecord={canRecord}
+                      canVoid={canReconcile}
+                      onRecord={setRecordingFor}
+                      onVoid={(target) => void handleVoid(target)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
 
-      <section className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-left text-slate-600">
-            <tr>
-              <th className="px-4 py-3">Subscriber</th>
-              <th className="px-4 py-3">Service</th>
-              <th className="px-4 py-3">Outstanding</th>
-              <th className="px-4 py-3">Collected</th>
-              <th className="px-4 py-3">Method</th>
-              <th className="px-4 py-3">Result</th>
-              <th className="px-4 py-3">Notes</th>
-              <th className="px-4 py-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {batch.assignments.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
-                  No service accounts assigned yet.
-                </td>
-              </tr>
-            ) : (
-              batch.assignments.map((assignment) => (
-                <AssignmentRow
-                  key={assignment.id}
-                  assignment={assignment}
-                  isOpen={isOpen}
-                  canRecord={canRecord}
-                  canVoid={canReconcile}
-                  onRecord={setRecordingFor}
-                  onVoid={(target) => void handleVoid(target)}
-                />
-              ))
-            )}
-          </tbody>
-        </table>
-      </section>
+        {recordingFor !== null && (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                Record collection — {recordingFor.subscriberName} ({recordingFor.serviceAccountNumber})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={(event) => void handleRecord(event)} className="space-y-3">
+                <div className="flex flex-wrap gap-3">
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Result</span>
+                    <select
+                      value={recordResult}
+                      onChange={(event) => setRecordResult(event.target.value as CollectionResult)}
+                      className={FIELD_CLASS}
+                    >
+                      {COLLECTION_RESULTS.map((result) => (
+                        <option key={result} value={result}>
+                          {COLLECTION_RESULT_LABELS[result]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-      {recordingFor !== null && (
-        <form
-          onSubmit={(event) => void handleRecord(event)}
-          className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-        >
-          <h2 className="font-medium">
-            Record collection — {recordingFor.subscriberName} ({recordingFor.serviceAccountNumber})
-          </h2>
-          <div className="flex flex-wrap gap-3">
-            <label className="text-sm">
-              <span className="block text-slate-600">Result</span>
-              <select
-                value={recordResult}
-                onChange={(event) => setRecordResult(event.target.value as CollectionResult)}
-                className="rounded border border-slate-300 px-2 py-1"
-              >
-                {COLLECTION_RESULTS.map((result) => (
-                  <option key={result} value={result}>
-                    {COLLECTION_RESULT_LABELS[result]}
-                  </option>
-                ))}
-              </select>
-            </label>
+                  {takesMoney && (
+                    <>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-content-secondary">Amount (₱)</span>
+                        <input
+                          type="text"
+                          value={recordAmount}
+                          onChange={(event) => setRecordAmount(event.target.value)}
+                          placeholder="500.00"
+                          className={FIELD_CLASS}
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-content-secondary">Method</span>
+                        <select
+                          value={recordMethod}
+                          onChange={(event) =>
+                            setRecordMethod(event.target.value as CollectedMethod)
+                          }
+                          className={FIELD_CLASS}
+                        >
+                          {COLLECTED_METHODS.map((method) => (
+                            <option key={method} value={method}>
+                              {COLLECTED_METHOD_LABELS[method]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {recordMethod === "gcash" && (
+                        <label className="block space-y-1.5">
+                          <span className="text-xs font-medium text-content-secondary">
+                            GCash reference
+                          </span>
+                          <input
+                            type="text"
+                            value={recordGcashReference}
+                            onChange={(event) => setRecordGcashReference(event.target.value)}
+                            className={FIELD_CLASS}
+                          />
+                        </label>
+                      )}
+                    </>
+                  )}
+                </div>
 
-            {takesMoney && (
-              <>
-                <label className="text-sm">
-                  <span className="block text-slate-600">Amount (₱)</span>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Collector notes</span>
                   <input
                     type="text"
-                    value={recordAmount}
-                    onChange={(event) => setRecordAmount(event.target.value)}
-                    placeholder="500.00"
-                    className="rounded border border-slate-300 px-2 py-1"
+                    value={recordNotes}
+                    onChange={(event) => setRecordNotes(event.target.value)}
+                    className={FIELD_CLASS}
                   />
                 </label>
-                <label className="text-sm">
-                  <span className="block text-slate-600">Method</span>
-                  <select
-                    value={recordMethod}
-                    onChange={(event) => setRecordMethod(event.target.value as CollectedMethod)}
-                    className="rounded border border-slate-300 px-2 py-1"
+
+                <div className="flex gap-2">
+                  <Button type="submit" variant="secondary" size="sm">
+                    Save collection
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setRecordingFor(null)}
                   >
-                    {COLLECTED_METHODS.map((method) => (
-                      <option key={method} value={method}>
-                        {COLLECTED_METHOD_LABELS[method]}
-                      </option>
-                    ))}
-                  </select>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+
+        {isOpen && canRecord && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Submit remittance</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={(event) => void handleSubmit(event)} className="space-y-3">
+                <p className="text-sm text-content-secondary">
+                  Enter the cash you are handing in. It will be compared with the{" "}
+                  <span className="tabular-nums">{formatCentavos(batch.expectedRemittanceCentavos)}</span> you
+            collected.
+                </p>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Cash in hand (₱)</span>
+                  <input
+                    type="text"
+                    value={actualCash}
+                    onChange={(event) => setActualCash(event.target.value)}
+                    placeholder="4500.00"
+                    className={FIELD_CLASS}
+                  />
                 </label>
-                {recordMethod === "gcash" && (
-                  <label className="text-sm">
-                    <span className="block text-slate-600">GCash reference</span>
-                    <input
-                      type="text"
-                      value={recordGcashReference}
-                      onChange={(event) => setRecordGcashReference(event.target.value)}
-                      className="rounded border border-slate-300 px-2 py-1"
-                    />
-                  </label>
-                )}
-              </>
-            )}
-          </div>
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  size="sm"
+                  isLoading={isSubmitting}
+                  onClick={() => setIsSubmitting(true)}
+                >
+                  Submit remittance
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        )}
 
-          <label className="block text-sm">
-            <span className="block text-slate-600">Collector notes</span>
-            <input
-              type="text"
-              value={recordNotes}
-              onChange={(event) => setRecordNotes(event.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1"
-            />
-          </label>
-
-          <div className="flex gap-2">
-            <button type="submit" className="rounded bg-emerald-700 px-3 py-1.5 text-sm text-white">
-              Save collection
-            </button>
-            <button
-              type="button"
-              onClick={() => setRecordingFor(null)}
-              className="rounded border border-slate-300 px-3 py-1.5 text-sm"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-
-      {isOpen && canRecord && (
-        <form
-          onSubmit={(event) => void handleSubmit(event)}
-          className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-        >
-          <h2 className="font-medium">Submit remittance</h2>
-          <p className="text-sm text-slate-600">
-            Enter the cash you are handing in. It will be compared with the{" "}
-            {formatCentavos(batch.expectedRemittanceCentavos)} you collected.
-          </p>
-          <label className="block text-sm">
-            <span className="block text-slate-600">Cash in hand (₱)</span>
-            <input
-              type="text"
-              value={actualCash}
-              onChange={(event) => setActualCash(event.target.value)}
-              placeholder="4500.00"
-              className="rounded border border-slate-300 px-2 py-1"
-            />
-          </label>
-          <button
-            type="submit"
-            className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white"
-            onClick={() => setIsSubmitting(true)}
-          >
-            {isSubmitting ? "Submitting…" : "Submit remittance"}
-          </button>
-        </form>
-      )}
-
-      {batch.status === "submitted" && canReconcile && (
-        <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="font-medium">Reconcile batch</h2>
-          {batch.varianceCentavos !== 0 && (
-            <p className="text-sm text-amber-700">
-              This batch has a variance of {formatCentavos(batch.varianceCentavos ?? 0)}. Notes are
-              required.
-            </p>
-          )}
-          <label className="block text-sm">
-            <span className="block text-slate-600">Variance notes</span>
-            <input
-              type="text"
-              value={varianceNotes}
-              onChange={(event) => setVarianceNotes(event.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => void handleReconcile()}
-            className="rounded bg-emerald-700 px-3 py-1.5 text-sm text-white"
-          >
-            Reconcile
-          </button>
-        </section>
-      )}
-    </main>
+        {batch.status === "submitted" && canReconcile && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Reconcile batch</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {batch.varianceCentavos !== 0 && (
+                <p className="text-sm text-warning-strong tabular-nums">
+                  This batch has a variance of {formatCentavos(batch.varianceCentavos ?? 0)}. Notes
+                  are required.
+                </p>
+              )}
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-content-secondary">Variance notes</span>
+                <input
+                  type="text"
+                  value={varianceNotes}
+                  onChange={(event) => setVarianceNotes(event.target.value)}
+                  className={FIELD_CLASS}
+                />
+              </label>
+              <Button variant="secondary" size="sm" onClick={() => void handleReconcile()}>
+                Reconcile
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </AppShell>
   );
 }

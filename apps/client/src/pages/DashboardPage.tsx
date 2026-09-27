@@ -21,11 +21,11 @@ const RECENT_PAYMENT_COUNT = 10;
 
 /** The aging buckets, in the order the mini chart and the totals read them. */
 const AGING_BUCKETS = [
-  { key: "current", label: "Current", barClass: "bg-emerald-600" },
-  { key: "bucket_1_30", label: "1-30 Days", barClass: "bg-yellow-500" },
-  { key: "bucket_31_60", label: "31-60 Days", barClass: "bg-orange-500" },
-  { key: "bucket_61_90", label: "61-90 Days", barClass: "bg-red-600" },
-  { key: "over_90", label: "90+ Days", barClass: "bg-red-900" },
+  { key: "current", label: "Current", barClass: "bg-success" },
+  { key: "bucket_1_30", label: "1-30 Days", barClass: "bg-warning" },
+  { key: "bucket_31_60", label: "31-60 Days", barClass: "bg-warning-strong" },
+  { key: "bucket_61_90", label: "61-90 Days", barClass: "bg-danger" },
+  { key: "over_90", label: "90+ Days", barClass: "bg-danger-strong" },
 ] as const;
 
 /** One KPI card: a label and the figure it claims, formatted by the caller. */
@@ -39,10 +39,10 @@ function KpiCard({
   hint?: string;
 }): ReactNode {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-xl font-semibold">{value}</p>
-      {hint !== undefined && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+    <div className="rounded-lg border border-line bg-surface p-4 shadow-sm">
+      <p className="text-xs uppercase tracking-wide text-content-secondary">{label}</p>
+      <p className="mt-1 text-right text-xl font-semibold tabular-nums">{value}</p>
+      {hint !== undefined && <p className="mt-1 text-xs text-content-secondary">{hint}</p>}
     </div>
   );
 }
@@ -52,14 +52,14 @@ function ArAgingMiniChart({ aging }: { aging: ArAgingReport }): ReactNode {
   const grandTotal = aging.totals.grandTotal;
 
   return (
-    <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="space-y-3 rounded-lg border border-line bg-surface p-4 shadow-sm">
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-medium">AR Aging</h2>
-        <span className="text-sm font-semibold">{formatCentavos(grandTotal)}</span>
+        <span className="text-sm font-semibold tabular-nums">{formatCentavos(grandTotal)}</span>
       </div>
 
       {grandTotal === 0 ? (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-content-secondary">
           Nothing outstanding as of {formatDateOnly(aging.asOfDate)}.
         </p>
       ) : (
@@ -72,11 +72,11 @@ function ArAgingMiniChart({ aging }: { aging: ArAgingReport }): ReactNode {
 
             return (
               <li key={bucket.key}>
-                <div className="flex justify-between text-xs text-slate-600">
+                <div className="flex justify-between text-xs text-content-secondary">
                   <span>{bucket.label}</span>
-                  <span>{formatCentavos(amountCentavos)}</span>
+                  <span className="tabular-nums">{formatCentavos(amountCentavos)}</span>
                 </div>
-                <div className="mt-1 h-2 w-full rounded bg-slate-100">
+                <div className="mt-1 h-2 w-full rounded bg-canvas">
                   <div
                     className={`h-2 rounded ${bucket.barClass}`}
                     style={{ width: `${widthPercent}%` }}
@@ -88,7 +88,7 @@ function ArAgingMiniChart({ aging }: { aging: ArAgingReport }): ReactNode {
         </ul>
       )}
 
-      <Link to="/receivables/aging" className="inline-block text-sm text-slate-800 underline">
+      <Link to="/receivables/aging" className="inline-block text-sm text-content-primary underline">
         Open the full AR aging report
       </Link>
     </div>
@@ -140,7 +140,7 @@ export function DashboardPage(): ReactNode {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Management Dashboard</h1>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-content-secondary">
             {kpis === null
               ? "Loading the pulse of the business…"
               : `Last billing run: ${kpis.lastBillingRunDate === null ? "never" : formatDateOnly(kpis.lastBillingRunDate)}`}
@@ -149,14 +149,14 @@ export function DashboardPage(): ReactNode {
         <AppNavigation />
       </header>
 
-      {errorMessage !== null && <p className="text-sm text-red-700">{errorMessage}</p>}
+      {errorMessage !== null && <p className="text-sm text-danger-strong">{errorMessage}</p>}
 
       {isLoading || kpis === null || aging === null ? (
-        <p className="text-slate-500">Loading the dashboard…</p>
+        <p className="text-content-secondary">Loading the dashboard…</p>
       ) : (
         <>
           {kpis.submittedBatchesPendingReconciliation > 0 && (
-            <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <section className="rounded-lg border border-warning-line bg-warning-soft p-4 text-sm text-warning-strong">
               <p className="font-medium">
                 {kpis.submittedBatchesPendingReconciliation} collector batch(es) awaiting
                 reconciliation.
@@ -212,10 +212,10 @@ export function DashboardPage(): ReactNode {
 
           <ArAgingMiniChart aging={aging} />
 
-          <section className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+          <section className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
             <h2 className="px-4 py-3 text-sm font-medium">Recent payments</h2>
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-600">
+              <thead className="bg-canvas text-left text-content-secondary">
                 <tr>
                   <th className="px-4 py-2">Receipt #</th>
                   <th className="px-4 py-2">Date</th>
@@ -228,13 +228,13 @@ export function DashboardPage(): ReactNode {
               <tbody>
                 {recentPayments.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
+                    <td colSpan={6} className="px-4 py-6 text-center text-content-secondary">
                       No payments have been posted yet.
                     </td>
                   </tr>
                 ) : (
                   recentPayments.map((payment) => (
-                    <tr key={payment.id} className="border-t border-slate-100">
+                    <tr key={payment.id} className="border-t border-line">
                       <td className="px-4 py-2 font-mono text-xs">
                         <Link to={`/payments/${payment.id}`} className="underline">
                           {payment.receiptNumber}
@@ -243,7 +243,7 @@ export function DashboardPage(): ReactNode {
                       <td className="px-4 py-2">{formatDateOnly(payment.paymentDate)}</td>
                       <td className="px-4 py-2">{payment.subscriberName}</td>
                       <td className="px-4 py-2">{payment.paymentMethod}</td>
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-4 py-2 text-right tabular-nums">
                         {formatCentavos(payment.amountCentavos)}
                       </td>
                       <td className="px-4 py-2">{payment.status}</td>
@@ -254,7 +254,7 @@ export function DashboardPage(): ReactNode {
             </table>
           </section>
 
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-content-secondary">
             {canExportReports
               ? "You may export reports from the Reports Center."
               : "Your role may view reports but not take a copy out of the building."}

@@ -1,12 +1,182 @@
 @import "tailwindcss";
 
+/*
+ * Section 4.1 design tokens — the single source of colour in the renderer.
+ *
+ * Tailwind 4 emits every `@theme` entry as a CSS custom property on `:root` and
+ * generates the matching utilities, so a component writes `text-content-primary`
+ * or `bg-canvas` and never a hex value. The token name from the specification is
+ * on each line; the theme name is the Tailwind-facing one.
+ */
+@theme {
+  --color-navy: #0f2747; /* Primary / Navy */
+  --color-accent: #2563eb; /* Accent Blue */
+  --color-canvas: #f6f8fb; /* Canvas */
+  --color-surface: #ffffff; /* Surface */
+  --color-content-primary: #0f172a; /* Text Primary */
+  --color-content-secondary: #64748b; /* Text Secondary */
+  --color-success: #059669; /* Success */
+  --color-warning: #d97706; /* Warning */
+  --color-danger: #dc2626; /* Danger */
+
+  /*
+   * Structure colours. These are mixes of the tokens above — never new hex
+   * values — so the nine specified colours stay the only literal colours in the
+   * stylesheet. `line` outlines panels and table rows, `-soft` is the tinted
+   * background of a status pill, `-strong` is the darker text on that tint, and
+   * `-line` is the matching border.
+   */
+  --color-line: color-mix(in srgb, var(--color-content-secondary) 22%, var(--color-surface));
+  --color-line-strong: color-mix(in srgb, var(--color-content-secondary) 38%, var(--color-surface));
+
+  /* The hover step of a navy button: the same navy, one notch darker. */
+  --color-navy-strong: color-mix(in srgb, var(--color-navy) 85%, black);
+
+  --color-success-soft: color-mix(in srgb, var(--color-success) 10%, var(--color-surface));
+  --color-success-line: color-mix(in srgb, var(--color-success) 35%, var(--color-surface));
+  --color-success-strong: color-mix(in srgb, var(--color-success) 80%, black);
+
+  --color-warning-soft: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
+  --color-warning-line: color-mix(in srgb, var(--color-warning) 35%, var(--color-surface));
+  --color-warning-strong: color-mix(in srgb, var(--color-warning) 80%, black);
+
+  --color-danger-soft: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+  --color-danger-line: color-mix(in srgb, var(--color-danger) 35%, var(--color-surface));
+  --color-danger-strong: color-mix(in srgb, var(--color-danger) 80%, black);
+
+  --color-accent-soft: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+  --color-accent-line: color-mix(in srgb, var(--color-accent) 35%, var(--color-surface));
+  --color-accent-strong: color-mix(in srgb, var(--color-accent) 80%, black);
+
+  /* Typography: Inter first, a system face only as a fallback. */
+  --font-sans: "Inter Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
 :root {
   color-scheme: light;
-  font-family: "Segoe UI", system-ui, sans-serif;
 }
 
 body {
   margin: 0;
-  background-color: #f8fafc;
-  color: #0f172a;
+  background-color: var(--color-canvas);
+  color: var(--color-content-primary);
+  font-family: var(--font-sans);
+}
+
+/*
+ * S7-7 — print layout.
+ *
+ * A printed Statement of Account, receipt, report or route sheet is a document,
+ * not a screen: the application chrome, its navigation and its controls are
+ * removed, colours collapse to black on white, and a long table repeats its
+ * header on every page instead of breaking a row in half.
+ */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  /* Black on white, whatever the screen palette was. */
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 12px;
+  }
+
+  *,
+  *::before,
+  *::after {
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    color: #000 !important;
+    border-color: #000 !important;
+  }
+
+  /* Chrome and interactive affordances: none of these belong on paper. */
+  nav,
+  button,
+  [role="button"],
+  select,
+  input,
+  textarea,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Links print as plain text: an underline on paper is not a navigation hint. */
+  a,
+  a:visited {
+    color: #000 !important;
+    text-decoration: none !important;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  /*
+   * S7-4 print fallback. The shared data table caps its height and pins its
+   * header with `position: sticky` so the header stays put on screen; on paper
+   * neither belongs: the header repeats through `display: table-header-group`
+   * above, and a pinned header would overlap the first rows.
+   */
+  .data-table-scroll {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .data-table th {
+    position: static !important;
+    top: auto !important;
+  }
+
+  /* The header label is a sort control on screen; on paper only the label stays. */
+  .data-table thead button {
+    display: inline-flex !important;
+  }
+
+  .data-table-sort-icon,
+  .data-table-pagination {
+    display: none !important;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+
+  th,
+  td {
+    padding: 3px 6px !important;
+    border-bottom: 1px solid #000 !important;
+  }
+
+  /* A row, a heading and an image are never split across two pages. */
+  tr,
+  thead,
+  img,
+  svg {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Printed documents are tight; the screen padding exists for the mouse. */
+  main {
+    padding: 0 !important;
+  }
 }

@@ -1,6 +1,5 @@
 import type { FormEvent, ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   SERVICE_TYPES,
@@ -17,6 +16,14 @@ import {
 } from "../lib/api-client";
 import { formatCentavos } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { AppShell } from "../components/layout/AppShell";
+import { DataTable, type TableColumn } from "../components/table/DataTable";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { Modal } from "../components/ui/Modal";
 
 interface PlanFormState {
   name: string;
@@ -78,6 +85,8 @@ export function PlanManagementPage(): ReactNode {
     setErrorMessage(null);
     try {
       // The management screen shows retired plans too, so they stay auditable.
+      // `/api/plans` is not paged: it returns the whole (small, deliberate)
+      // catalogue, so the table sorts in place and renders no pagination footer.
       const loaded = await listPlans({ includeInactive: true });
       setPlans(loaded);
     } catch (error) {
@@ -122,232 +131,218 @@ export function PlanManagementPage(): ReactNode {
     }
   }
 
-  async function handleRetire(plan: Plan): Promise<void> {
-    setErrorMessage(null);
-    try {
-      await retirePlan(plan.id);
-      await loadPlans();
-    } catch (error) {
-      setErrorMessage(extractApiErrorMessage(error));
-    }
-  }
+  const handleRetire = useCallback(
+    async (plan: Plan): Promise<void> => {
+      setErrorMessage(null);
+      try {
+        await retirePlan(plan.id);
+        await loadPlans();
+      } catch (error) {
+        setErrorMessage(extractApiErrorMessage(error));
+      }
+    },
+    [loadPlans]
+  );
+
+  const columns = useMemo<TableColumn<Plan>[]>(
+    () => [
+      {
+        id: "name",
+        header: "Plan Name",
+        cellClassName: "font-medium text-content-primary",
+        sortValue: (plan) => plan.name,
+        cell: (plan) => plan.name,
+      },
+      {
+        id: "serviceType",
+        header: "Type",
+        cellClassName: "text-content-primary",
+        sortValue: (plan) => plan.serviceType,
+        cell: (plan) => SERVICE_TYPE_LABELS[plan.serviceType],
+      },
+      {
+        id: "details",
+        header: "Speed / Package",
+        cellClassName: "text-content-secondary",
+        sortValue: (plan) => describePlanDetails(plan),
+        cell: (plan) => describePlanDetails(plan),
+      },
+      {
+        id: "monthlyRateCentavos",
+        header: "Monthly Rate",
+        align: "right",
+        cellClassName: "tabular-nums",
+        sortValue: (plan) => plan.monthlyRateCentavos,
+        cell: (plan) => formatCentavos(plan.monthlyRateCentavos),
+      },
+      {
+        id: "reconnectionFeeCentavos",
+        header: "Reconnection Fee",
+        align: "right",
+        cellClassName: "tabular-nums",
+        sortValue: (plan) => plan.reconnectionFeeCentavos,
+        cell: (plan) => formatCentavos(plan.reconnectionFeeCentavos),
+      },
+      {
+        id: "isActive",
+        header: "Status",
+        sortValue: (plan) => (plan.isActive ? 1 : 0),
+        cell: (plan) => (
+          <Badge variant={plan.isActive ? "success" : "neutral"} size="sm" dot>
+            {plan.isActive ? "Active" : "Retired"}
+          </Badge>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: (plan) =>
+          plan.isActive && canUpdate ? (
+            <Button variant="link" size="sm" onClick={() => void handleRetire(plan)}>
+              Retire
+            </Button>
+          ) : (
+            <span className="text-content-secondary">—</span>
+          ),
+      },
+    ],
+    [canUpdate, handleRetire]
+  );
+
+  const fieldClass =
+    "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Plans</h1>
-          <p className="text-sm text-slate-600">
-            A price change means a new plan — existing subscribers keep the plan they signed up for.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link to="/" className="text-sm font-medium text-slate-700 underline">
-            Dashboard
-          </Link>
-          {canCreate && (
-            <button
-              type="button"
-              onClick={openForm}
-              className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-            >
-              Add Plan
-            </button>
-          )}
-        </div>
-      </header>
+    <AppShell
+      pageTitle="Subscription Plans"
+      pageDescription="A price change means a new plan — existing subscribers keep the plan they signed up for"
+      headerActions={
+        canCreate ? (
+          <Button size="md" onClick={openForm}>
+            Add Plan
+          </Button>
+        ) : undefined
+      }
+    >
+      <div className="space-y-5">
+        {errorMessage !== null && <ErrorBanner message={errorMessage} onRetry={() => void loadPlans()} />}
 
-      {errorMessage !== null && (
-        <p
-          role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage}
-        </p>
-      )}
-
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-4 py-3 font-medium">Plan Name</th>
-              <th className="px-4 py-3 font-medium">Type</th>
-              <th className="px-4 py-3 font-medium">Speed / Package</th>
-              <th className="px-4 py-3 font-medium">Monthly Rate</th>
-              <th className="px-4 py-3 font-medium">Reconnection Fee</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
-                  Loading plans…
-                </td>
-              </tr>
-            ) : plans.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
-                  No plans yet.
-                </td>
-              </tr>
-            ) : (
-              plans.map((plan) => (
-                <tr key={plan.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3">{plan.name}</td>
-                  <td className="px-4 py-3">{SERVICE_TYPE_LABELS[plan.serviceType]}</td>
-                  <td className="px-4 py-3">{describePlanDetails(plan)}</td>
-                  <td className="px-4 py-3 font-mono">
-                    {formatCentavos(plan.monthlyRateCentavos)}
-                  </td>
-                  <td className="px-4 py-3 font-mono">
-                    {formatCentavos(plan.reconnectionFeeCentavos)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={
-                        plan.isActive
-                          ? "rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700"
-                          : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
-                      }
-                    >
-                      {plan.isActive ? "Active" : "Retired"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {plan.isActive && canUpdate ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleRetire(plan)}
-                        className="text-red-700 underline"
-                      >
-                        Retire
-                      </button>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+        <Card>
+          <DataTable
+            columns={columns}
+            data={plans}
+            getRowId={(plan) => plan.id}
+            isLoading={isLoading}
+            emptyState={
+              <EmptyState
+                title="No plans yet"
+                description="Create the first subscription plan so subscribers have something to subscribe to."
+                actionLabel={canCreate ? "Add Plan" : undefined}
+                onAction={canCreate ? openForm : undefined}
+              />
+            }
+          />
+        </Card>
       </div>
 
-      {isFormOpen && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/40 p-4">
-          <form
-            onSubmit={handleCreate}
-            className="w-full max-w-md space-y-4 rounded-lg bg-white p-6 shadow-lg"
-          >
-            <h2 className="text-lg font-semibold">Add Plan</h2>
+      <Modal
+        isOpen={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        title="Add Plan"
+        description="New plans start active; price changes are a new plan, never an edit."
+      >
+        <form onSubmit={handleCreate} className="space-y-4 p-6">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-content-secondary">Plan Name</span>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+              required
+              autoFocus
+              className={fieldClass}
+            />
+          </label>
 
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">Plan Name</span>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-content-secondary">Service Type</span>
+            <select
+              value={form.serviceType}
+              onChange={(event) => setForm({ ...form, serviceType: event.target.value as ServiceType })}
+              className={fieldClass}
+            >
+              {SERVICE_TYPES.map((serviceType) => (
+                <option key={serviceType} value={serviceType}>
+                  {SERVICE_TYPE_LABELS[serviceType]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {form.serviceType === "internet" || form.serviceType === "bundle" ? (
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Speed (Mbps)</span>
               <input
-                type="text"
-                value={form.name}
-                onChange={(event) => setForm({ ...form, name: event.target.value })}
-                required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                type="number"
+                min={1}
+                value={form.speedMbps}
+                onChange={(event) => setForm({ ...form, speedMbps: event.target.value })}
+                className={fieldClass}
               />
             </label>
-
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">Service Type</span>
-              <select
-                value={form.serviceType}
-                onChange={(event) =>
-                  setForm({ ...form, serviceType: event.target.value as ServiceType })
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                {SERVICE_TYPES.map((serviceType) => (
-                  <option key={serviceType} value={serviceType}>
-                    {SERVICE_TYPE_LABELS[serviceType]}
-                  </option>
-                ))}
-              </select>
+          ) : (
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Package Description</span>
+              <input
+                type="text"
+                value={form.cablePackageDescription}
+                onChange={(event) => setForm({ ...form, cablePackageDescription: event.target.value })}
+                placeholder="e.g. 40 channels"
+                className={fieldClass}
+              />
             </label>
+          )}
 
-            {form.serviceType === "internet" || form.serviceType === "bundle" ? (
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-slate-700">Speed (Mbps)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={form.speedMbps}
-                  onChange={(event) => setForm({ ...form, speedMbps: event.target.value })}
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-            ) : (
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-slate-700">Package Description</span>
-                <input
-                  type="text"
-                  value={form.cablePackageDescription}
-                  onChange={(event) =>
-                    setForm({ ...form, cablePackageDescription: event.target.value })
-                  }
-                  placeholder="e.g. 40 channels"
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-            )}
+          <div className="grid grid-cols-2 gap-4">
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Monthly Rate (₱)</span>
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                value={form.monthlyRatePesos}
+                onChange={(event) => setForm({ ...form, monthlyRatePesos: event.target.value })}
+                required
+                className={fieldClass}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Reconnection Fee (₱)</span>
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                value={form.reconnectionFeePesos}
+                onChange={(event) => setForm({ ...form, reconnectionFeePesos: event.target.value })}
+                className={fieldClass}
+              />
+            </label>
+          </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-slate-700">Monthly Rate (₱)</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={form.monthlyRatePesos}
-                  onChange={(event) => setForm({ ...form, monthlyRatePesos: event.target.value })}
-                  required
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-slate-700">Reconnection Fee (₱)</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={form.reconnectionFeePesos}
-                  onChange={(event) =>
-                    setForm({ ...form, reconnectionFeePesos: event.target.value })
-                  }
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-            </div>
+          <p className="text-xs text-content-secondary">
+            Amounts are stored as whole centavos. ₱999.00 becomes 99900.
+          </p>
 
-            <p className="text-xs text-slate-500">
-              Amounts are stored as whole centavos. ₱999.00 becomes 99900.
-            </p>
-
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setIsFormOpen(false)}
-                className="rounded border border-slate-300 px-4 py-2 text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
-              >
-                {isSubmitting ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-    </main>
+          <div className="flex justify-end gap-3 pt-1">
+            <Button type="button" variant="outline" size="md" onClick={() => setIsFormOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" size="md" isLoading={isSubmitting}>
+              Save Plan
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </AppShell>
   );
 }

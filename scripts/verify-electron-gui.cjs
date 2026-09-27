@@ -42,18 +42,57 @@ const ROLE_PASSWORD = process.env.BCIS_VERIFY_ROLE_PASSWORD || "";
 /** Links the Administrator must be offered, in addition to the whole menu. */
 const ADMIN_REQUIRED_LINKS = [
   "Subscribers",
-  "Plans",
-  "Billing",
-  "Payments",
+  "Subscription Plans",
+  "Billing Runs",
+  "Payment Ledger",
   "Post Payment",
   "Collector Batches",
   "Dashboard",
   "Reports Center",
-  "AR Aging",
+  "AR Aging Analysis",
   "Overdue Accounts",
+  // Section 4.2 / S4-9: the Services section, whose screens already exist.
+  "Service Accounts",
+  "Suspension & Reconnection",
   "User Management",
   "Audit Trail",
   "System Settings",
+];
+
+/**
+ * The whole menu in the order section 4.2 requires, for the Administrator who
+ * holds every permission. Dashboard first, then the eight remaining sections.
+ */
+const ADMIN_MENU_ORDER = [
+  "Dashboard",
+  "Subscribers",
+  "Add Subscriber",
+  "Billing Runs",
+  "Invoices",
+  "Subscription Plans",
+  "Post Payment",
+  "Payment Ledger",
+  "Collector Batches",
+  "AR Aging Analysis",
+  "Overdue Accounts",
+  "Service Accounts",
+  "Suspension & Reconnection",
+  "Reports Center",
+  "User Management",
+  "Audit Trail",
+  "System Settings",
+];
+
+/** The section headings every menu offers, in order. */
+const SECTION_HEADINGS = [
+  "Subscribers",
+  "Billing",
+  "Payments",
+  "Collections",
+  "Receivables",
+  "Services",
+  "Reports",
+  "Administration",
 ];
 
 /** Links no non-administrator may be offered, whatever else they may see. */
@@ -120,6 +159,19 @@ async function readNavLinks(win) {
   );
 }
 
+/**
+ * The section headings of the menu, in the order they appear on screen. A
+ * section that is its own screen (Dashboard, Subscribers) renders as a link
+ * instead of a heading, so those two are read from the link list.
+ */
+async function readNavSectionLabels(win) {
+  return win.webContents.executeJavaScript(`
+    Array.from(document.querySelector("nav")?.children ?? [])
+      .filter((child) => child.tagName === "DIV")
+      .map((section) => (section.firstElementChild?.textContent ?? "").trim())
+  `);
+}
+
 async function signIn(win, username, password) {
   await win.loadURL(`${UI_URL}/#/login`);
   await wait(2000);
@@ -176,6 +228,20 @@ async function verifyAdministrator(win) {
     check(`dashboard menu offers "${link}"`, navLinks.includes(link));
   }
 
+  // Section 4.2 fixes the order, not just the contents of the menu.
+  check(
+    "the menu reads in the order section 4.2 requires",
+    JSON.stringify(navLinks) === JSON.stringify(ADMIN_MENU_ORDER),
+    JSON.stringify(navLinks)
+  );
+
+  const sectionLabels = await readNavSectionLabels(win);
+  check(
+    "every section of section 4.2 is present, Dashboard first",
+    JSON.stringify(sectionLabels) === JSON.stringify(["Dashboard", ...SECTION_HEADINGS]),
+    JSON.stringify(sectionLabels)
+  );
+
   // The regression that prompted this check: the dashboard must not be a dead end.
   await win.loadURL(`${UI_URL}/#/users`);
   await wait(2500);
@@ -184,13 +250,24 @@ async function verifyAdministrator(win) {
       const buttons = Array.from(document.querySelectorAll("button")).map((b) => b.textContent.trim());
       const rows = document.querySelectorAll("tbody tr").length;
       const heading = document.querySelector("h1")?.textContent?.trim() ?? "";
-      return { heading, buttons, rows };
+      const columnHeaders = Array.from(document.querySelectorAll("thead th")).map((th) =>
+        (th.textContent ?? "").trim()
+      );
+      return { heading, buttons, rows, columnHeaders };
     })()
   `);
   await capture(win, "02-admin-users");
 
+  // These strings must match what UserManagementPage.tsx actually renders. The
+  // page keeps "User Management" / "Add User"; if it is ever renamed, rename it
+  // here too rather than letting the screen and this check disagree.
   check("User Management screen is reachable", userScreen.heading === "User Management", `heading ${userScreen.heading}`);
   check('User Management offers "Add User"', userScreen.buttons.includes("Add User"), JSON.stringify(userScreen.buttons));
+  check(
+    "User Management renders the role matrix column",
+    userScreen.columnHeaders.includes("Role"),
+    JSON.stringify(userScreen.columnHeaders)
+  );
   check("User Management lists at least the signed-in account", userScreen.rows >= 1, `${userScreen.rows} rows`);
   check(
     "each listed user offers Edit and Deactivate",

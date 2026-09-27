@@ -221,27 +221,29 @@ export function PostPaymentPage(): ReactNode {
       <main className="mx-auto max-w-3xl space-y-6 p-8">
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold">Payment posted</h1>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-content-secondary tabular-nums">
             Receipt <span className="font-mono">{result.payment.receiptNumber}</span> was issued for{" "}
             {formatCentavos(result.payment.amountCentavos)}.
           </p>
         </header>
 
-        <section className="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm shadow-sm">
+        <section className="space-y-2 rounded-lg border border-line bg-surface p-5 text-sm shadow-sm">
           <h2 className="text-base font-medium">Allocation</h2>
           {result.allocations.length === 0 && result.advanceCreditCentavos === 0 && (
-            <p className="text-slate-500">No invoices were outstanding.</p>
+            <p className="text-content-secondary">No invoices were outstanding.</p>
           )}
           {result.allocations.map((allocation) => (
-            <div key={allocation.invoiceId} className="flex justify-between border-t border-slate-100 pt-2">
+            <div key={allocation.invoiceId} className="flex justify-between border-t border-line pt-2">
               <span>Invoice {allocation.invoiceNumber}</span>
-              <span>{formatCentavos(allocation.allocatedAmountCentavos)}</span>
+              <span className="tabular-nums">
+                {formatCentavos(allocation.allocatedAmountCentavos)}
+              </span>
             </div>
           ))}
           {result.advanceCreditCentavos > 0 && (
-            <div className="flex justify-between border-t border-slate-100 pt-2 font-medium">
+            <div className="flex justify-between border-t border-line pt-2 font-medium">
               <span>Advance credit</span>
-              <span>{formatCentavos(result.advanceCreditCentavos)}</span>
+              <span className="tabular-nums">{formatCentavos(result.advanceCreditCentavos)}</span>
             </div>
           )}
         </section>
@@ -250,7 +252,7 @@ export function PostPaymentPage(): ReactNode {
           <button
             type="button"
             onClick={() => navigate(`/payments/${result.payment.id}/receipt`)}
-            className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
           >
             Print Receipt
           </button>
@@ -265,7 +267,7 @@ export function PostPaymentPage(): ReactNode {
               setScreenshot(null);
               setScreenshotPath(null);
             }}
-            className="rounded border border-slate-300 px-4 py-2 text-sm font-medium"
+            className="rounded border border-line-strong px-4 py-2 text-sm font-medium"
           >
             Post another payment
           </button>
@@ -278,18 +280,18 @@ export function PostPaymentPage(): ReactNode {
     <main className="mx-auto max-w-3xl space-y-6 p-8">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Post Payment</h1>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-content-secondary">
           Find the service account, confirm the amount, then post. Cash or GCash.
         </p>
       </header>
 
       {errorMessage !== null && (
-        <p role="alert" className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="rounded border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-strong">
           {errorMessage}
         </p>
       )}
 
-      <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="space-y-3 rounded-lg border border-line bg-surface p-5 shadow-sm">
         <h2 className="text-base font-medium">1. Service account</h2>
         <div className="flex gap-2">
           <input
@@ -297,26 +299,26 @@ export function PostPaymentPage(): ReactNode {
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="Account number, subscriber name, or phone"
-            className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            className="flex-1 rounded border border-line-strong px-3 py-2 text-sm"
           />
           <button
             type="button"
             onClick={() => void handleSearch()}
             disabled={isSearching}
-            className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface disabled:opacity-50"
           >
             Search
           </button>
         </div>
 
         {searchResults.length > 0 && (
-          <ul className="divide-y divide-slate-100 rounded border border-slate-200">
+          <ul className="divide-y divide-line rounded border border-line">
             {searchResults.map((choice) => (
               <li key={choice.serviceAccountId}>
                 <button
                   type="button"
                   onClick={() => void selectAccount(choice)}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-canvas"
                 >
                   <span className="font-mono">{choice.serviceAccountNumber}</span> ·{" "}
                   {choice.subscriberName} · {choice.planName}
@@ -327,7 +329,7 @@ export function PostPaymentPage(): ReactNode {
         )}
 
         {selectedAccount !== null && (
-          <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+          <div className="rounded border border-line bg-canvas px-3 py-2 text-sm">
             Selected: <span className="font-mono">{selectedAccount.serviceAccountNumber}</span> ·{" "}
             {selectedAccount.subscriberName}
           </div>
@@ -335,13 +337,13 @@ export function PostPaymentPage(): ReactNode {
       </section>
 
       {summary !== null && (
-        <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="space-y-3 rounded-lg border border-line bg-surface p-5 shadow-sm">
           <h2 className="text-base font-medium">2. Outstanding invoices</h2>
           {summary.outstandingInvoices.length === 0 ? (
-            <p className="text-sm text-slate-500">Nothing is outstanding on this account.</p>
+            <p className="text-sm text-content-secondary">Nothing is outstanding on this account.</p>
           ) : (
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600">
+              <thead className="bg-canvas text-content-secondary">
                 <tr>
                   <th className="px-3 py-2 font-medium">Invoice</th>
                   <th className="px-3 py-2 font-medium">Date</th>
@@ -351,24 +353,28 @@ export function PostPaymentPage(): ReactNode {
               </thead>
               <tbody>
                 {summary.outstandingInvoices.map((invoice) => (
-                  <tr key={invoice.id} className="border-t border-slate-100">
+                  <tr key={invoice.id} className="border-t border-line">
                     <td className="px-3 py-2 font-mono">{invoice.invoiceNumber}</td>
                     <td className="px-3 py-2">{formatDateOnly(invoice.invoiceDate)}</td>
                     <td className="px-3 py-2">{formatDateOnly(invoice.dueDate)}</td>
-                    <td className="px-3 py-2">{formatCentavos(invoice.remainingBalanceCentavos)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatCentavos(invoice.remainingBalanceCentavos)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-          <div className="flex justify-between border-t border-slate-200 pt-2 text-sm">
-            <span className="text-slate-600">Total outstanding</span>
-            <span className="font-medium">{formatCentavos(summary.outstandingTotalCentavos)}</span>
+          <div className="flex justify-between border-t border-line pt-2 text-sm">
+            <span className="text-content-secondary">Total outstanding</span>
+            <span className="font-medium tabular-nums">
+              {formatCentavos(summary.outstandingTotalCentavos)}
+            </span>
           </div>
           {summary.creditBalanceCentavos > 0 && (
             <div className="flex justify-between text-sm">
-              <span className="text-slate-600">Advance credit</span>
-              <span className="font-medium text-emerald-700">
+              <span className="text-content-secondary">Advance credit</span>
+              <span className="font-medium text-success-strong tabular-nums">
                 {formatCentavos(summary.creditBalanceCentavos)}
               </span>
             </div>
@@ -377,32 +383,34 @@ export function PostPaymentPage(): ReactNode {
       )}
 
       {summary !== null && (
-        <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="space-y-4 rounded-lg border border-line bg-surface p-5 shadow-sm">
           <h2 className="text-base font-medium">3. Payment</h2>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">Amount (₱)</span>
+              <span className="text-sm font-medium text-content-primary">Amount (₱)</span>
               <input
                 type="text"
                 inputMode="decimal"
                 value={amountText}
                 onChange={(event) => setAmountText(event.target.value)}
                 placeholder="999.00"
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded border border-line-strong px-3 py-2 text-sm"
               />
               {amountCentavos !== null && (
-                <span className="text-xs text-slate-500">{formatCentavos(amountCentavos)}</span>
+                <span className="text-xs text-content-secondary tabular-nums">
+                  {formatCentavos(amountCentavos)}
+                </span>
               )}
             </label>
 
             <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">Payment date</span>
+              <span className="text-sm font-medium text-content-primary">Payment date</span>
               <input
                 type="date"
                 value={paymentDate}
                 onChange={(event) => setPaymentDate(event.target.value)}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded border border-line-strong px-3 py-2 text-sm"
               />
             </label>
           </div>
@@ -415,8 +423,8 @@ export function PostPaymentPage(): ReactNode {
                 onClick={() => setPaymentMethod(method)}
                 className={`rounded border px-4 py-2 text-sm font-medium ${
                   paymentMethod === method
-                    ? "border-slate-800 bg-slate-800 text-white"
-                    : "border-slate-300 text-slate-700"
+                    ? "border-navy bg-navy text-surface"
+                    : "border-line-strong text-content-primary"
                 }`}
               >
                 {PAYMENT_METHOD_LABELS[method]}
@@ -425,37 +433,37 @@ export function PostPaymentPage(): ReactNode {
           </div>
 
           {paymentMethod === "gcash" && (
-            <div className="space-y-3 rounded border border-slate-200 bg-slate-50 p-4">
+            <div className="space-y-3 rounded border border-line bg-canvas p-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
-                  <span className="text-sm font-medium text-slate-700">Reference number</span>
+                  <span className="text-sm font-medium text-content-primary">Reference number</span>
                   <input
                     type="text"
                     value={gcashReference}
                     onChange={(event) => setGcashReference(event.target.value)}
-                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-sm font-medium text-slate-700">Sender name</span>
+                  <span className="text-sm font-medium text-content-primary">Sender name</span>
                   <input
                     type="text"
                     value={gcashSenderName}
                     onChange={(event) => setGcashSenderName(event.target.value)}
-                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-sm font-medium text-slate-700">Sender GCash number</span>
+                  <span className="text-sm font-medium text-content-primary">Sender GCash number</span>
                   <input
                     type="text"
                     value={gcashSenderNumber}
                     onChange={(event) => setGcashSenderNumber(event.target.value)}
-                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-sm font-medium text-slate-700">Screenshot proof</span>
+                  <span className="text-sm font-medium text-content-primary">Screenshot proof</span>
                   <input
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
@@ -463,7 +471,7 @@ export function PostPaymentPage(): ReactNode {
                     className="w-full text-sm"
                   />
                   {screenshot !== null && (
-                    <span className="text-xs text-emerald-700">Uploaded {screenshot.fileName}</span>
+                    <span className="text-xs text-success-strong">Uploaded {screenshot.fileName}</span>
                   )}
                 </label>
               </div>
@@ -471,22 +479,22 @@ export function PostPaymentPage(): ReactNode {
           )}
 
           <label className="block space-y-1">
-            <span className="text-sm font-medium text-slate-700">Notes (optional)</span>
+            <span className="text-sm font-medium text-content-primary">Notes (optional)</span>
             <textarea
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
               rows={2}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded border border-line-strong px-3 py-2 text-sm"
             />
           </label>
 
           {preview.length > 0 && (
-            <div className="rounded border border-slate-200 bg-white p-3 text-sm">
+            <div className="rounded border border-line bg-surface p-3 text-sm">
               <p className="font-medium">This payment will be applied as follows:</p>
               {preview.map((line) => (
-                <div key={line.label} className="flex justify-between border-t border-slate-100 pt-1">
+                <div key={line.label} className="flex justify-between border-t border-line pt-1">
                   <span>{line.label}</span>
-                  <span>{formatCentavos(line.amountCentavos)}</span>
+                  <span className="tabular-nums">{formatCentavos(line.amountCentavos)}</span>
                 </div>
               ))}
             </div>
@@ -496,7 +504,7 @@ export function PostPaymentPage(): ReactNode {
             type="button"
             onClick={() => void submitPayment()}
             disabled={isPosting || amountCentavos === null || amountCentavos <= 0}
-            className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong disabled:opacity-50"
           >
             {isPosting ? "Posting…" : "Post Payment"}
           </button>

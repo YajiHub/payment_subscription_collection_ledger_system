@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 
 import {
   REPORT_TYPES,
@@ -32,6 +31,12 @@ import {
   type DisplayTable,
 } from "../lib/report-views";
 import { useAuthStore } from "../stores/auth.store";
+import { AppShell } from "../components/layout/AppShell";
+import { Button } from "../components/ui/Button";
+import { Card, CardContent } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { TableSkeleton } from "../components/ui/Skeleton";
 
 /** Today as YYYY-MM-DD in the office's local calendar day. */
 function todayDateOnly(): string {
@@ -67,6 +72,18 @@ function initialParameters(): ReportParameters {
   };
 }
 
+/**
+ * Thrown when a report the catalogue lists has no wiring on this screen yet.
+ *
+ * The catalogue in `@bcis/shared` is the authority on which reports exist; the
+ * screens that render them are added one family at a time (S6-1). Until a family
+ * has its API call and its view here, asking for it is an error rather than a
+ * blank page or a request the server would reject.
+ */
+function reportNotWiredUp(reportType: ReportType): Error {
+  return new Error(`The ${reportType} report is not wired up in this screen yet.`);
+}
+
 /** The parameter object the export endpoint expects, for the chosen report. */
 function exportParameters(
   reportType: ReportType,
@@ -88,6 +105,8 @@ function exportParameters(
         fromDate: parameters.fromDate === "" ? undefined : parameters.fromDate,
         toDate: parameters.toDate === "" ? undefined : parameters.toDate,
       };
+    default:
+      throw reportNotWiredUp(reportType);
   }
 }
 
@@ -129,79 +148,94 @@ async function loadReportTable(
           toDate: parameters.toDate === "" ? undefined : parameters.toDate,
         })
       );
+    default:
+      throw reportNotWiredUp(reportType);
   }
 }
 
 /** Renders a report table with its totals lines beneath it. */
 function ReportTableView({ table }: { table: DisplayTable }): ReactNode {
   return (
-    <section className="space-y-2">
+    <section className="space-y-3">
       <div>
-        <h2 className="text-lg font-semibold">{table.title}</h2>
-        <p className="text-sm text-slate-600">{table.subtitle}</p>
+        <h2 className="text-lg font-semibold text-content-primary">{table.title}</h2>
+        <p className="text-sm text-content-secondary">{table.subtitle}</p>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              {table.columns.map((column) => (
-                <th
-                  key={column.header}
-                  className={`px-3 py-2 ${column.align === "right" ? "text-right" : "text-left"}`}
-                >
-                  {column.header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {table.isEmpty ? (
-              <tr>
-                <td colSpan={table.columns.length} className="px-3 py-6 text-center text-slate-500">
-                  There is nothing to report for these parameters.
-                </td>
-              </tr>
-            ) : (
-              table.rows.map((row, rowIndex) => (
-                <tr key={rowIndex} className="border-t border-slate-100">
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={cellIndex}
-                      className={`px-3 py-2 ${
-                        table.columns[cellIndex]?.align === "right" ? "text-right" : "text-left"
-                      }`}
+      {table.isEmpty ? (
+        <Card>
+          <EmptyState
+            title="Nothing to report"
+            description="There is nothing to report for these parameters. Try a different date range, or pick another report from the list."
+          />
+        </Card>
+      ) : (
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-canvas text-content-secondary">
+                <tr>
+                  {table.columns.map((column) => (
+                    <th
+                      key={column.header}
+                      className={`px-4 py-3 font-medium ${column.align === "right" ? "text-right" : "text-left"}`}
                     >
-                      {cell}
-                    </td>
+                      {column.header}
+                    </th>
                   ))}
                 </tr>
-              ))
-            )}
-          </tbody>
-          {table.totalsRows.length > 0 && (
-            <tfoot className="bg-slate-50 font-semibold">
-              {table.totalsRows.map((row, rowIndex) => (
-                <tr key={rowIndex} className="border-t border-slate-200">
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={cellIndex}
-                      className={`px-3 py-2 ${
-                        table.columns[cellIndex]?.align === "right" ? "text-right" : "text-left"
-                      }`}
-                    >
-                      {cell}
-                    </td>
+              </thead>
+              <tbody>
+                {table.rows.map((row, rowIndex) => (
+                  <tr
+                    key={rowIndex}
+                    className="border-t border-line transition-colors hover:bg-canvas/60"
+                  >
+                    {row.map((cell, cellIndex) => (
+                      <td
+                        key={cellIndex}
+                        className={`px-4 py-3 ${
+                          table.columns[cellIndex]?.align === "right"
+                            ? "text-right tabular-nums"
+                            : "text-left"
+                        }`}
+                      >
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+              {table.totalsRows.length > 0 && (
+                <tfoot className="bg-canvas font-semibold">
+                  {table.totalsRows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="border-t border-line">
+                      {row.map((cell, cellIndex) => (
+                        <td
+                          key={cellIndex}
+                          className={`px-4 py-3 ${
+                            table.columns[cellIndex]?.align === "right"
+                              ? "text-right tabular-nums"
+                              : "text-left"
+                          }`}
+                        >
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
                   ))}
-                </tr>
-              ))}
-            </tfoot>
-          )}
-        </table>
-      </div>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </Card>
+      )}
     </section>
   );
 }
+
+const FIELD_CLASS =
+  "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
 /**
  * The Reports Center: pick a report, set its parameters, generate it on screen,
@@ -297,30 +331,21 @@ export function ReportsCenterPage(): ReactNode {
   const canGenerate = parametersAreComplete(reportType, parameters);
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-8">
-      <header className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <h1 className="text-2xl font-semibold">Reports Center</h1>
-        <nav className="flex items-center gap-3 text-sm font-medium">
-          <Link to="/dashboard" className="text-slate-800 underline">
-            Dashboard
-          </Link>
-          <Link to="/" className="text-slate-800 underline">
-            Home
-          </Link>
-        </nav>
-      </header>
-
+    <AppShell
+      pageTitle="Reports Center"
+      pageDescription="Pick a report, set its parameters, then view, export, or print it"
+    >
       <div className="grid gap-6 lg:grid-cols-[16rem_1fr]">
-        <nav className="space-y-1 rounded-lg border border-slate-200 bg-white p-2 shadow-sm print:hidden">
+        <nav className="space-y-1 self-start rounded-xl border border-line/80 bg-surface p-2 shadow-xs print:hidden">
           {visibleReportTypes.map((type) => (
             <button
               key={type}
               type="button"
               onClick={() => setReportType(type)}
-              className={`w-full rounded px-3 py-2 text-left text-sm ${
+              className={`w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
                 type === reportType
-                  ? "bg-slate-800 text-white"
-                  : "text-slate-800 hover:bg-slate-100"
+                  ? "bg-accent text-surface"
+                  : "text-content-primary hover:bg-canvas"
               }`}
             >
               {REPORT_TYPE_LABELS[type]}
@@ -329,167 +354,180 @@ export function ReportsCenterPage(): ReactNode {
         </nav>
 
         <div className="space-y-6">
-          <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-            <p className="text-sm text-slate-600">{REPORT_TYPE_DESCRIPTIONS[reportType]}</p>
+          <Card className="print:hidden">
+            <CardContent className="space-y-4">
+              <p className="text-sm text-content-secondary">{REPORT_TYPE_DESCRIPTIONS[reportType]}</p>
 
-            <div className="flex flex-wrap items-end gap-3">
-              {(reportType === "daily_collection" || reportType === "subscriber_soa") && (
-                <label className="text-sm">
-                  <span className="block text-slate-600">Date</span>
-                  <input
-                    type="date"
-                    value={parameters.date}
-                    onChange={(event) => updateParameter("date", event.target.value)}
-                    className="rounded border border-slate-300 px-2 py-1"
-                  />
-                </label>
-              )}
-
-              {reportType === "monthly_billing" && (
-                <>
-                  <label className="text-sm">
-                    <span className="block text-slate-600">Year</span>
+              <div className="flex flex-wrap items-end gap-3">
+                {(reportType === "daily_collection" || reportType === "subscriber_soa") && (
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Date</span>
                     <input
-                      type="number"
-                      value={parameters.year}
-                      onChange={(event) =>
-                        updateParameter("year", Number.parseInt(event.target.value, 10) || 0)
-                      }
-                      className="w-24 rounded border border-slate-300 px-2 py-1"
+                      type="date"
+                      value={parameters.date}
+                      onChange={(event) => updateParameter("date", event.target.value)}
+                      className={`${FIELD_CLASS} w-40`}
                     />
                   </label>
-                  <label className="text-sm">
-                    <span className="block text-slate-600">Month</span>
+                )}
+
+                {reportType === "monthly_billing" && (
+                  <>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-content-secondary">Year</span>
+                      <input
+                        type="number"
+                        value={parameters.year}
+                        onChange={(event) =>
+                          updateParameter("year", Number.parseInt(event.target.value, 10) || 0)
+                        }
+                        className={`${FIELD_CLASS} w-28`}
+                      />
+                    </label>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-content-secondary">Month</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={12}
+                        value={parameters.month}
+                        onChange={(event) =>
+                          updateParameter("month", Number.parseInt(event.target.value, 10) || 1)
+                        }
+                        className={`${FIELD_CLASS} w-24`}
+                      />
+                    </label>
+                  </>
+                )}
+
+                {(reportType === "ar_aging" || reportType === "outstanding_by_collector") && (
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">As of</span>
                     <input
-                      type="number"
-                      min={1}
-                      max={12}
-                      value={parameters.month}
-                      onChange={(event) =>
-                        updateParameter("month", Number.parseInt(event.target.value, 10) || 1)
-                      }
-                      className="w-20 rounded border border-slate-300 px-2 py-1"
+                      type="date"
+                      value={parameters.asOf}
+                      onChange={(event) => updateParameter("asOf", event.target.value)}
+                      className={`${FIELD_CLASS} w-40`}
                     />
                   </label>
-                </>
-              )}
+                )}
 
-              {(reportType === "ar_aging" || reportType === "outstanding_by_collector") && (
-                <label className="text-sm">
-                  <span className="block text-slate-600">As of</span>
-                  <input
-                    type="date"
-                    value={parameters.asOf}
-                    onChange={(event) => updateParameter("asOf", event.target.value)}
-                    className="rounded border border-slate-300 px-2 py-1"
-                  />
-                </label>
-              )}
-
-              {reportType === "collector_remittance" && (
-                <label className="text-sm">
-                  <span className="block text-slate-600">Collector batch id</span>
-                  <input
-                    type="text"
-                    value={parameters.batchId}
-                    onChange={(event) => updateParameter("batchId", event.target.value)}
-                    placeholder="Paste the batch id from the batch screen"
-                    className="w-96 rounded border border-slate-300 px-2 py-1"
-                  />
-                </label>
-              )}
-
-              {reportType === "subscriber_soa" && (
-                <>
-                  <label className="text-sm">
-                    <span className="block text-slate-600">Service account id</span>
+                {reportType === "collector_remittance" && (
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Collector batch id</span>
                     <input
                       type="text"
-                      value={parameters.serviceAccountId}
-                      onChange={(event) => updateParameter("serviceAccountId", event.target.value)}
-                      placeholder="Paste the account id from the ledger screen"
-                      className="w-96 rounded border border-slate-300 px-2 py-1"
+                      value={parameters.batchId}
+                      onChange={(event) => updateParameter("batchId", event.target.value)}
+                      placeholder="Paste the batch id from the batch screen"
+                      className={`${FIELD_CLASS} w-96`}
                     />
                   </label>
-                  <label className="text-sm">
-                    <span className="block text-slate-600">From (optional)</span>
-                    <input
-                      type="date"
-                      value={parameters.fromDate}
-                      onChange={(event) => updateParameter("fromDate", event.target.value)}
-                      className="rounded border border-slate-300 px-2 py-1"
-                    />
-                  </label>
-                  <label className="text-sm">
-                    <span className="block text-slate-600">To (optional)</span>
-                    <input
-                      type="date"
-                      value={parameters.toDate}
-                      onChange={(event) => updateParameter("toDate", event.target.value)}
-                      className="rounded border border-slate-300 px-2 py-1"
-                    />
-                  </label>
-                </>
+                )}
+
+                {reportType === "subscriber_soa" && (
+                  <>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-content-secondary">Service account id</span>
+                      <input
+                        type="text"
+                        value={parameters.serviceAccountId}
+                        onChange={(event) => updateParameter("serviceAccountId", event.target.value)}
+                        placeholder="Paste the account id from the ledger screen"
+                        className={`${FIELD_CLASS} w-96`}
+                      />
+                    </label>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-content-secondary">From (optional)</span>
+                      <input
+                        type="date"
+                        value={parameters.fromDate}
+                        onChange={(event) => updateParameter("fromDate", event.target.value)}
+                        className={`${FIELD_CLASS} w-40`}
+                      />
+                    </label>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-content-secondary">To (optional)</span>
+                      <input
+                        type="date"
+                        value={parameters.toDate}
+                        onChange={(event) => updateParameter("toDate", event.target.value)}
+                        className={`${FIELD_CLASS} w-40`}
+                      />
+                    </label>
+                  </>
+                )}
+
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void generate()}
+                  disabled={!canGenerate}
+                  isLoading={isGenerating}
+                >
+                  Generate
+                </Button>
+
+                {canExportReports && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      onClick={() => void exportReport("pdf")}
+                      disabled={!canGenerate}
+                      isLoading={isExporting}
+                    >
+                      Export PDF
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void exportReport("xlsx")}
+                      disabled={!canGenerate}
+                      isLoading={isExporting}
+                    >
+                      Export XLSX
+                    </Button>
+                  </>
+                )}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={openPrintPreview}
+                  disabled={table === null}
+                >
+                  Print preview
+                </Button>
+              </div>
+
+              {!canGenerate && (
+                <p className="text-xs text-content-secondary">
+                  This report needs an identifier before it can be generated.
+                </p>
               )}
-
-              <button
-                type="button"
-                onClick={() => void generate()}
-                disabled={!canGenerate || isGenerating}
-                className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50"
-              >
-                {isGenerating ? "Generating…" : "Generate"}
-              </button>
-
-              {canExportReports && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void exportReport("pdf")}
-                    disabled={!canGenerate || isExporting}
-                    className="rounded bg-red-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
-                  >
-                    {isExporting ? "Preparing…" : "Export PDF"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void exportReport("xlsx")}
-                    disabled={!canGenerate || isExporting}
-                    className="rounded bg-emerald-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
-                  >
-                    {isExporting ? "Preparing…" : "Export XLSX"}
-                  </button>
-                </>
+              {!canExportReports && (
+                <p className="text-xs text-content-secondary">
+                  Your role may view reports but not export them.
+                </p>
               )}
+            </CardContent>
+          </Card>
 
-              <button
-                type="button"
-                onClick={openPrintPreview}
-                disabled={table === null}
-                className="rounded border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-50"
-              >
-                Print preview
-              </button>
-            </div>
+          {errorMessage !== null && (
+            <ErrorBanner message={errorMessage} onRetry={() => void generate()} />
+          )}
 
-            {!canGenerate && (
-              <p className="text-xs text-slate-500">
-                This report needs an identifier before it can be generated.
-              </p>
-            )}
-            {!canExportReports && (
-              <p className="text-xs text-slate-500">
-                Your role may view reports but not export them.
-              </p>
-            )}
-          </section>
-
-          {errorMessage !== null && <p className="text-sm text-red-700">{errorMessage}</p>}
-
-          {table !== null && <ReportTableView table={table} />}
+          {isGenerating ? (
+            <Card>
+              <TableSkeleton rows={6} columns={6} />
+            </Card>
+          ) : (
+            table !== null && <ReportTableView table={table} />
+          )}
         </div>
       </div>
-    </main>
+    </AppShell>
   );
 }
 
@@ -506,7 +544,7 @@ function buildPrintableHtml(table: DisplayTable): string {
   const headerCells = table.columns
     .map(
       (column) =>
-        `<th style="text-align:${column.align}; border-bottom:1px solid #999; padding:4px 8px;">${escapeHtml(column.header)}</th>`
+        `<th style="text-align:${column.align}; border-bottom:1px solid #000; padding:4px 8px;">${escapeHtml(column.header)}</th>`
     )
     .join("");
 
@@ -528,7 +566,7 @@ function buildPrintableHtml(table: DisplayTable): string {
         `<tr style="font-weight:bold;">${row
           .map(
             (cell, index) =>
-              `<td style="text-align:${table.columns[index]?.align ?? "left"}; padding:4px 8px; border-top:1px solid #ccc;">${escapeHtml(cell)}</td>`
+              `<td style="text-align:${table.columns[index]?.align ?? "left"}; padding:4px 8px; border-top:1px solid #000;">${escapeHtml(cell)}</td>`
           )
           .join("")}</tr>`
     )
@@ -538,7 +576,7 @@ function buildPrintableHtml(table: DisplayTable): string {
 <html><head><meta charset="utf-8"><title>${escapeHtml(table.title)}</title></head>
 <body style="font-family: sans-serif; font-size: 12px; padding: 16px;">
   <h1 style="font-size: 18px; margin: 0;">${escapeHtml(table.title)}</h1>
-  <p style="margin: 4px 0 16px; color: #555;">${escapeHtml(table.subtitle)}</p>
+  <p style="margin: 4px 0 16px; color: #000;">${escapeHtml(table.subtitle)}</p>
   <table style="border-collapse: collapse; width: 100%;">
     <thead><tr>${headerCells}</tr></thead>
     <tbody>${bodyRows}</tbody>

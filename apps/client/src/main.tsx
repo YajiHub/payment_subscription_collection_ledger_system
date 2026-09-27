@@ -2,6 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { resolveApiBaseUrl } from "@bcis/shared";
+// The typeface is bundled with the renderer — an offline LAN install must never
+// wait on a font CDN. styles.css sets the stack from this family.
+import "@fontsource-variable/inter/wght.css";
 import { App } from "./App";
 import { configureApiBaseUrl } from "./lib/api-client";
 import { API_BASE_URL } from "./lib/constants";

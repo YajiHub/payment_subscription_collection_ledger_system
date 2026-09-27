@@ -4,6 +4,14 @@ import { Link } from "react-router-dom";
 
 import type { SystemSetting } from "@bcis/shared";
 import { extractApiErrorMessage, getSystemSettings, updateSystemSettings } from "../lib/api-client";
+import { AppShell } from "../components/layout/AppShell";
+import { Button } from "../components/ui/Button";
+import { Card, CardContent } from "../components/ui/Card";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { Skeleton } from "../components/ui/Skeleton";
+
+const fieldClass =
+  "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 font-mono text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
 /**
  * Admin-only system settings screen.
@@ -64,70 +72,83 @@ export function SystemSettingsPage(): ReactNode {
   }
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">System Settings</h1>
-          <p className="text-sm text-slate-600">
-            Business rules used across billing, receipts, and reports.
-          </p>
-        </div>
-        <Link to="/" className="text-sm font-medium text-slate-700 underline">
+    <AppShell
+      pageTitle="System Settings"
+      pageDescription="Business rules used across billing, receipts, and reports."
+      headerActions={
+        <Link
+          to="/"
+          className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
+        >
           Dashboard
         </Link>
-      </header>
-
-      {errorMessage !== null && (
-        <p className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {errorMessage}
-        </p>
-      )}
-      {savedMessage !== null && (
-        <p className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
-          {savedMessage}
-        </p>
-      )}
-
-      <form
-        className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
-        onSubmit={(event) => void handleSubmit(event)}
-      >
-        {isLoading ? (
-          <p className="text-sm text-slate-500">Loading settings…</p>
-        ) : (
-          settings.map((setting) => (
-            <label key={setting.key} className="block space-y-1">
-              <span className="text-sm font-medium text-slate-800">{setting.key}</span>
-              <input
-                className="w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm"
-                value={draftValues[setting.key] ?? ""}
-                onChange={(event) =>
-                  setDraftValues({ ...draftValues, [setting.key]: event.target.value })
-                }
-              />
-              <span className="block text-xs text-slate-500">{setting.description}</span>
-            </label>
-          ))
+      }
+    >
+      <div className="max-w-3xl space-y-5">
+        {errorMessage !== null && (
+          <ErrorBanner message={errorMessage} onRetry={() => void loadSettings()} />
+        )}
+        {savedMessage !== null && (
+          <div
+            role="status"
+            className="flex items-center gap-2.5 rounded-xl border border-success-line bg-success-soft px-4 py-3"
+          >
+            <span className="text-sm text-success-strong">{savedMessage}</span>
+          </div>
         )}
 
-        <div className="flex justify-end gap-3 pt-2">
-          <button
-            type="button"
-            className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
-            onClick={() => void loadSettings()}
-            disabled={isLoading || isSaving}
-          >
-            Reset
-          </button>
-          <button
-            type="submit"
-            className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-            disabled={isLoading || isSaving || changedSettings.length === 0}
-          >
-            {isSaving ? "Saving…" : "Save changes"}
-          </button>
-        </div>
-      </form>
-    </main>
+        <Card>
+          <CardContent>
+            <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+              {isLoading ? (
+                <div className="space-y-4">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="space-y-2">
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-9 w-full" />
+                      <Skeleton className="h-3 w-64" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                settings.map((setting) => (
+                  <label key={setting.key} className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">{setting.key}</span>
+                    <input
+                      className={fieldClass}
+                      value={draftValues[setting.key] ?? ""}
+                      onChange={(event) =>
+                        setDraftValues({ ...draftValues, [setting.key]: event.target.value })
+                      }
+                    />
+                    <span className="block text-xs text-content-secondary">{setting.description}</span>
+                  </label>
+                ))
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={() => void loadSettings()}
+                  disabled={isLoading || isSaving}
+                >
+                  Reset
+                </Button>
+                <Button
+                  type="submit"
+                  size="md"
+                  isLoading={isSaving}
+                  disabled={isLoading || isSaving || changedSettings.length === 0}
+                >
+                  Save changes
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    </AppShell>
   );
 }

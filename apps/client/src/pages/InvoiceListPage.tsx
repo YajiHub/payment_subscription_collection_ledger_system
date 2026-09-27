@@ -16,19 +16,35 @@ import {
   type Subscriber,
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly } from "../lib/format";
+import { AppShell } from "../components/layout/AppShell";
+import { DataTable, type TableColumn } from "../components/table/DataTable";
+import { Badge, type BadgeVariant } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
 
 const MONTH_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
-// Colours per status. `satisfies` keeps the keys exhaustive without widening the
-// literal class strings into plain `string`.
-const STATUS_BADGE_CLASSES = {
-  draft: "bg-slate-100 text-slate-700",
-  posted: "bg-sky-50 text-sky-700",
-  partially_paid: "bg-amber-50 text-amber-700",
-  paid: "bg-emerald-50 text-emerald-700",
-  overdue: "bg-red-50 text-red-700",
-  void: "bg-slate-100 text-slate-500",
-} satisfies Record<InvoiceStatus, string>;
+/**
+ * How many subscribers the picker loads. The subscriber filter is a convenience
+ * over a paged endpoint (`/api/subscribers` caps `pageSize` at 200), so it asks
+ * for one bounded page rather than dumping every subscriber into the browser.
+ */
+const SUBSCRIBER_PICKER_PAGE_SIZE = 50;
+
+// A single, exhaustive mapping from invoice status to its badge tone.
+// `unpaid` is the canonical name of the state the old `posted` spelling meant
+// (section 3.4); `credited` means fully settled by an advance credit.
+const STATUS_BADGE_VARIANTS = {
+  draft: "neutral",
+  unpaid: "info",
+  partially_paid: "warning",
+  paid: "success",
+  overdue: "danger",
+  void: "neutral",
+  credited: "success",
+} satisfies Record<InvoiceStatus, BadgeVariant>;
 
 /** A human label for the invoice's billing period, or a dash for one-off charges. */
 function periodLabel(invoice: InvoiceSummary): string {
@@ -43,57 +59,101 @@ interface InvoiceTableProps {
   isLoading: boolean;
 }
 
+// Columns and cells for the shared table. Sorting runs on the loaded page: the
+// invoices endpoint takes no sort parameter yet, so the table never claims a
+// global order it cannot guarantee.
+const INVOICE_COLUMNS: TableColumn<InvoiceSummary>[] = [
+  {
+    id: "invoiceNumber",
+    header: "Invoice #",
+    sortValue: (invoice) => invoice.invoiceNumber,
+    cell: (invoice) => (
+      <Link
+        to={`/invoices/${invoice.id}`}
+        className="font-mono text-sm text-accent underline-offset-4 hover:underline"
+      >
+        {invoice.invoiceNumber}
+      </Link>
+    ),
+  },
+  {
+    id: "subscriberName",
+    header: "Subscriber",
+    cellClassName: "text-content-primary",
+    sortValue: (invoice) => invoice.subscriberName,
+    cell: (invoice) => invoice.subscriberName,
+  },
+  {
+    id: "serviceAccountNumber",
+    header: "Service",
+    cellClassName: "font-mono text-xs text-content-secondary",
+    sortValue: (invoice) => invoice.serviceAccountNumber,
+    cell: (invoice) => invoice.serviceAccountNumber,
+  },
+  {
+    id: "period",
+    header: "Period",
+    cellClassName: "text-content-primary",
+    sortValue: (invoice) => periodLabel(invoice),
+    cell: (invoice) => periodLabel(invoice),
+  },
+  {
+    id: "totalAmountCentavos",
+    header: "Amount",
+    align: "right",
+    cellClassName: "tabular-nums",
+    sortValue: (invoice) => invoice.totalAmountCentavos,
+    cell: (invoice) => formatCentavos(invoice.totalAmountCentavos),
+  },
+  {
+    id: "paidAmountCentavos",
+    header: "Paid",
+    align: "right",
+    cellClassName: "tabular-nums",
+    sortValue: (invoice) => invoice.paidAmountCentavos,
+    cell: (invoice) => formatCentavos(invoice.paidAmountCentavos),
+  },
+  {
+    id: "remainingBalanceCentavos",
+    header: "Balance",
+    align: "right",
+    cellClassName: "font-medium tabular-nums",
+    sortValue: (invoice) => invoice.remainingBalanceCentavos,
+    cell: (invoice) => formatCentavos(invoice.remainingBalanceCentavos),
+  },
+  {
+    id: "status",
+    header: "Status",
+    sortValue: (invoice) => invoice.status,
+    cell: (invoice) => (
+      <Badge variant={STATUS_BADGE_VARIANTS[invoice.status]} size="sm">
+        {INVOICE_STATUS_LABELS[invoice.status]}
+      </Badge>
+    ),
+  },
+  {
+    id: "dueDate",
+    header: "Due Date",
+    cellClassName: "text-content-secondary",
+    sortValue: (invoice) => invoice.dueDate,
+    cell: (invoice) => formatDateOnly(invoice.dueDate),
+  },
+];
+
 function InvoiceTable({ invoices, isLoading }: InvoiceTableProps): ReactNode {
-  if (isLoading) {
-    return (
-      <tbody>
-        <tr>
-          <td colSpan={9} className="px-4 py-6 text-center text-slate-500">
-            Loading invoices…
-          </td>
-        </tr>
-      </tbody>
-    );
-  }
-
-  if (invoices.length === 0) {
-    return (
-      <tbody>
-        <tr>
-          <td colSpan={9} className="px-4 py-6 text-center text-slate-500">
-            No invoices match these filters.
-          </td>
-        </tr>
-      </tbody>
-    );
-  }
-
   return (
-    <tbody>
-      {invoices.map((invoice) => (
-        <tr key={invoice.id} className="border-t border-slate-100">
-          <td className="px-4 py-3">
-            <Link to={`/invoices/${invoice.id}`} className="font-mono text-slate-700 underline">
-              {invoice.invoiceNumber}
-            </Link>
-          </td>
-          <td className="px-4 py-3">{invoice.subscriberName}</td>
-          <td className="px-4 py-3 font-mono text-xs">{invoice.serviceAccountNumber}</td>
-          <td className="px-4 py-3">{periodLabel(invoice)}</td>
-          <td className="px-4 py-3">{formatCentavos(invoice.totalAmountCentavos)}</td>
-          <td className="px-4 py-3">{formatCentavos(invoice.paidAmountCentavos)}</td>
-          <td className="px-4 py-3">{formatCentavos(invoice.remainingBalanceCentavos)}</td>
-          <td className="px-4 py-3">
-            <span
-              className={`rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE_CLASSES[invoice.status]}`}
-            >
-              {INVOICE_STATUS_LABELS[invoice.status]}
-            </span>
-          </td>
-          <td className="px-4 py-3">{formatDateOnly(invoice.dueDate)}</td>
-        </tr>
-      ))}
-    </tbody>
+    <DataTable
+      columns={INVOICE_COLUMNS}
+      data={invoices}
+      getRowId={(invoice) => invoice.id}
+      isLoading={isLoading}
+      emptyState={
+        <EmptyState
+          title="No invoices match these filters"
+          description="Try widening the status, month, or subscriber filters, or generate invoices from the billing run."
+        />
+      }
+    />
   );
 }
 
@@ -116,6 +176,11 @@ export function InvoiceListPage(): ReactNode {
     setIsLoading(true);
     setErrorMessage(null);
     try {
+      // Pagination dependency (spec S8-1): `/api/invoices` is being given
+      // server-side `page`/`pageSize`/`total` support in the server work package.
+      // Until that lands, `listInvoices` still returns the array it always did, so
+      // this page shows what the contract returns and deliberately does NOT
+      // paginate on the client — a client-only page would misrepresent the data.
       const items = await listInvoices({
         status: statusFilter === "" ? undefined : statusFilter,
         year: yearFilter.trim() === "" ? undefined : Number.parseInt(yearFilter, 10),
@@ -137,7 +202,7 @@ export function InvoiceListPage(): ReactNode {
   useEffect(() => {
     async function loadSubscriberOptions(): Promise<void> {
       try {
-        const page = await listSubscribers({ page: 1, pageSize: 100 });
+        const page = await listSubscribers({ page: 1, pageSize: SUBSCRIBER_PICKER_PAGE_SIZE });
         setSubscribers(page.items);
       } catch {
         // The subscriber filter is a convenience; a failure here must not block the list.
@@ -151,119 +216,94 @@ export function InvoiceListPage(): ReactNode {
     void loadInvoices();
   }
 
+  const selectClass =
+    "h-9 rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
+
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Invoices</h1>
-          <p className="text-sm text-slate-600">
-            Every invoice the office has generated, newest first.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 text-sm font-medium">
-          <Link to="/billing" className="text-slate-800 underline">
-            Billing Dashboard
-          </Link>
-          <Link to="/" className="text-slate-700 underline">
-            Dashboard
-          </Link>
-        </div>
-      </header>
-
-      <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
-        <label className="space-y-1">
-          <span className="text-sm font-medium text-slate-700">Status</span>
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as InvoiceStatus | "")}
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="">All</option>
-            {INVOICE_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {INVOICE_STATUS_LABELS[status]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="space-y-1">
-          <span className="text-sm font-medium text-slate-700">Month</span>
-          <select
-            value={monthFilter}
-            onChange={(event) => setMonthFilter(event.target.value)}
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="">All</option>
-            {MONTH_NUMBERS.map((monthNumber) => (
-              <option key={monthNumber} value={monthNumber}>
-                {getMonthName(monthNumber)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="space-y-1">
-          <span className="text-sm font-medium text-slate-700">Year</span>
-          <input
-            type="number"
-            value={yearFilter}
-            onChange={(event) => setYearFilter(event.target.value)}
-            className="w-28 rounded border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label className="space-y-1">
-          <span className="text-sm font-medium text-slate-700">Subscriber</span>
-          <select
-            value={subscriberFilter}
-            onChange={(event) => setSubscriberFilter(event.target.value)}
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="">All</option>
-            {subscribers.map((subscriber) => (
-              <option key={subscriber.id} value={subscriber.id}>
-                {subscriber.accountNumber} — {subscriber.lastName}, {subscriber.firstName}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <button
-          type="submit"
-          className="rounded border border-slate-300 px-4 py-2 text-sm font-medium"
+    <AppShell
+      pageTitle="Invoices"
+      pageDescription="Every invoice the office has generated, newest first"
+      headerActions={
+        <Link
+          to="/billing"
+          className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
         >
-          Apply filters
-        </button>
-      </form>
+          Billing Dashboard
+        </Link>
+      }
+    >
+      <div className="space-y-5">
+        <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
+          <label className="space-y-1.5">
+            <span className="block text-xs font-medium text-content-secondary">Status</span>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as InvoiceStatus | "")}
+              className={selectClass}
+            >
+              <option value="">All statuses</option>
+              {INVOICE_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {INVOICE_STATUS_LABELS[status]}
+                </option>
+              ))}
+            </select>
+          </label>
 
-      {errorMessage !== null && (
-        <p
-          role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage}
-        </p>
-      )}
+          <label className="space-y-1.5">
+            <span className="block text-xs font-medium text-content-secondary">Month</span>
+            <select
+              value={monthFilter}
+              onChange={(event) => setMonthFilter(event.target.value)}
+              className={selectClass}
+            >
+              <option value="">All months</option>
+              {MONTH_NUMBERS.map((monthNumber) => (
+                <option key={monthNumber} value={monthNumber}>
+                  {getMonthName(monthNumber)}
+                </option>
+              ))}
+            </select>
+          </label>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-4 py-3 font-medium">Invoice #</th>
-              <th className="px-4 py-3 font-medium">Subscriber</th>
-              <th className="px-4 py-3 font-medium">Service</th>
-              <th className="px-4 py-3 font-medium">Period</th>
-              <th className="px-4 py-3 font-medium">Amount</th>
-              <th className="px-4 py-3 font-medium">Paid</th>
-              <th className="px-4 py-3 font-medium">Balance</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Due Date</th>
-            </tr>
-          </thead>
+          <label className="space-y-1.5">
+            <span className="block text-xs font-medium text-content-secondary">Year</span>
+            <input
+              type="number"
+              value={yearFilter}
+              onChange={(event) => setYearFilter(event.target.value)}
+              placeholder="e.g. 2026"
+              className={`${selectClass} w-28`}
+            />
+          </label>
+
+          <label className="space-y-1.5">
+            <span className="block text-xs font-medium text-content-secondary">Subscriber</span>
+            <select
+              value={subscriberFilter}
+              onChange={(event) => setSubscriberFilter(event.target.value)}
+              className={`${selectClass} min-w-56 max-w-80`}
+            >
+              <option value="">All subscribers</option>
+              {subscribers.map((subscriber) => (
+                <option key={subscriber.id} value={subscriber.id}>
+                  {subscriber.accountNumber} — {subscriber.lastName}, {subscriber.firstName}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <Button type="submit" variant="secondary" size="md">
+            Apply filters
+          </Button>
+        </form>
+
+        {errorMessage !== null && <ErrorBanner message={errorMessage} onRetry={() => void loadInvoices()} />}
+
+        <Card>
           <InvoiceTable invoices={invoices} isLoading={isLoading} />
-        </table>
+        </Card>
       </div>
-    </main>
+    </AppShell>
   );
 }

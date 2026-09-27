@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { CheckCircle2 } from "lucide-react";
 
 import { roleHasPermission } from "@bcis/shared";
 import {
@@ -11,9 +12,19 @@ import {
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { AppShell } from "../components/layout/AppShell";
+import { DataTable, type TableColumn } from "../components/table/DataTable";
+import { Button } from "../components/ui/Button";
+import { Card, CardContent } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+
+const FIELD_CLASS =
+  "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
 /** Overdue service accounts, with bulk suspension of the selected ones. */
 export function OverdueAccountsPage(): ReactNode {
+  const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
 
   const [accounts, setAccounts] = useState<OverdueAccount[]>([]);
@@ -28,6 +39,9 @@ export function OverdueAccountsPage(): ReactNode {
     setIsLoading(true);
     setErrorMessage(null);
     try {
+      // `/api/receivables/overdue` is not paged: it returns the bounded overdue
+      // set for the current filters, so the table sorts in place and renders no
+      // pagination footer.
       const result = await getOverdueAccounts({
         noPaymentInDays: noPaymentInDays === "" ? undefined : Number.parseInt(noPaymentInDays, 10),
         minConsecutiveOverdueMonths:
@@ -48,13 +62,82 @@ export function OverdueAccountsPage(): ReactNode {
 
   const canSuspend = user !== null && roleHasPermission(user.role, "subscribers:suspend");
 
-  function toggle(serviceAccountId: string): void {
+  const toggle = useCallback((serviceAccountId: string): void => {
     setSelectedIds((current) =>
       current.includes(serviceAccountId)
         ? current.filter((id) => id !== serviceAccountId)
         : [...current, serviceAccountId]
     );
-  }
+  }, []);
+
+  const columns = useMemo<TableColumn<OverdueAccount>[]>(() => {
+    const selectedColumn: TableColumn<OverdueAccount> = {
+      id: "selected",
+      header: " ",
+      cell: (account) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.includes(account.serviceAccountId)}
+          onChange={() => toggle(account.serviceAccountId)}
+          aria-label={`Select ${account.serviceAccountNumber}`}
+        />
+      ),
+    };
+
+    return [
+      ...(canSuspend ? [selectedColumn] : []),
+      {
+        id: "serviceAccountNumber",
+        header: "Account #",
+        cellClassName: "font-mono text-xs text-content-secondary",
+        sortValue: (account) => account.serviceAccountNumber,
+        cell: (account) => account.serviceAccountNumber,
+      },
+      {
+        id: "subscriberName",
+        header: "Subscriber",
+        cellClassName: "text-content-primary",
+        sortValue: (account) => account.subscriberName,
+        cell: (account) => account.subscriberName,
+      },
+      {
+        id: "planName",
+        header: "Plan",
+        cellClassName: "text-content-primary",
+        sortValue: (account) => account.planName,
+        cell: (account) => account.planName,
+      },
+      {
+        id: "consecutiveOverdueMonths",
+        header: "Consecutive Overdue Months",
+        cellClassName: "text-content-secondary",
+        sortValue: (account) => account.consecutiveOverdueMonths,
+        cell: (account) => account.consecutiveOverdueMonths,
+      },
+      {
+        id: "totalOverdueCentavos",
+        header: "Total Overdue",
+        align: "right",
+        cellClassName: "font-medium tabular-nums text-danger-strong",
+        sortValue: (account) => account.totalOverdueCentavos,
+        cell: (account) => formatCentavos(account.totalOverdueCentavos),
+      },
+      {
+        id: "collectorName",
+        header: "Collector",
+        cellClassName: "text-content-primary",
+        sortValue: (account) => account.collectorName ?? "Office",
+        cell: (account) => account.collectorName ?? "Office",
+      },
+      {
+        id: "lastPaymentDate",
+        header: "Last Payment",
+        cellClassName: "text-content-secondary",
+        sortValue: (account) => account.lastPaymentDate ?? "",
+        cell: (account) => formatDateOnly(account.lastPaymentDate),
+      },
+    ];
+  }, [canSuspend, selectedIds, toggle]);
 
   async function handleSuspendSelected(): Promise<void> {
     if (selectedIds.length === 0) {
@@ -81,106 +164,83 @@ export function OverdueAccountsPage(): ReactNode {
   }
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-8">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Overdue Accounts</h1>
-        <Link to="/receivables/aging" className="text-sm text-slate-800 underline">
+    <AppShell
+      pageTitle="Overdue Accounts"
+      pageDescription="Service accounts behind on payment, with bulk suspension of the selected ones"
+      headerActions={
+        <Link
+          to="/receivables/aging"
+          className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
+        >
           AR aging report
         </Link>
-      </header>
-
-      <section className="flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <span className="block text-slate-600">No payment in (days)</span>
-          <input
-            type="number"
-            min={0}
-            value={noPaymentInDays}
-            onChange={(event) => setNoPaymentInDays(event.target.value)}
-            placeholder="e.g. 60"
-            className="w-32 rounded border border-slate-300 px-2 py-1"
-          />
-        </label>
-        <label className="text-sm">
-          <span className="block text-slate-600">Consecutive overdue months ≥</span>
-          <input
-            type="number"
-            min={0}
-            value={minMonths}
-            onChange={(event) => setMinMonths(event.target.value)}
-            placeholder="e.g. 3"
-            className="w-32 rounded border border-slate-300 px-2 py-1"
-          />
-        </label>
-        {canSuspend && (
-          <button
-            type="button"
-            onClick={() => void handleSuspendSelected()}
-            disabled={selectedIds.length === 0}
-            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
-          >
-            Suspend Selected ({selectedIds.length})
-          </button>
-        )}
-      </section>
-
-      {errorMessage !== null && <p className="text-sm text-red-700">{errorMessage}</p>}
-      {statusMessage !== null && <p className="text-sm text-emerald-700">{statusMessage}</p>}
-
-      <section className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-left text-slate-600">
-            <tr>
-              {canSuspend && <th className="px-4 py-3"> </th>}
-              <th className="px-4 py-3">Account #</th>
-              <th className="px-4 py-3">Subscriber</th>
-              <th className="px-4 py-3">Plan</th>
-              <th className="px-4 py-3">Consecutive Overdue Months</th>
-              <th className="px-4 py-3">Total Overdue</th>
-              <th className="px-4 py-3">Collector</th>
-              <th className="px-4 py-3">Last Payment</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
-                  Loading overdue accounts…
-                </td>
-              </tr>
-            ) : accounts.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
-                  No overdue accounts match these filters.
-                </td>
-              </tr>
-            ) : (
-              accounts.map((account) => (
-                <tr key={account.serviceAccountId} className="border-t border-slate-100">
-                  {canSuspend && (
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(account.serviceAccountId)}
-                        onChange={() => toggle(account.serviceAccountId)}
-                      />
-                    </td>
-                  )}
-                  <td className="px-4 py-3 font-mono text-xs">{account.serviceAccountNumber}</td>
-                  <td className="px-4 py-3">{account.subscriberName}</td>
-                  <td className="px-4 py-3">{account.planName}</td>
-                  <td className="px-4 py-3">{account.consecutiveOverdueMonths}</td>
-                  <td className="px-4 py-3 text-red-700">
-                    {formatCentavos(account.totalOverdueCentavos)}
-                  </td>
-                  <td className="px-4 py-3">{account.collectorName ?? "Office"}</td>
-                  <td className="px-4 py-3">{formatDateOnly(account.lastPaymentDate)}</td>
-                </tr>
-              ))
+      }
+    >
+      <div className="space-y-5">
+        <Card>
+          <CardContent className="flex flex-wrap items-end gap-3">
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">No payment in (days)</span>
+              <input
+                type="number"
+                min={0}
+                value={noPaymentInDays}
+                onChange={(event) => setNoPaymentInDays(event.target.value)}
+                placeholder="e.g. 60"
+                className={`${FIELD_CLASS} w-32`}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Consecutive overdue months ≥</span>
+              <input
+                type="number"
+                min={0}
+                value={minMonths}
+                onChange={(event) => setMinMonths(event.target.value)}
+                placeholder="e.g. 3"
+                className={`${FIELD_CLASS} w-32`}
+              />
+            </label>
+            {canSuspend && (
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => void handleSuspendSelected()}
+                disabled={selectedIds.length === 0}
+              >
+                Suspend Selected ({selectedIds.length})
+              </Button>
             )}
-          </tbody>
-        </table>
-      </section>
-    </main>
+          </CardContent>
+        </Card>
+
+        {errorMessage !== null && (
+          <ErrorBanner message={errorMessage} onRetry={() => void loadAccounts()} />
+        )}
+        {statusMessage !== null && (
+          <div className="flex items-center gap-2.5 rounded-xl border border-success-line bg-success-soft px-4 py-3">
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-success-strong" />
+            <p className="text-sm text-success-strong">{statusMessage}</p>
+          </div>
+        )}
+
+        <Card>
+          <DataTable
+            columns={columns}
+            data={accounts}
+            getRowId={(account) => account.serviceAccountId}
+            isLoading={isLoading}
+            emptyState={
+              <EmptyState
+                title="No overdue accounts match these filters"
+                description="Widen the filters by lowering the days or months threshold, or review the AR aging report to spot where balances sit."
+                actionLabel="AR aging report"
+                onAction={() => navigate("/receivables/aging")}
+              />
+            }
+          />
+        </Card>
+      </div>
+    </AppShell>
   );
 }

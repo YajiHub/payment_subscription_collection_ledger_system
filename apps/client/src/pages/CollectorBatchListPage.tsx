@@ -17,28 +17,116 @@ import {
   type CollectorBatchSummary,
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly } from "../lib/format";
+import { AppShell } from "../components/layout/AppShell";
+import { DataTable, type TableColumn } from "../components/table/DataTable";
+import { Badge, type BadgeVariant } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
 
-const STATUS_BADGE_CLASSES = {
-  open: "bg-sky-50 text-sky-700",
-  submitted: "bg-amber-50 text-amber-700",
-  reconciled: "bg-emerald-50 text-emerald-700",
-  cancelled: "bg-slate-100 text-slate-500",
-} satisfies Record<CollectorBatchStatus, string>;
+const STATUS_BADGE_VARIANTS = {
+  open: "info",
+  submitted: "warning",
+  reconciled: "success",
+  cancelled: "neutral",
+} satisfies Record<CollectorBatchStatus, BadgeVariant>;
+
+/** The page size the list opens with. Server-side paging caps it at 200. */
+const DEFAULT_PAGE_SIZE = 20;
+
+const fieldClass =
+  "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
 /** A human label for the variance, colour-coded, or a dash while unsubmitted. */
 function VarianceCell({ batch }: { batch: CollectorBatchSummary }): ReactNode {
   if (batch.varianceCentavos === null) {
-    return <span className="text-slate-400">—</span>;
+    return <span className="text-content-secondary">—</span>;
   }
   if (batch.varianceCentavos === 0) {
-    return <span className="text-emerald-700">{formatCentavos(0)}</span>;
+    return <span className="tabular-nums text-success-strong">{formatCentavos(0)}</span>;
   }
   return (
-    <span className={batch.varianceCentavos > 0 ? "text-amber-700" : "text-red-700"}>
+    <span
+      className={`tabular-nums ${batch.varianceCentavos > 0 ? "text-warning-strong" : "text-danger-strong"}`}
+    >
       {formatCentavos(batch.varianceCentavos)}
     </span>
   );
 }
+
+const BATCH_COLUMNS: TableColumn<CollectorBatchSummary>[] = [
+  {
+    id: "batchNumber",
+    header: "Batch #",
+    sortValue: (batch) => batch.batchNumber,
+    cell: (batch) => (
+      <Link
+        to={`/collector-batches/${batch.id}`}
+        className="font-mono text-sm text-accent underline-offset-4 hover:underline"
+      >
+        {batch.batchNumber}
+      </Link>
+    ),
+  },
+  {
+    id: "collectorName",
+    header: "Collector",
+    cellClassName: "text-content-primary",
+    sortValue: (batch) => batch.collectorName,
+    cell: (batch) => batch.collectorName,
+  },
+  {
+    id: "collectionDate",
+    header: "Date",
+    cellClassName: "text-content-secondary",
+    sortValue: (batch) => batch.collectionDate,
+    cell: (batch) => formatDateOnly(batch.collectionDate),
+  },
+  {
+    id: "collectedCount",
+    header: "Accounts",
+    cellClassName: "text-content-primary",
+    sortValue: (batch) => batch.collectedCount,
+    cell: (batch) => `${batch.collectedCount}/${batch.assignmentCount}`,
+  },
+  {
+    id: "expectedRemittanceCentavos",
+    header: "Expected",
+    align: "right",
+    cellClassName: "tabular-nums",
+    sortValue: (batch) => batch.expectedRemittanceCentavos,
+    cell: (batch) => formatCentavos(batch.expectedRemittanceCentavos),
+  },
+  {
+    id: "actualRemittanceCentavos",
+    header: "Actual",
+    align: "right",
+    cellClassName: "tabular-nums",
+    sortValue: (batch) => batch.actualRemittanceCentavos ?? -1,
+    cell: (batch) =>
+      batch.actualRemittanceCentavos === null
+        ? "—"
+        : formatCentavos(batch.actualRemittanceCentavos),
+  },
+  {
+    id: "varianceCentavos",
+    header: "Variance",
+    align: "right",
+    sortValue: (batch) => batch.varianceCentavos ?? -1,
+    cell: (batch) => <VarianceCell batch={batch} />,
+  },
+  {
+    id: "status",
+    header: "Status",
+    sortValue: (batch) => batch.status,
+    cell: (batch) => (
+      <Badge variant={STATUS_BADGE_VARIANTS[batch.status]} size="sm" dot>
+        {COLLECTOR_BATCH_STATUS_LABELS[batch.status]}
+      </Badge>
+    ),
+  },
+];
 
 /** Field-collection batch list: filter, browse, and open a batch. */
 export function CollectorBatchListPage(): ReactNode {
@@ -47,6 +135,9 @@ export function CollectorBatchListPage(): ReactNode {
   const [statusFilter, setStatusFilter] = useState<CollectorBatchStatus | "">("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -64,16 +155,17 @@ export function CollectorBatchListPage(): ReactNode {
         status: statusFilter === "" ? undefined : statusFilter,
         dateFrom: dateFrom === "" ? undefined : dateFrom,
         dateTo: dateTo === "" ? undefined : dateTo,
-        page: 1,
-        pageSize: 100,
+        page,
+        pageSize,
       });
       setBatches(result.items);
+      setTotal(result.total);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, [statusFilter, dateFrom, dateTo]);
+  }, [statusFilter, dateFrom, dateTo, page, pageSize]);
 
   useEffect(() => {
     void loadBatches();
@@ -115,173 +207,159 @@ export function CollectorBatchListPage(): ReactNode {
   }
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Collector Batches</h1>
-        <div className="flex gap-3 text-sm">
-          <Link to="/receivables/aging" className="text-slate-800 underline">
+    <AppShell
+      pageTitle="Collector Batches"
+      pageDescription="Field collections grouped by collector and date"
+      headerActions={
+        <div className="flex items-center gap-2">
+          <Link
+            to="/receivables/aging"
+            className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
+          >
             AR Aging
           </Link>
-          <Link to="/receivables/overdue" className="text-slate-800 underline">
+          <Link
+            to="/receivables/overdue"
+            className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
+          >
             Overdue Accounts
           </Link>
         </div>
-      </header>
-
-      <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            <span className="block text-slate-600">Status</span>
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as CollectorBatchStatus | "")}
-              className="rounded border border-slate-300 px-2 py-1"
+      }
+    >
+      <div className="space-y-5">
+        <Card className="p-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">Status</span>
+              <select
+                value={statusFilter}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as CollectorBatchStatus | "");
+                  setPage(1);
+                }}
+                className={fieldClass}
+              >
+                <option value="">All</option>
+                {COLLECTOR_BATCH_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {COLLECTOR_BATCH_STATUS_LABELS[status]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">From</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(event) => {
+                  setDateFrom(event.target.value);
+                  setPage(1);
+                }}
+                className={fieldClass}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-content-secondary">To</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(event) => {
+                  setDateTo(event.target.value);
+                  setPage(1);
+                }}
+                className={fieldClass}
+              />
+            </label>
+            <Button
+              type="button"
+              variant={isCreating ? "outline" : "secondary"}
+              size="md"
+              onClick={() => setIsCreating((open) => !open)}
             >
-              <option value="">All</option>
-              {COLLECTOR_BATCH_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {COLLECTOR_BATCH_STATUS_LABELS[status]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm">
-            <span className="block text-slate-600">From</span>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(event) => setDateFrom(event.target.value)}
-              className="rounded border border-slate-300 px-2 py-1"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="block text-slate-600">To</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(event) => setDateTo(event.target.value)}
-              className="rounded border border-slate-300 px-2 py-1"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => setIsCreating((open) => !open)}
-            className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white"
-          >
-            {isCreating ? "Close" : "Create Batch"}
-          </button>
-        </div>
+              {isCreating ? "Close" : "Create Batch"}
+            </Button>
+          </div>
 
-        {isCreating && (
-          <form onSubmit={(event) => void handleCreate(event)} className="space-y-3 border-t pt-3">
-            <div className="flex flex-wrap gap-3">
-              <label className="text-sm">
-                <span className="block text-slate-600">Collector</span>
-                <select
-                  value={collectorId}
-                  onChange={(event) => setCollectorId(event.target.value)}
-                  className="rounded border border-slate-300 px-2 py-1"
-                >
-                  <option value="">Select a collector…</option>
-                  {collectors.map((collector) => (
-                    <option key={collector.id} value={collector.id}>
-                      {collector.fullName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm">
-                <span className="block text-slate-600">Field date</span>
-                <input
-                  type="date"
-                  value={collectionDate}
-                  onChange={(event) => setCollectionDate(event.target.value)}
-                  className="rounded border border-slate-300 px-2 py-1"
-                />
-              </label>
-            </div>
+          {isCreating && (
+            <form
+              onSubmit={(event) => void handleCreate(event)}
+              className="mt-4 space-y-4 border-t border-line pt-4"
+            >
+              <div className="flex flex-wrap gap-3">
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Collector</span>
+                  <select
+                    value={collectorId}
+                    onChange={(event) => setCollectorId(event.target.value)}
+                    className={fieldClass}
+                  >
+                    <option value="">Select a collector…</option>
+                    {collectors.map((collector) => (
+                      <option key={collector.id} value={collector.id}>
+                        {collector.fullName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Field date</span>
+                  <input
+                    type="date"
+                    value={collectionDate}
+                    onChange={(event) => setCollectionDate(event.target.value)}
+                    className={fieldClass}
+                  />
+                </label>
+              </div>
 
-            <ServiceAccountPicker
-              selectedIds={selectedAccountIds}
-              onChange={setSelectedAccountIds}
-            />
+              <ServiceAccountPicker selectedIds={selectedAccountIds} onChange={setSelectedAccountIds} />
 
-            {createError !== null && <p className="text-sm text-red-700">{createError}</p>}
+              {createError !== null && <ErrorBanner message={createError} />}
 
-            <button type="submit" className="rounded bg-emerald-700 px-3 py-1.5 text-sm text-white">
-              Create Batch
-            </button>
-          </form>
+              <div className="flex justify-end">
+                <Button type="submit" size="md">
+                  Create Batch
+                </Button>
+              </div>
+            </form>
+          )}
+        </Card>
+
+        {errorMessage !== null && (
+          <ErrorBanner message={errorMessage} onRetry={() => void loadBatches()} />
         )}
 
-        {errorMessage !== null && <p className="text-sm text-red-700">{errorMessage}</p>}
-      </section>
-
-      <section className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-left text-slate-600">
-            <tr>
-              <th className="px-4 py-3">Batch #</th>
-              <th className="px-4 py-3">Collector</th>
-              <th className="px-4 py-3">Date</th>
-              <th className="px-4 py-3">Accounts</th>
-              <th className="px-4 py-3">Expected</th>
-              <th className="px-4 py-3">Actual</th>
-              <th className="px-4 py-3">Variance</th>
-              <th className="px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
-                  Loading batches…
-                </td>
-              </tr>
-            ) : batches.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
-                  No batches match these filters.
-                </td>
-              </tr>
-            ) : (
-              batches.map((batch) => (
-                <tr key={batch.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3">
-                    <Link
-                      to={`/collector-batches/${batch.id}`}
-                      className="font-mono text-slate-700 underline"
-                    >
-                      {batch.batchNumber}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">{batch.collectorName}</td>
-                  <td className="px-4 py-3">{formatDateOnly(batch.collectionDate)}</td>
-                  <td className="px-4 py-3">
-                    {batch.collectedCount}/{batch.assignmentCount}
-                  </td>
-                  <td className="px-4 py-3">{formatCentavos(batch.expectedRemittanceCentavos)}</td>
-                  <td className="px-4 py-3">
-                    {batch.actualRemittanceCentavos === null
-                      ? "—"
-                      : formatCentavos(batch.actualRemittanceCentavos)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <VarianceCell batch={batch} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE_CLASSES[batch.status]}`}
-                    >
-                      {COLLECTOR_BATCH_STATUS_LABELS[batch.status]}
-                    </span>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </section>
-    </main>
+        <Card>
+          <DataTable
+            columns={BATCH_COLUMNS}
+            data={batches}
+            getRowId={(batch) => batch.id}
+            isLoading={isLoading}
+            emptyState={
+              <EmptyState
+                title="No collector batches match these filters"
+                description="Widen the status or date range, or create a batch to assign service accounts to a collector."
+                actionLabel="Create Batch"
+                onAction={() => setIsCreating(true)}
+              />
+            }
+            pagination={{
+              page,
+              pageSize,
+              total,
+              rowNoun: "batch",
+              rowNounPlural: "batches",
+              onPageChange: setPage,
+              onPageSizeChange: (nextPageSize) => {
+                setPageSize(nextPageSize);
+                setPage(1);
+              },
+            }}
+          />
+        </Card>
+      </div>
+    </AppShell>
   );
 }

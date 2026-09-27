@@ -35,44 +35,44 @@ export function LoginPage(): ReactNode {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-8">
+    <main className="flex min-h-screen items-center justify-center bg-canvas p-8">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm space-y-5 rounded-lg border border-slate-200 bg-white p-8 shadow-sm"
+        className="w-full max-w-sm space-y-5 rounded-lg border border-line bg-surface p-8 shadow-sm"
       >
         <header className="space-y-1">
           <h1 className="text-xl font-semibold">BCIS Sign In</h1>
-          <p className="text-sm text-slate-600">Enter your office credentials to continue.</p>
+          <p className="text-sm text-content-secondary">Enter your office credentials to continue.</p>
         </header>
 
         <label className="block space-y-1">
-          <span className="text-sm font-medium text-slate-700">Username</span>
+          <span className="text-sm font-medium text-content-primary">Username</span>
           <input
             type="text"
             value={username}
             onChange={(event) => setUsername(event.target.value)}
             autoComplete="username"
             required
-            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            className="w-full rounded border border-line-strong px-3 py-2 text-sm focus:border-accent focus:outline-none"
           />
         </label>
 
         <label className="block space-y-1">
-          <span className="text-sm font-medium text-slate-700">Password</span>
+          <span className="text-sm font-medium text-content-primary">Password</span>
           <input
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoComplete="current-password"
             required
-            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            className="w-full rounded border border-line-strong px-3 py-2 text-sm focus:border-accent focus:outline-none"
           />
         </label>
 
         {errorMessage !== null && (
           <p
             role="alert"
-            className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+            className="rounded border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-strong"
           >
             {errorMessage}
           </p>
@@ -81,7 +81,7 @@ export function LoginPage(): ReactNode {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
+          className="w-full rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong disabled:opacity-60"
         >
           {isSubmitting ? "Signing in…" : "Login"}
         </button>

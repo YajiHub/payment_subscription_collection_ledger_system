@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Printer } from "lucide-react";
 
 import {
   INVOICE_STATUS_LABELS,
@@ -18,15 +19,26 @@ import {
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { AppShell } from "../components/layout/AppShell";
+import { Badge, type BadgeVariant } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/Card";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { Modal } from "../components/ui/Modal";
+import { Skeleton } from "../components/ui/Skeleton";
 
-const STATUS_BADGE_CLASSES = {
-  draft: "bg-slate-100 text-slate-700",
-  posted: "bg-sky-50 text-sky-700",
-  partially_paid: "bg-amber-50 text-amber-700",
-  paid: "bg-emerald-50 text-emerald-700",
-  overdue: "bg-red-50 text-red-700",
-  void: "bg-slate-100 text-slate-500",
-} satisfies Record<InvoiceStatus, string>;
+// A single, exhaustive mapping from invoice status to its badge tone.
+// `unpaid` is the canonical name of the state the old `posted` spelling meant
+// (section 3.4); `credited` means fully settled by an advance credit.
+const STATUS_BADGE_VARIANTS = {
+  draft: "neutral",
+  unpaid: "info",
+  partially_paid: "warning",
+  paid: "success",
+  overdue: "danger",
+  void: "neutral",
+  credited: "success",
+} satisfies Record<InvoiceStatus, BadgeVariant>;
 
 /** A human label for the invoice's billing period, or a dash for one-off charges. */
 function periodLabel(invoice: InvoiceDetail): string {
@@ -127,222 +139,239 @@ export function InvoiceDetailPage(): ReactNode {
 
   if (isLoading) {
     return (
-      <main className="mx-auto max-w-4xl p-8">
-        <p className="text-sm text-slate-500">Loading invoice…</p>
-      </main>
+      <AppShell pageTitle="Invoice" pageDescription="Loading invoice…">
+        <div className="mx-auto max-w-4xl space-y-6">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </AppShell>
     );
   }
 
   if (invoice === null) {
     return (
-      <main className="mx-auto max-w-4xl space-y-4 p-8">
-        <p
-          role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage ?? "Invoice not found."}
-        </p>
-        <Link to="/invoices" className="text-sm font-medium text-slate-700 underline">
-          Back to invoices
-        </Link>
-      </main>
+      <AppShell pageTitle="Invoice" pageDescription="The requested invoice could not be loaded">
+        <div className="mx-auto max-w-4xl space-y-4">
+          <ErrorBanner
+            message={errorMessage ?? "Invoice not found."}
+            onRetry={() => void loadInvoice()}
+          />
+          <Link to="/invoices" className="text-sm font-medium text-content-primary underline">
+            Back to invoices
+          </Link>
+        </div>
+      </AppShell>
     );
   }
 
   const voidIsDisabled = !canVoidStatus(invoice.status) || !canVoid;
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-8">
-      <header className="flex items-start justify-between">
-        <div className="space-y-1">
-          <p className="font-mono text-sm text-slate-500">{invoice.invoiceNumber}</p>
-          <h1 className="text-2xl font-semibold">
-            {INVOICE_TYPE_LABELS[invoice.invoiceType]}
-          </h1>
-          <p className="text-sm text-slate-600">
-            {invoice.subscriberName} · <span className="font-mono">{invoice.serviceAccountNumber}</span>
-          </p>
-          <p className="text-sm text-slate-600">Billing period: {periodLabel(invoice)}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <span
-            className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE_CLASSES[invoice.status]}`}
-          >
-            {INVOICE_STATUS_LABELS[invoice.status]}
-          </span>
-          <Link to="/invoices" className="text-sm font-medium text-slate-700 underline">
+    <AppShell
+      pageTitle={`Invoice ${invoice.invoiceNumber}`}
+      pageDescription={`${INVOICE_TYPE_LABELS[invoice.invoiceType]} · ${invoice.subscriberName}`}
+      headerActions={
+        <Button
+          variant="outline"
+          size="md"
+          leftIcon={<Printer className="h-4 w-4" />}
+          onClick={printInvoice}
+        >
+          Print / Preview
+        </Button>
+      }
+    >
+      <div className="mx-auto max-w-4xl space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge variant={STATUS_BADGE_VARIANTS[invoice.status]} size="md" dot>
+              {INVOICE_STATUS_LABELS[invoice.status]}
+            </Badge>
+            <p className="text-sm text-content-secondary">
+              {invoice.subscriberName} ·{" "}
+              <span className="font-mono">{invoice.serviceAccountNumber}</span>
+            </p>
+            <p className="text-sm text-content-secondary">Billing period: {periodLabel(invoice)}</p>
+          </div>
+          <Link to="/invoices" className="text-sm font-medium text-content-primary underline">
             Back to invoices
           </Link>
         </div>
-      </header>
 
-      {errorMessage !== null && (
-        <p
-          role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage}
-        </p>
-      )}
-      {statusMessage !== null && (
-        <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          {statusMessage}
-        </p>
-      )}
-
-      <section className="grid grid-cols-2 gap-4 rounded-lg border border-slate-200 bg-white p-5 text-sm shadow-sm sm:grid-cols-4">
-        <div>
-          <p className="text-slate-600">Invoice date</p>
-          <p>{formatDateOnly(invoice.invoiceDate)}</p>
-        </div>
-        <div>
-          <p className="text-slate-600">Due date</p>
-          <p>{formatDateOnly(invoice.dueDate)}</p>
-        </div>
-        <div>
-          <p className="text-slate-600">Total</p>
-          <p className="font-medium">{formatCentavos(invoice.totalAmountCentavos)}</p>
-        </div>
-        <div>
-          <p className="text-slate-600">Balance</p>
-          <p className="font-medium">{formatCentavos(invoice.remainingBalanceCentavos)}</p>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-medium">Line items</h2>
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-600">
-              <tr>
-                <th className="px-4 py-3 font-medium">Description</th>
-                <th className="px-4 py-3 font-medium">Qty</th>
-                <th className="px-4 py-3 font-medium">Unit</th>
-                <th className="px-4 py-3 font-medium">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoice.lineItems.map((lineItem) => (
-                <tr key={lineItem.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3">{lineItem.description}</td>
-                  <td className="px-4 py-3">{lineItem.quantity}</td>
-                  <td className="px-4 py-3">{formatCentavos(lineItem.unitAmountCentavos)}</td>
-                  <td className="px-4 py-3">{formatCentavos(lineItem.totalAmountCentavos)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot className="border-t border-slate-200 bg-slate-50">
-              <tr>
-                <td className="px-4 py-3 font-medium" colSpan={3}>
-                  Subtotal
-                </td>
-                <td className="px-4 py-3">{formatCentavos(invoice.subtotalCentavos)}</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 font-medium" colSpan={3}>
-                  Late fees
-                </td>
-                <td className="px-4 py-3">{formatCentavos(invoice.lateFeesCentavos)}</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 font-semibold" colSpan={3}>
-                  Total
-                </td>
-                <td className="px-4 py-3 font-semibold">
-                  {formatCentavos(invoice.totalAmountCentavos)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-medium">Payment history</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Payments that settle this invoice appear in the{" "}
-          <Link to="/payments" className="underline">
-            payment history
-          </Link>
-          .
-        </p>
-      </section>
-
-      {invoice.notes !== null && invoice.notes !== "" && (
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-medium">Notes</h2>
-          <p className="mt-1 text-sm text-slate-700">{invoice.notes}</p>
-        </section>
-      )}
-
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={printInvoice}
-          className="rounded border border-slate-300 px-4 py-2 text-sm font-medium"
-        >
-          Print / Preview
-        </button>
-
-        {canGenerate && invoice.status === "draft" && (
-          <button
-            type="button"
-            onClick={() => void postDraft()}
-            disabled={isSubmitting}
-            className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-          >
-            Post Invoice
-          </button>
+        {errorMessage !== null && (
+          <ErrorBanner message={errorMessage} onRetry={() => void loadInvoice()} />
+        )}
+        {statusMessage !== null && (
+          <p className="rounded-xl border border-success-line bg-success-soft px-4 py-3 text-sm text-success-strong">
+            {statusMessage}
+          </p>
         )}
 
-        <button
-          type="button"
-          onClick={() => setIsVoidDialogOpen(true)}
-          disabled={voidIsDisabled}
-          title={voidIsDisabled ? "This invoice cannot be voided" : undefined}
-          className="rounded border border-red-300 px-4 py-2 text-sm font-medium text-red-700 disabled:opacity-40"
-        >
-          Void Invoice
-        </button>
+        <Card>
+          <CardContent className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+            <div>
+              <p className="text-content-secondary">Invoice date</p>
+              <p>{formatDateOnly(invoice.invoiceDate)}</p>
+            </div>
+            <div>
+              <p className="text-content-secondary">Due date</p>
+              <p>{formatDateOnly(invoice.dueDate)}</p>
+            </div>
+            <div>
+              <p className="text-content-secondary">Total</p>
+              <p className="font-medium tabular-nums">
+                {formatCentavos(invoice.totalAmountCentavos)}
+              </p>
+            </div>
+            <div>
+              <p className="text-content-secondary">Balance</p>
+              <p className="font-medium tabular-nums">
+                {formatCentavos(invoice.remainingBalanceCentavos)}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Line items</CardTitle>
+          </CardHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-canvas text-content-secondary">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Description</th>
+                  <th className="px-4 py-3 font-medium">Qty</th>
+                  <th className="px-4 py-3 font-medium text-right">Unit</th>
+                  <th className="px-4 py-3 font-medium text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.lineItems.map((lineItem) => (
+                  <tr
+                    key={lineItem.id}
+                    className="border-t border-line transition-colors hover:bg-canvas/60"
+                  >
+                    <td className="px-4 py-3">{lineItem.description}</td>
+                    <td className="px-4 py-3">{lineItem.quantity}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {formatCentavos(lineItem.unitAmountCentavos)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {formatCentavos(lineItem.totalAmountCentavos)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t border-line bg-canvas">
+                <tr>
+                  <td className="px-4 py-3 font-medium" colSpan={3}>
+                    Subtotal
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatCentavos(invoice.subtotalCentavos)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-medium" colSpan={3}>
+                    Late fees
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatCentavos(invoice.lateFeesCentavos)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-semibold" colSpan={3}>
+                    Total
+                  </td>
+                  <td className="px-4 py-3 text-right font-semibold tabular-nums">
+                    {formatCentavos(invoice.totalAmountCentavos)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+
+        <Card>
+          <CardContent>
+            <h2 className="text-base font-medium">Payment history</h2>
+            <p className="mt-1 text-sm text-content-secondary">
+              Payments that settle this invoice appear in the{" "}
+              <Link to="/payments" className="underline">
+                payment history
+              </Link>
+              .
+            </p>
+          </CardContent>
+        </Card>
+
+        {invoice.notes !== null && invoice.notes !== "" && (
+          <Card>
+            <CardContent>
+              <h2 className="text-base font-medium">Notes</h2>
+              <p className="mt-1 text-sm text-content-primary">{invoice.notes}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="flex flex-wrap gap-3">
+          {canGenerate && invoice.status === "draft" && (
+            <Button
+              variant="secondary"
+              size="md"
+              isLoading={isSubmitting}
+              onClick={() => void postDraft()}
+            >
+              Post Invoice
+            </Button>
+          )}
+
+          <Button
+            variant="danger"
+            size="md"
+            disabled={voidIsDisabled}
+            title={voidIsDisabled ? "This invoice cannot be voided" : undefined}
+            onClick={() => setIsVoidDialogOpen(true)}
+          >
+            Void Invoice
+          </Button>
+        </div>
       </div>
 
-      {isVoidDialogOpen && (
-        <div className="fixed inset-0 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-md space-y-4 rounded-lg bg-white p-6 shadow-lg">
-            <h2 className="text-base font-medium">Void invoice {invoice.invoiceNumber}</h2>
-            <p className="text-sm text-slate-600">
-              The invoice row stays in the database forever. A credit entry is added to the ledger to
-              cancel the debt.
-            </p>
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">Reason</span>
-              <textarea
-                value={voidReason}
-                onChange={(event) => setVoidReason(event.target.value)}
-                rows={3}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setIsVoidDialogOpen(false)}
-                className="rounded border border-slate-300 px-4 py-2 text-sm font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmVoid()}
-                disabled={isSubmitting || voidReason.trim().length < 10}
-                className="rounded bg-red-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                Void Invoice
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </main>
+      <Modal
+        isOpen={isVoidDialogOpen}
+        onClose={() => setIsVoidDialogOpen(false)}
+        title={`Void invoice ${invoice.invoiceNumber}`}
+        description="The invoice row stays in the database forever. A credit entry is added to the ledger to cancel the debt."
+        footer={
+          <>
+            <Button variant="outline" size="md" onClick={() => setIsVoidDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="md"
+              isLoading={isSubmitting}
+              disabled={voidReason.trim().length < 10}
+              onClick={() => void confirmVoid()}
+            >
+              Void Invoice
+            </Button>
+          </>
+        }
+      >
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium text-content-secondary">Reason</span>
+          <textarea
+            value={voidReason}
+            onChange={(event) => setVoidReason(event.target.value)}
+            rows={3}
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          />
+        </label>
+      </Modal>
+    </AppShell>
   );
 }

@@ -12,14 +12,19 @@ import {
 import { extractApiErrorMessage, listSubscribers, type Subscriber } from "../lib/api-client";
 import { formatSubscriberName } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { DataTable, type TableColumn } from "../components/table/DataTable";
+import { EmptyState } from "../components/ui/EmptyState";
+
+/** The page size the list opens with. Server-side paging caps it at 200. */
+const DEFAULT_PAGE_SIZE = 20;
 
 // Colours per state. `satisfies` keeps the keys exhaustive without widening the
 // literal class strings into plain `string`.
 const STATUS_BADGE_CLASSES = {
-  active: "bg-emerald-50 text-emerald-700",
-  suspended: "bg-amber-50 text-amber-700",
-  terminated: "bg-slate-100 text-slate-600",
-  pending: "bg-sky-50 text-sky-700",
+  active: "bg-success-soft text-success-strong",
+  suspended: "bg-warning-soft text-warning-strong",
+  terminated: "bg-canvas text-content-secondary",
+  pending: "bg-accent-soft text-accent-strong",
 } satisfies Record<ServiceAccountStatus, string>;
 
 /** The services a subscriber holds, as a single readable cell. */
@@ -52,67 +57,60 @@ function summariseStatus(subscriber: Subscriber): ServiceAccountStatus {
   return "active";
 }
 
-interface SubscriberTableProps {
-  subscribers: Subscriber[];
-  isLoading: boolean;
-}
-
-/** The results table. Presentational only — the page owns loading and filtering. */
-function SubscriberTable({ subscribers, isLoading }: SubscriberTableProps): ReactNode {
-  if (isLoading) {
-    return (
-      <tbody>
-        <tr>
-          <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
-            Loading subscribers…
-          </td>
-        </tr>
-      </tbody>
-    );
-  }
-
-  if (subscribers.length === 0) {
-    return (
-      <tbody>
-        <tr>
-          <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
-            No subscribers match this search.
-          </td>
-        </tr>
-      </tbody>
-    );
-  }
-
-  return (
-    <tbody>
-      {subscribers.map((subscriber) => {
-        const status = summariseStatus(subscriber);
-        return (
-          <tr key={subscriber.id} className="border-t border-slate-100">
-            <td className="px-4 py-3 font-mono">{subscriber.accountNumber}</td>
-            <td className="px-4 py-3">{formatSubscriberName(subscriber)}</td>
-            <td className="px-4 py-3">{subscriber.primaryPhone}</td>
-            <td className="px-4 py-3">{summariseServices(subscriber)}</td>
-            <td className="px-4 py-3">
-              <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE_CLASSES[status]}`}>
-                {SERVICE_ACCOUNT_STATUS_LABELS[status]}
-              </span>
-            </td>
-            <td className="px-4 py-3">
-              <Link to={`/subscribers/${subscriber.id}`} className="text-slate-700 underline">
-                View
-              </Link>
-            </td>
-          </tr>
-        );
-      })}
-    </tbody>
-  );
-}
+const SUBSCRIBER_COLUMNS: TableColumn<Subscriber>[] = [
+  {
+    id: "accountNumber",
+    header: "Account #",
+    cellClassName: "font-mono",
+    sortValue: (subscriber) => subscriber.accountNumber,
+    cell: (subscriber) => subscriber.accountNumber,
+  },
+  {
+    id: "fullName",
+    header: "Full Name",
+    sortValue: (subscriber) => formatSubscriberName(subscriber),
+    cell: (subscriber) => formatSubscriberName(subscriber),
+  },
+  {
+    id: "phone",
+    header: "Phone",
+    sortValue: (subscriber) => subscriber.primaryPhone,
+    cell: (subscriber) => subscriber.primaryPhone,
+  },
+  {
+    id: "services",
+    header: "Services",
+    sortValue: (subscriber) => summariseServices(subscriber),
+    cell: (subscriber) => summariseServices(subscriber),
+  },
+  {
+    id: "status",
+    header: "Status",
+    sortValue: (subscriber) => summariseStatus(subscriber),
+    cell: (subscriber) => {
+      const status = summariseStatus(subscriber);
+      return (
+        <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE_CLASSES[status]}`}>
+          {SERVICE_ACCOUNT_STATUS_LABELS[status]}
+        </span>
+      );
+    },
+  },
+  {
+    id: "actions",
+    header: "Actions",
+    cell: (subscriber) => (
+      <Link to={`/subscribers/${subscriber.id}`} className="text-content-primary underline">
+        View
+      </Link>
+    ),
+  },
+];
 
 /**
  * Subscriber list: search by name, account number, or phone, filter by status and
- * municipality, and open a subscriber's detail page.
+ * municipality, and open a subscriber's detail page. The list is paged on the
+ * server, so only the page on screen is ever fetched (spec S7-4).
  */
 export function SubscriberListPage(): ReactNode {
   const navigate = useNavigate();
@@ -122,6 +120,9 @@ export function SubscriberListPage(): ReactNode {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServiceAccountStatus | "">("");
   const [municipalityFilter, setMunicipalityFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -131,20 +132,21 @@ export function SubscriberListPage(): ReactNode {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const page = await listSubscribers({
-        page: 1,
-        pageSize: 100,
+      const result = await listSubscribers({
+        page,
+        pageSize,
         search: searchTerm.trim() === "" ? undefined : searchTerm.trim(),
         status: statusFilter === "" ? undefined : statusFilter,
         municipality: municipalityFilter.trim() === "" ? undefined : municipalityFilter.trim(),
       });
-      setSubscribers(page.items);
+      setSubscribers(result.items);
+      setTotal(result.total);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, [searchTerm, statusFilter, municipalityFilter]);
+  }, [page, pageSize, searchTerm, statusFilter, municipalityFilter]);
 
   useEffect(() => {
     void loadSubscribers();
@@ -160,17 +162,17 @@ export function SubscriberListPage(): ReactNode {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Subscribers</h1>
-          <p className="text-sm text-slate-600">Search by name, account number, or phone number.</p>
+          <p className="text-sm text-content-secondary">Search by name, account number, or phone number.</p>
         </div>
         <div className="flex items-center gap-3">
-          <Link to="/" className="text-sm font-medium text-slate-700 underline">
+          <Link to="/" className="text-sm font-medium text-content-primary underline">
             Dashboard
           </Link>
           {canCreate && (
             <button
               type="button"
               onClick={() => navigate("/subscribers/new")}
-              className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+              className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
             >
               Add Subscriber
             </button>
@@ -180,22 +182,28 @@ export function SubscriberListPage(): ReactNode {
 
       <form onSubmit={handleSearchSubmit} className="flex flex-wrap items-end gap-3">
         <label className="flex-1 space-y-1">
-          <span className="text-sm font-medium text-slate-700">Search</span>
+          <span className="text-sm font-medium text-content-primary">Search</span>
           <input
             type="text"
             value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
+            onChange={(event) => {
+              setSearchTerm(event.target.value);
+              setPage(1);
+            }}
             placeholder="Name, account number, or phone"
-            className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            className="w-full rounded border border-line-strong px-3 py-2 text-sm"
           />
         </label>
 
         <label className="space-y-1">
-          <span className="text-sm font-medium text-slate-700">Status</span>
+          <span className="text-sm font-medium text-content-primary">Status</span>
           <select
             value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as ServiceAccountStatus | "")}
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
+            onChange={(event) => {
+              setStatusFilter(event.target.value as ServiceAccountStatus | "");
+              setPage(1);
+            }}
+            className="rounded border border-line-strong px-3 py-2 text-sm"
           >
             <option value="">All</option>
             {SERVICE_ACCOUNT_STATUSES.map((status) => (
@@ -207,18 +215,21 @@ export function SubscriberListPage(): ReactNode {
         </label>
 
         <label className="space-y-1">
-          <span className="text-sm font-medium text-slate-700">Municipality</span>
+          <span className="text-sm font-medium text-content-primary">Municipality</span>
           <input
             type="text"
             value={municipalityFilter}
-            onChange={(event) => setMunicipalityFilter(event.target.value)}
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
+            onChange={(event) => {
+              setMunicipalityFilter(event.target.value);
+              setPage(1);
+            }}
+            className="rounded border border-line-strong px-3 py-2 text-sm"
           />
         </label>
 
         <button
           type="submit"
-          className="rounded border border-slate-300 px-4 py-2 text-sm font-medium"
+          className="rounded border border-line-strong px-4 py-2 text-sm font-medium"
         >
           Search
         </button>
@@ -227,26 +238,36 @@ export function SubscriberListPage(): ReactNode {
       {errorMessage !== null && (
         <p
           role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+          className="rounded border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-strong"
         >
           {errorMessage}
         </p>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-4 py-3 font-medium">Account #</th>
-              <th className="px-4 py-3 font-medium">Full Name</th>
-              <th className="px-4 py-3 font-medium">Phone</th>
-              <th className="px-4 py-3 font-medium">Services</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <SubscriberTable subscribers={subscribers} isLoading={isLoading} />
-        </table>
+      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+        <DataTable
+          columns={SUBSCRIBER_COLUMNS}
+          data={subscribers}
+          getRowId={(subscriber) => subscriber.id}
+          isLoading={isLoading}
+          emptyState={
+            <EmptyState
+              title="No subscribers match this search"
+              description="Try a different name, account number, or phone number, or clear the status and municipality filters."
+            />
+          }
+          pagination={{
+            page,
+            pageSize,
+            total,
+            rowNoun: "subscriber",
+            onPageChange: setPage,
+            onPageSizeChange: (nextPageSize) => {
+              setPageSize(nextPageSize);
+              setPage(1);
+            },
+          }}
+        />
       </div>
     </main>
   );

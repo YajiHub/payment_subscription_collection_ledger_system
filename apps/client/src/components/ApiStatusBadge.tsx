@@ -10,10 +10,10 @@ interface ApiStatusBadgeProps {
 /** Coloured dot plus label: green when the API answered, red when it did not. */
 export function ApiStatusBadge({ isReachable }: ApiStatusBadgeProps): ReactNode {
   const badgeClasses = isReachable
-    ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-    : "bg-red-50 text-red-700 border-red-300";
+    ? "bg-success-soft text-success-strong border-success-line"
+    : "bg-danger-soft text-danger-strong border-danger-line";
 
-  const dotClasses = isReachable ? "bg-emerald-500" : "bg-red-500";
+  const dotClasses = isReachable ? "bg-success" : "bg-danger";
 
   return (
     <span

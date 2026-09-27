@@ -10,6 +10,11 @@ import {
   type Plan,
 } from "../lib/api-client";
 import { formatCentavos } from "../lib/format";
+import { AppShell } from "../components/layout/AppShell";
+import { Button } from "../components/ui/Button";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/Card";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { Skeleton } from "../components/ui/Skeleton";
 
 interface SubscriberFormState {
   firstName: string;
@@ -39,6 +44,9 @@ const emptySubscriberForm: SubscriberFormState = {
   internalNotes: "",
 };
 
+const fieldClass =
+  "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
+
 /**
  * Two-step Add Subscriber form.
  *
@@ -52,17 +60,21 @@ export function AddSubscriberPage(): ReactNode {
   const [step, setStep] = useState<1 | 2>(1);
   const [form, setForm] = useState<SubscriberFormState>(emptySubscriberForm);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [isPlansLoading, setIsPlansLoading] = useState(true);
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [activationDate, setActivationDate] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const loadPlans = useCallback(async (): Promise<void> => {
+    setIsPlansLoading(true);
     try {
       const activePlans = await listPlans();
       setPlans(activePlans);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
+    } finally {
+      setIsPlansLoading(false);
     }
   }, []);
 
@@ -117,216 +129,230 @@ export function AddSubscriberPage(): ReactNode {
   }
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Add Subscriber</h1>
-          <p className="text-sm text-slate-600">
-            Step {step} of 2 — {step === 1 ? "subscriber details" : "first service account"}
-          </p>
-        </div>
-        <Link to="/subscribers" className="text-sm font-medium text-slate-700 underline">
+    <AppShell
+      pageTitle="Add Subscriber"
+      pageDescription={`Step ${step} of 2 — ${step === 1 ? "subscriber details" : "first service account"}`}
+      headerActions={
+        <Link
+          to="/subscribers"
+          className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
+        >
           Back to list
         </Link>
-      </header>
+      }
+    >
+      <div className="max-w-2xl space-y-5">
+        {errorMessage !== null && (
+          <ErrorBanner message={errorMessage} onRetry={() => void loadPlans()} />
+        )}
 
-      {errorMessage !== null && (
-        <p
-          role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage}
-        </p>
-      )}
+        {step === 1 && (
+          <Card>
+            <CardContent>
+              <form onSubmit={goToServiceStep} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">First Name</span>
+                    <input
+                      type="text"
+                      value={form.firstName}
+                      onChange={(event) => updateForm("firstName", event.target.value)}
+                      required
+                      className={fieldClass}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Last Name</span>
+                    <input
+                      type="text"
+                      value={form.lastName}
+                      onChange={(event) => updateForm("lastName", event.target.value)}
+                      required
+                      className={fieldClass}
+                    />
+                  </label>
+                </div>
 
-      {step === 1 && (
-        <form onSubmit={goToServiceStep} className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="grid grid-cols-2 gap-4">
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">First Name</span>
-              <input
-                type="text"
-                value={form.firstName}
-                onChange={(event) => updateForm("firstName", event.target.value)}
-                required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Last Name</span>
-              <input
-                type="text"
-                value={form.lastName}
-                onChange={(event) => updateForm("lastName", event.target.value)}
-                required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Middle Name (optional)</span>
+                  <input
+                    type="text"
+                    value={form.middleName}
+                    onChange={(event) => updateForm("middleName", event.target.value)}
+                    className={fieldClass}
+                  />
+                </label>
 
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-slate-700">Middle Name (optional)</span>
-            <input
-              type="text"
-              value={form.middleName}
-              onChange={(event) => updateForm("middleName", event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
+                <div className="grid grid-cols-2 gap-4">
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Primary Phone</span>
+                    <input
+                      type="tel"
+                      value={form.primaryPhone}
+                      onChange={(event) => updateForm("primaryPhone", event.target.value)}
+                      required
+                      className={fieldClass}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">
+                      Secondary Phone (optional)
+                    </span>
+                    <input
+                      type="tel"
+                      value={form.secondaryPhone}
+                      onChange={(event) => updateForm("secondaryPhone", event.target.value)}
+                      className={fieldClass}
+                    />
+                  </label>
+                </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Primary Phone</span>
-              <input
-                type="tel"
-                value={form.primaryPhone}
-                onChange={(event) => updateForm("primaryPhone", event.target.value)}
-                required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Secondary Phone (optional)</span>
-              <input
-                type="tel"
-                value={form.secondaryPhone}
-                onChange={(event) => updateForm("secondaryPhone", event.target.value)}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Email (optional)</span>
+                  <input
+                    type="email"
+                    value={form.emailAddress}
+                    onChange={(event) => updateForm("emailAddress", event.target.value)}
+                    className={fieldClass}
+                  />
+                </label>
 
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-slate-700">Email (optional)</span>
-            <input
-              type="email"
-              value={form.emailAddress}
-              onChange={(event) => updateForm("emailAddress", event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Service Address</span>
+                  <input
+                    type="text"
+                    value={form.serviceAddress}
+                    onChange={(event) => updateForm("serviceAddress", event.target.value)}
+                    required
+                    minLength={5}
+                    className={fieldClass}
+                  />
+                </label>
 
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-slate-700">Service Address</span>
-            <input
-              type="text"
-              value={form.serviceAddress}
-              onChange={(event) => updateForm("serviceAddress", event.target.value)}
-              required
-              minLength={5}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
+                <div className="grid grid-cols-3 gap-4">
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Barangay</span>
+                    <input
+                      type="text"
+                      value={form.serviceBarangay}
+                      onChange={(event) => updateForm("serviceBarangay", event.target.value)}
+                      required
+                      className={fieldClass}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Municipality</span>
+                    <input
+                      type="text"
+                      value={form.serviceMunicipality}
+                      onChange={(event) => updateForm("serviceMunicipality", event.target.value)}
+                      required
+                      className={fieldClass}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Province</span>
+                    <input
+                      type="text"
+                      value={form.serviceProvince}
+                      onChange={(event) => updateForm("serviceProvince", event.target.value)}
+                      required
+                      className={fieldClass}
+                    />
+                  </label>
+                </div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Barangay</span>
-              <input
-                type="text"
-                value={form.serviceBarangay}
-                onChange={(event) => updateForm("serviceBarangay", event.target.value)}
-                required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Municipality</span>
-              <input
-                type="text"
-                value={form.serviceMunicipality}
-                onChange={(event) => updateForm("serviceMunicipality", event.target.value)}
-                required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Province</span>
-              <input
-                type="text"
-                value={form.serviceProvince}
-                onChange={(event) => updateForm("serviceProvince", event.target.value)}
-                required
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-content-secondary">Internal Notes (optional)</span>
+                  <textarea
+                    value={form.internalNotes}
+                    onChange={(event) => updateForm("internalNotes", event.target.value)}
+                    rows={3}
+                    className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  />
+                </label>
 
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-slate-700">Internal Notes (optional)</span>
-            <textarea
-              value={form.internalNotes}
-              onChange={(event) => updateForm("internalNotes", event.target.value)}
-              rows={3}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
+                <div className="flex justify-end">
+                  <Button type="submit" variant="secondary" size="md">
+                    Next: Service Account
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
 
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-            >
-              Next: Service Account
-            </button>
-          </div>
-        </form>
-      )}
+        {step === 2 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>First Service Account</CardTitle>
+              <CardDescription>
+                A subscriber needs at least one service before they can be billed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {isPlansLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-9 w-full" />
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-9 w-full" />
+                </div>
+              ) : (
+                <>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">Service Plan</span>
+                    <select
+                      value={selectedPlanId}
+                      onChange={(event) => setSelectedPlanId(event.target.value)}
+                      required
+                      className={`${fieldClass} tabular-nums`}
+                    >
+                      <option value="">Select a plan…</option>
+                      {plans.map((plan) => (
+                        <option key={plan.id} value={plan.id}>
+                          {plan.name} — {SERVICE_TYPE_LABELS[plan.serviceType]} —{" "}
+                          {formatCentavos(plan.monthlyRateCentavos)}/month
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-      {step === 2 && (
-        <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-slate-700">Service Plan</span>
-            <select
-              value={selectedPlanId}
-              onChange={(event) => setSelectedPlanId(event.target.value)}
-              required
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            >
-              <option value="">Select a plan…</option>
-              {plans.map((plan) => (
-                <option key={plan.id} value={plan.id}>
-                  {plan.name} — {SERVICE_TYPE_LABELS[plan.serviceType]} —{" "}
-                  {formatCentavos(plan.monthlyRateCentavos)}/month
-                </option>
-              ))}
-            </select>
-          </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-content-secondary">
+                      Activation Date (leave blank if installation is pending)
+                    </span>
+                    <input
+                      type="date"
+                      value={activationDate}
+                      onChange={(event) => setActivationDate(event.target.value)}
+                      className={fieldClass}
+                    />
+                    <span className="text-xs text-content-secondary">
+                      With a date the account starts as Active. Without one it stays Pending until
+                      service begins.
+                    </span>
+                  </label>
+                </>
+              )}
 
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-slate-700">
-              Activation Date (leave blank if installation is pending)
-            </span>
-            <input
-              type="date"
-              value={activationDate}
-              onChange={(event) => setActivationDate(event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-            <span className="text-xs text-slate-500">
-              With a date the account starts as Active. Without one it stays Pending until service
-              begins.
-            </span>
-          </label>
-
-          <div className="flex justify-between">
-            <button
-              type="button"
-              onClick={() => setStep(1)}
-              className="rounded border border-slate-300 px-4 py-2 text-sm"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={isSubmitting}
-              className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
-            >
-              {isSubmitting ? "Saving…" : "Save Subscriber"}
-            </button>
-          </div>
-        </section>
-      )}
-    </main>
+              <div className="flex justify-between">
+                <Button type="button" variant="outline" size="md" onClick={() => setStep(1)}>
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  size="md"
+                  onClick={() => void handleSave()}
+                  isLoading={isSubmitting}
+                >
+                  Save Subscriber
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </AppShell>
   );
 }
