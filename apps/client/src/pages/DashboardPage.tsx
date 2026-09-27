@@ -7,9 +7,11 @@ import { roleHasPermission } from "@bcis/shared";
 import {
   extractApiErrorMessage,
   getArAgingReport,
+  getCollectorPerformanceReport,
   getDashboardKpis,
   listPayments,
   type ArAgingReport,
+  type CollectorPerformanceReport,
   type DashboardKpis,
   type PaymentSummary,
 } from "../lib/api-client";
@@ -96,6 +98,130 @@ function ArAgingMiniChart({ aging }: { aging: ArAgingReport }): ReactNode {
 }
 
 /**
+ * The payment-method summary block (S6-3, section 4.3).
+ *
+ * Cash and GCash are the split the server's collection rule records; anything else
+ * (bank transfer, cheque, other) is the remainder, so the three method lines always
+ * add up to the total collected. Every figure comes from the Collector Performance
+ * report's month totals — the same numbers the report shows for the same range.
+ */
+function PaymentMethodSummaryBlock({
+  performance,
+}: {
+  performance: CollectorPerformanceReport;
+}): ReactNode {
+  const { totals } = performance;
+  const otherMethodsCentavos = totals.collectedCentavos - totals.cashCentavos - totals.gcashCentavos;
+
+  const rows = [
+    { label: "Cash", amountCentavos: totals.cashCentavos },
+    { label: "GCash", amountCentavos: totals.gcashCentavos },
+    { label: "Other methods", amountCentavos: otherMethodsCentavos },
+  ];
+
+  return (
+    <section className="rounded-lg border border-line bg-surface p-4 shadow-sm">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-medium">Payment methods</h2>
+        <span className="text-xs text-content-secondary">
+          {formatDateOnly(performance.fromDate)} to {formatDateOnly(performance.toDate)}
+        </span>
+      </div>
+
+      <table className="mt-3 w-full text-sm">
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label} className="border-t border-line">
+              <th scope="row" className="py-2 text-left font-normal text-content-secondary">
+                {row.label}
+              </th>
+              <td className="py-2 text-right tabular-nums">{formatCentavos(row.amountCentavos)}</td>
+            </tr>
+          ))}
+          <tr className="border-t border-line font-semibold">
+            <th scope="row" className="py-2 text-left">
+              Collected total
+            </th>
+            <td className="py-2 text-right tabular-nums">
+              {formatCentavos(totals.collectedCentavos)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+/**
+ * The collector-performance block (S6-3, section 4.3).
+ *
+ * One line per collector for the current month: what they collected and the
+ * variance between what their batches expected and what was remitted. The numbers
+ * are the Collector Performance report's own, so the block cannot disagree with it.
+ */
+function CollectorPerformanceBlock({
+  performance,
+}: {
+  performance: CollectorPerformanceReport;
+}): ReactNode {
+  return (
+    <section className="rounded-lg border border-line bg-surface p-4 shadow-sm">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-medium">Collector performance</h2>
+        <span className="text-xs text-content-secondary">
+          {performance.groups.length} collector(s)
+        </span>
+      </div>
+
+      {performance.groups.length === 0 ? (
+        <p className="mt-3 text-sm text-content-secondary">
+          No collections have been posted this month.
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-content-secondary">
+              <tr>
+                <th className="py-2 font-medium">Collector</th>
+                <th className="py-2 text-right font-medium">Payments</th>
+                <th className="py-2 text-right font-medium">Collected</th>
+                <th className="py-2 text-right font-medium">Variance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {performance.groups.map((group) => (
+                <tr key={group.collectorId ?? group.collectorName} className="border-t border-line">
+                  <td className="py-2 text-content-primary">{group.collectorName}</td>
+                  <td className="py-2 text-right tabular-nums">{group.paymentCount}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {formatCentavos(group.collectedCentavos)}
+                  </td>
+                  <td className="py-2 text-right tabular-nums">
+                    {group.batchCount === 0 ? "—" : formatCentavos(group.varianceCentavos)}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t border-line font-semibold">
+                <td className="py-2">TOTAL</td>
+                <td className="py-2 text-right tabular-nums">{performance.totals.paymentCount}</td>
+                <td className="py-2 text-right tabular-nums">
+                  {formatCentavos(performance.totals.collectedCentavos)}
+                </td>
+                <td className="py-2 text-right tabular-nums">
+                  {performance.totals.batchCount === 0
+                    ? "—"
+                    : formatCentavos(performance.totals.varianceCentavos)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
  * The Management Dashboard — the first screen after login for an Administrator or
  * a Manager.
  *
@@ -108,6 +234,7 @@ export function DashboardPage(): ReactNode {
 
   const [kpis, setKpis] = useState<DashboardKpis | null>(null);
   const [aging, setAging] = useState<ArAgingReport | null>(null);
+  const [performance, setPerformance] = useState<CollectorPerformanceReport | null>(null);
   const [recentPayments, setRecentPayments] = useState<PaymentSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -116,14 +243,21 @@ export function DashboardPage(): ReactNode {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const [kpiResult, agingResult, paymentResult] = await Promise.all([
+      const [kpiResult, agingResult, paymentResult, performanceResult] = await Promise.all([
         getDashboardKpis(),
         getArAgingReport(),
-        listPayments(),
+        listPayments({ page: 1, pageSize: RECENT_PAYMENT_COUNT }),
+        // The dashboard endpoint returns KPIs only. The payment-method summary and
+        // the collector-performance block are the same figures the Collector
+        // Performance report computes for the current month, so they reuse that
+        // existing endpoint rather than inventing a second calculation that could
+        // drift from the report (S6-3).
+        getCollectorPerformanceReport(),
       ]);
       setKpis(kpiResult);
       setAging(agingResult);
-      setRecentPayments(paymentResult.slice(0, RECENT_PAYMENT_COUNT));
+      setRecentPayments(paymentResult.items);
+      setPerformance(performanceResult);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
@@ -167,7 +301,7 @@ export function DashboardPage(): ReactNode {
             </section>
           )}
 
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <KpiCard
               label="Active Accounts"
               value={kpis.totalActiveServiceAccounts.toLocaleString("en-PH")}
@@ -194,16 +328,6 @@ export function DashboardPage(): ReactNode {
               hint="As of today"
             />
             <KpiCard
-              label="Overdue 30+ Days"
-              value={formatCentavos(kpis.overdueOver30DaysCentavos)}
-              hint="More than 30 days past due"
-            />
-            <KpiCard
-              label="Overdue 90+ Days"
-              value={formatCentavos(kpis.overdueOver90DaysCentavos)}
-              hint="More than 90 days past due"
-            />
-            <KpiCard
               label="Suspended / Terminated"
               value={`${kpis.suspendedAccounts} / ${kpis.terminatedAccounts}`}
               hint={`${kpis.openCollectorBatches} open batch(es)`}
@@ -211,6 +335,24 @@ export function DashboardPage(): ReactNode {
           </section>
 
           <ArAgingMiniChart aging={aging} />
+
+          <p className="text-sm text-content-secondary">
+            Overdue more than 30 days:{" "}
+            <span className="font-medium tabular-nums text-content-primary">
+              {formatCentavos(kpis.overdueOver30DaysCentavos)}
+            </span>{" "}
+            — more than 90 days:{" "}
+            <span className="font-medium tabular-nums text-content-primary">
+              {formatCentavos(kpis.overdueOver90DaysCentavos)}
+            </span>
+          </p>
+
+          {performance !== null && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <PaymentMethodSummaryBlock performance={performance} />
+              <CollectorPerformanceBlock performance={performance} />
+            </div>
+          )}
 
           <section className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
             <h2 className="px-4 py-3 text-sm font-medium">Recent payments</h2>

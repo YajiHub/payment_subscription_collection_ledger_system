@@ -33,6 +33,12 @@ const MONTH_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
  */
 const SUBSCRIBER_PICKER_PAGE_SIZE = 50;
 
+/** The page sizes the list offers. The server caps one request at 200 rows. */
+const INVOICE_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+
+/** The page size the list opens with. Matches the server's own default. */
+const DEFAULT_INVOICE_PAGE_SIZE = 50;
+
 // A single, exhaustive mapping from invoice status to its badge tone.
 // `unpaid` is the canonical name of the state the old `posted` spelling meant
 // (section 3.4); `credited` means fully settled by an advance credit.
@@ -57,6 +63,11 @@ function periodLabel(invoice: InvoiceSummary): string {
 interface InvoiceTableProps {
   invoices: InvoiceSummary[];
   isLoading: boolean;
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
 }
 
 // Columns and cells for the shared table. Sorting runs on the loaded page: the
@@ -140,13 +151,30 @@ const INVOICE_COLUMNS: TableColumn<InvoiceSummary>[] = [
   },
 ];
 
-function InvoiceTable({ invoices, isLoading }: InvoiceTableProps): ReactNode {
+function InvoiceTable({
+  invoices,
+  isLoading,
+  page,
+  pageSize,
+  total,
+  onPageChange,
+  onPageSizeChange,
+}: InvoiceTableProps): ReactNode {
   return (
     <DataTable
       columns={INVOICE_COLUMNS}
       data={invoices}
       getRowId={(invoice) => invoice.id}
       isLoading={isLoading}
+      pagination={{
+        page,
+        pageSize,
+        total,
+        rowNoun: "invoice",
+        onPageChange,
+        onPageSizeChange,
+        pageSizeOptions: INVOICE_PAGE_SIZE_OPTIONS,
+      }}
       emptyState={
         <EmptyState
           title="No invoices match these filters"
@@ -169,6 +197,9 @@ export function InvoiceListPage(): ReactNode {
   const [yearFilter, setYearFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [subscriberFilter, setSubscriberFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_INVOICE_PAGE_SIZE);
+  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -176,24 +207,25 @@ export function InvoiceListPage(): ReactNode {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      // Pagination dependency (spec S8-1): `/api/invoices` is being given
-      // server-side `page`/`pageSize`/`total` support in the server work package.
-      // Until that lands, `listInvoices` still returns the array it always did, so
-      // this page shows what the contract returns and deliberately does NOT
-      // paginate on the client — a client-only page would misrepresent the data.
-      const items = await listInvoices({
+      // The server pages the endpoint (S8-1): it returns one page plus `total`, so
+      // the screen shows exactly the rows the server sent and asks for the next
+      // page instead of fetching everything and slicing it here.
+      const response = await listInvoices({
         status: statusFilter === "" ? undefined : statusFilter,
         year: yearFilter.trim() === "" ? undefined : Number.parseInt(yearFilter, 10),
         month: monthFilter === "" ? undefined : Number.parseInt(monthFilter, 10),
         subscriberId: subscriberFilter === "" ? undefined : subscriberFilter,
+        page,
+        pageSize,
       });
-      setInvoices(items);
+      setInvoices(response.items);
+      setTotal(response.total);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, [statusFilter, yearFilter, monthFilter, subscriberFilter]);
+  }, [statusFilter, yearFilter, monthFilter, subscriberFilter, page, pageSize]);
 
   useEffect(() => {
     void loadInvoices();
@@ -213,6 +245,11 @@ export function InvoiceListPage(): ReactNode {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    // Half-way through the book, a new filter must start from page one.
+    if (page !== 1) {
+      setPage(1);
+      return;
+    }
     void loadInvoices();
   }
 
@@ -301,7 +338,18 @@ export function InvoiceListPage(): ReactNode {
         {errorMessage !== null && <ErrorBanner message={errorMessage} onRetry={() => void loadInvoices()} />}
 
         <Card>
-          <InvoiceTable invoices={invoices} isLoading={isLoading} />
+          <InvoiceTable
+            invoices={invoices}
+            isLoading={isLoading}
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
         </Card>
       </div>
     </AppShell>

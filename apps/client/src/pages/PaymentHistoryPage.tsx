@@ -25,9 +25,17 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
 
 const STATUS_BADGE_VARIANTS = {
+  pending_verification: "info",
   posted: "success",
   reversed: "danger",
+  rejected: "neutral",
 } satisfies Record<PaymentStatus, BadgeVariant>;
+
+/** The page sizes the list offers. The server caps one request at 200 rows. */
+const PAYMENT_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+
+/** The page size the list opens with. Matches the server's own default. */
+const DEFAULT_PAYMENT_PAGE_SIZE = 50;
 
 // Sorting runs on the loaded page: the payments endpoint takes no sort parameter,
 // so the table never claims a global order it cannot guarantee.
@@ -104,6 +112,9 @@ const PAYMENT_COLUMNS: TableColumn<PaymentSummary>[] = [
 export function PaymentHistoryPage(): ReactNode {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<ListPaymentFilters>({});
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAYMENT_PAGE_SIZE);
+  const [total, setTotal] = useState(0);
   const [payments, setPayments] = useState<PaymentSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -112,22 +123,28 @@ export function PaymentHistoryPage(): ReactNode {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      // Pagination dependency (spec S8-1): `/api/payments` is being given
-      // server-side `page`/`pageSize`/`total` support in the server work package.
-      // Until that lands, `listPayments` still returns the array it always did, so
-      // this page shows what the contract returns and deliberately does NOT
-      // paginate on the client — a client-only page would misrepresent the data.
-      setPayments(await listPayments(filters));
+      // The server pages the endpoint (S8-1): it returns one page plus `total`, so
+      // the screen shows exactly the rows the server sent and asks for the next
+      // page instead of fetching everything and slicing it here.
+      const response = await listPayments({ ...filters, page, pageSize });
+      setPayments(response.items);
+      setTotal(response.total);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, [filters]);
+  }, [filters, page, pageSize]);
 
   useEffect(() => {
     void loadPayments();
   }, [loadPayments]);
+
+  /** Applies one filter change and returns to the first page, since the set changed. */
+  function applyFilter(patch: Partial<ListPaymentFilters>): void {
+    setFilters((current) => ({ ...current, ...patch }));
+    setPage(1);
+  }
 
   const fieldClass =
     "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
@@ -153,9 +170,7 @@ export function PaymentHistoryPage(): ReactNode {
               <input
                 type="date"
                 value={filters.dateFrom ?? ""}
-                onChange={(event) =>
-                  setFilters((current) => ({ ...current, dateFrom: event.target.value || undefined }))
-                }
+                onChange={(event) => applyFilter({ dateFrom: event.target.value || undefined })}
                 className={fieldClass}
               />
             </label>
@@ -164,9 +179,7 @@ export function PaymentHistoryPage(): ReactNode {
               <input
                 type="date"
                 value={filters.dateTo ?? ""}
-                onChange={(event) =>
-                  setFilters((current) => ({ ...current, dateTo: event.target.value || undefined }))
-                }
+                onChange={(event) => applyFilter({ dateTo: event.target.value || undefined })}
                 className={fieldClass}
               />
             </label>
@@ -175,10 +188,9 @@ export function PaymentHistoryPage(): ReactNode {
               <select
                 value={filters.method ?? ""}
                 onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
+                  applyFilter({
                     method: (event.target.value || undefined) as PaymentMethod | undefined,
-                  }))
+                  })
                 }
                 className={fieldClass}
               >
@@ -195,10 +207,9 @@ export function PaymentHistoryPage(): ReactNode {
               <select
                 value={filters.status ?? ""}
                 onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
+                  applyFilter({
                     status: (event.target.value || undefined) as PaymentStatus | undefined,
-                  }))
+                  })
                 }
                 className={fieldClass}
               >
@@ -221,6 +232,18 @@ export function PaymentHistoryPage(): ReactNode {
             data={payments}
             getRowId={(payment) => payment.id}
             isLoading={isLoading}
+            pagination={{
+              page,
+              pageSize,
+              total,
+              rowNoun: "payment",
+              onPageChange: setPage,
+              onPageSizeChange: (size) => {
+                setPageSize(size);
+                setPage(1);
+              },
+              pageSizeOptions: PAYMENT_PAGE_SIZE_OPTIONS,
+            }}
             emptyState={
               <EmptyState
                 title="No payments match these filters"

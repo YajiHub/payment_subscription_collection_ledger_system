@@ -8,11 +8,11 @@
 import axios, { AxiosError } from "axios";
 
 import type {
+  AnyReportType,
   CollectedMethod,
   CollectionResult,
   CollectorBatchStatus,
   PaginatedAuditLogs,
-  ReportType,
   InvoiceStatus,
   InvoiceType,
   LedgerEntryType,
@@ -599,6 +599,21 @@ export interface ListInvoiceFilters {
   year?: number;
   month?: number;
   subscriberId?: string;
+  /** 1-based page number. The server defaults to the first page. */
+  page?: number;
+  /** Rows per page. The server caps this at 200 and defaults to 50. */
+  pageSize?: number;
+}
+
+/**
+ * One page of invoices (S8-1). `total` counts everything the filters matched, so
+ * the caller can render "page 2 of 7" and request later pages.
+ */
+export interface InvoicePage {
+  items: InvoiceSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface BillingPreview {
@@ -680,13 +695,12 @@ export async function applyLateFees(lateFeeCentavos?: number): Promise<{
   return unwrap(response.data);
 }
 
-/** GET /api/invoices — invoices filtered by status, period, or subscriber. */
-export async function listInvoices(filters: ListInvoiceFilters = {}): Promise<InvoiceSummary[]> {
-  const response = await httpClient.get<ApiSuccessEnvelope<{ items: InvoiceSummary[] }>>(
-    "/api/invoices",
-    { params: filters }
-  );
-  return unwrap(response.data).items;
+/** GET /api/invoices — one page of invoices filtered by status, period, or subscriber. */
+export async function listInvoices(filters: ListInvoiceFilters = {}): Promise<InvoicePage> {
+  const response = await httpClient.get<ApiSuccessEnvelope<InvoicePage>>("/api/invoices", {
+    params: filters,
+  });
+  return unwrap(response.data);
 }
 
 /** GET /api/invoices/:id — one invoice with its line items. */
@@ -816,13 +830,43 @@ export interface ListPaymentFilters {
   status?: PaymentStatus;
   dateFrom?: string;
   dateTo?: string;
+  /** 1-based page number. The server defaults to the first page. */
+  page?: number;
+  /** Rows per page. The server caps this at 200 and defaults to 50. */
+  pageSize?: number;
 }
 
-/** GET /api/payments — the payment history, newest first. */
-export async function listPayments(filters: ListPaymentFilters = {}): Promise<PaymentSummary[]> {
-  const response = await httpClient.get<ApiSuccessEnvelope<{ items: PaymentSummary[] }>>(
-    "/api/payments",
-    { params: filters }
+/**
+ * One page of payments (S8-1). `total` counts everything the filters matched, so
+ * the caller can render "page 2 of 7" and request later pages.
+ */
+export interface PaymentPage {
+  items: PaymentSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+/** GET /api/payments — one page of the payment history, newest first. */
+export async function listPayments(filters: ListPaymentFilters = {}): Promise<PaymentPage> {
+  const response = await httpClient.get<ApiSuccessEnvelope<PaymentPage>>("/api/payments", {
+    params: filters,
+  });
+  return unwrap(response.data);
+}
+
+/**
+ * GET /api/service-accounts/:id/payments — one page of payments for one account.
+ *
+ * The route pages on the server (S8-1) but takes no page arguments yet, so this
+ * returns the first page's items. Callers that need more must page /api/payments
+ * with a `serviceAccountId` filter instead.
+ */
+export async function listServiceAccountPayments(
+  serviceAccountId: string
+): Promise<PaymentSummary[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<PaymentPage>>(
+    `/api/service-accounts/${serviceAccountId}/payments`
   );
   return unwrap(response.data).items;
 }
@@ -857,16 +901,6 @@ export async function reversePayment(id: string, reason: string): Promise<Revers
     { reason }
   );
   return unwrap(response.data);
-}
-
-/** GET /api/service-accounts/:id/payments — every payment for one account. */
-export async function listServiceAccountPayments(
-  serviceAccountId: string
-): Promise<PaymentSummary[]> {
-  const response = await httpClient.get<ApiSuccessEnvelope<{ items: PaymentSummary[] }>>(
-    `/api/service-accounts/${serviceAccountId}/payments`
-  );
-  return unwrap(response.data).items;
 }
 
 /** GET /api/service-accounts/:id/payment-summary — what a cashier sees before posting. */
@@ -1527,16 +1561,35 @@ export interface ReportExportParams {
   serviceAccountId?: string;
   fromDate?: string;
   toDate?: string;
+  // The shared report filters (S6-2): the export path reads the same fields the
+  // on-screen endpoint does, so a filtered screen and its export agree.
+  collectorId?: string;
+  areaId?: string;
+  planId?: string;
+  serviceType?: ServiceType;
+  serviceStatus?: ServiceAccountStatus;
+  performedBy?: string;
+  action?: string;
+  entityType?: string;
 }
 
 export interface ReportExportRequest {
-  reportType: ReportType;
+  reportType: AnyReportType;
   params: ReportExportParams;
 }
 
 export interface DownloadedReport {
   fileName: string;
   bytes: ArrayBuffer;
+  /**
+   * The export cap in force for this file (S6-6). The server states it in a header
+   * and in the document subtitle, so the client never has to guess it.
+   */
+  rowLimit: number | null;
+  /** The number of data rows the report had, before the cap was applied. */
+  totalRows: number | null;
+  /** True when the cap dropped rows, so the file is a partial report. */
+  isTruncated: boolean;
 }
 
 /** GET /api/dashboard/kpis — every KPI the dashboard shows. */
@@ -1566,11 +1619,19 @@ export async function getMonthlyBillingReport(
   return unwrap(response.data);
 }
 
-/** GET /api/reports/ar-aging — the AR aging report as of a calendar day. */
-export async function getArAgingReport(asOf?: string): Promise<ArAgingReport> {
+/**
+ * GET /api/reports/ar-aging — the AR aging report as of a calendar day.
+ *
+ * The report honours the shared account filters as well as the as-of day (S6-2), so
+ * the Reports Center can narrow it by collector, area, plan or service type.
+ */
+export async function getArAgingReport(
+  asOf?: string,
+  filters: ReportFilterParams = {}
+): Promise<ArAgingReport> {
   const response = await httpClient.get<ApiSuccessEnvelope<ArAgingReport>>(
     "/api/reports/ar-aging",
-    { params: { asOf } }
+    { params: { asOf, ...filters } }
   );
   return unwrap(response.data);
 }
@@ -1588,11 +1649,374 @@ export async function getCollectorRemittanceReport(
 
 /** GET /api/reports/outstanding-by-collector — receivables grouped by collector. */
 export async function getOutstandingByCollectorReport(
-  asOf?: string
+  asOf?: string,
+  filters: ReportFilterParams = {}
 ): Promise<OutstandingByCollectorReport> {
   const response = await httpClient.get<ApiSuccessEnvelope<OutstandingByCollectorReport>>(
     "/api/reports/outstanding-by-collector",
-    { params: { asOf } }
+    { params: { asOf, ...filters } }
+  );
+  return unwrap(response.data);
+}
+
+// ─── The reports added by S6-1 and S6-5 ───────────────────────────────────────
+// Every getter here reads one of the extended reports the server exposes. The
+// filter parameters are sent exactly as given: a report that does not honour a
+// filter never receives it, and one that does always does (S6-2).
+
+/**
+ * The filters every report shares (S6-2).
+ *
+ * Only the subset a given report honours is sent; the Reports Center decides which
+ * fields to render per report. Passing `undefined` omits the parameter entirely, so
+ * an unfiltered report stays complete.
+ */
+export interface ReportFilterParams {
+  /** First day of the range, inclusive. */
+  fromDate?: string;
+  /** Last day of the range, inclusive. */
+  toDate?: string;
+  /** Only rows whose account is assigned to this collector. */
+  collectorId?: string;
+  /** Only rows whose account sits in this collection area. */
+  areaId?: string;
+  /** Only rows whose account is on this plan. */
+  planId?: string;
+  /** Only rows whose plan is of this service type. */
+  serviceType?: ServiceType;
+}
+
+/** The audit filters a report may carry (S6-5). */
+export interface AuditReportParams extends ReportFilterParams {
+  /** Only entries performed by this user. */
+  performedBy?: string;
+  /** Only entries with this action name. */
+  action?: string;
+  /** Only entries about this kind of entity. */
+  entityType?: string;
+}
+
+/** One day or month of a weekly or annual collection summary. */
+export interface CollectionPeriodSummary {
+  /** A day ("2025-01-24") for a week, or a month ("2025-01") for a year. */
+  periodKey: string;
+  periodLabel: string;
+  totals: PaymentTotals;
+}
+
+/** R7 — collections for one week, day by day. */
+export interface WeeklyCollectionReport {
+  fromDate: string;
+  toDate: string;
+  weekStartDate: string;
+  periods: CollectionPeriodSummary[];
+  totals: PaymentTotals;
+}
+
+/** R8 — collections for one year, month by month. */
+export interface AnnualCollectionReport {
+  fromDate: string;
+  toDate: string;
+  year: number;
+  periods: CollectionPeriodSummary[];
+  totals: PaymentTotals;
+}
+
+/** One group of a revenue decomposition: a plan, a service type, or an area. */
+export interface RevenueGroup {
+  groupKey: string;
+  groupLabel: string;
+  invoiceCount: number;
+  billedCentavos: number;
+  collectedCentavos: number;
+  outstandingCentavos: number;
+}
+
+export type RevenueDimension = "plan" | "service_type" | "area";
+
+/** R9 / R10 / R11 — billed revenue grouped by one dimension. */
+export interface RevenueReport {
+  dimension: RevenueDimension;
+  fromDate: string;
+  toDate: string;
+  groups: RevenueGroup[];
+  totals: RevenueGroup;
+}
+
+/** One service account together with the collector assigned to it. */
+export interface CollectorAssignmentLine {
+  collectorId: string | null;
+  collectorName: string;
+  subscriberName: string;
+  serviceAccountNumber: string;
+  planName: string;
+  serviceType: ServiceType;
+  areaName: string;
+  accountStatus: ServiceAccountStatus;
+}
+
+/** R12 — who covers whom. */
+export interface CollectorAssignmentReport {
+  lines: CollectorAssignmentLine[];
+  accountCount: number;
+  collectorCount: number;
+  areaCount: number;
+}
+
+/** One collector's collection and remittance figures. */
+export interface CollectorPerformanceGroup {
+  collectorId: string | null;
+  collectorName: string;
+  assignedAccountCount: number;
+  paymentCount: number;
+  collectedCentavos: number;
+  cashCentavos: number;
+  gcashCentavos: number;
+  batchCount: number;
+  expectedRemittanceCentavos: number;
+  actualRemittanceCentavos: number;
+  varianceCentavos: number;
+}
+
+/** R13 — what each collector collected and remitted. */
+export interface CollectorPerformanceReport {
+  fromDate: string;
+  toDate: string;
+  groups: CollectorPerformanceGroup[];
+  /** The same shape as a group, so the totals row needs no special handling. */
+  totals: CollectorPerformanceGroup;
+}
+
+/** One reversal, as both money reports show it. */
+export interface PaymentAdjustmentLine {
+  receiptNumber: string;
+  reversalReceiptNumber: string;
+  paymentDate: string;
+  reversedAt: string;
+  reason: string;
+  reversedByName: string;
+  paymentMethod: PaymentMethod;
+  amountCentavos: number;
+  subscriberName: string;
+  serviceAccountNumber: string;
+  collectorId: string | null;
+  collectorName: string | null;
+}
+
+/** R14 — every payment reversal in a period. */
+export interface PaymentAdjustmentReport {
+  fromDate: string;
+  toDate: string;
+  lines: PaymentAdjustmentLine[];
+  totals: {
+    reversalCount: number;
+    totalReversedCentavos: number;
+    cashReversedCentavos: number;
+    nonCashReversedCentavos: number;
+  };
+}
+
+/** R15 — every receipt that no longer stands. */
+export interface VoidedReceiptReport {
+  fromDate: string;
+  toDate: string;
+  lines: PaymentAdjustmentLine[];
+  totals: {
+    receiptCount: number;
+    totalVoidedCentavos: number;
+    cashVoidedCentavos: number;
+    gcashVoidedCentavos: number;
+  };
+}
+
+/** One user/action pair of the user-activity summary. */
+export interface UserActivityGroup {
+  username: string;
+  action: string;
+  actionCount: number;
+  lastPerformedAt: string;
+}
+
+/** R16 — auditable actions per user. */
+export interface UserActivityReport {
+  fromDate: string;
+  toDate: string;
+  groups: UserActivityGroup[];
+  totals: {
+    entryCount: number;
+    userCount: number;
+    distinctActionCount: number;
+  };
+}
+
+/** One line of the subscriber master list. */
+export interface SubscriberMasterListRow {
+  subscriberId: string;
+  subscriberAccountNumber: string;
+  subscriberName: string;
+  primaryPhone: string;
+  emailAddress: string | null;
+  serviceAddress: string;
+  areaName: string | null;
+  serviceAccountNumber: string | null;
+  planName: string | null;
+  serviceType: ServiceType | null;
+  accountStatus: ServiceAccountStatus | null;
+  collectorName: string | null;
+}
+
+/** R17 — every subscriber and their account. */
+export interface SubscriberMasterListReport {
+  rows: SubscriberMasterListRow[];
+  subscriberCount: number;
+  accountCount: number;
+}
+
+/** One row of the audit trail. */
+export interface AuditLogEntry {
+  performedAt: string;
+  performedBy: string | null;
+  performedByUsername: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  description: string;
+  clientIpAddress: string | null;
+}
+
+/**
+ * R18 / S6-5 — the audit trail as a report, capped and honest about the cap.
+ *
+ * `rows.length` is the number shown; `totalRows` is the number matched. When
+ * `isTruncated` is true the screen says how many rows the cap omitted (S6-6).
+ */
+export interface AuditLogReport {
+  fromDate: string;
+  toDate: string;
+  rows: AuditLogEntry[];
+  totalRows: number;
+  isTruncated: boolean;
+  rowLimit: number;
+}
+
+/** GET /api/reports/weekly-collection — collections for a week, day by day. */
+export async function getWeeklyCollectionReport(
+  filters: ReportFilterParams = {}
+): Promise<WeeklyCollectionReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<WeeklyCollectionReport>>(
+    "/api/reports/weekly-collection",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/annual-collection — collections for a year, month by month. */
+export async function getAnnualCollectionReport(
+  filters: ReportFilterParams & { year?: number } = {}
+): Promise<AnnualCollectionReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<AnnualCollectionReport>>(
+    "/api/reports/annual-collection",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/revenue-by-plan|service-type|area — one revenue decomposition. */
+export async function getRevenueReport(
+  dimension: RevenueDimension,
+  filters: ReportFilterParams = {}
+): Promise<RevenueReport> {
+  const path =
+    dimension === "plan"
+      ? "/api/reports/revenue-by-plan"
+      : dimension === "service_type"
+        ? "/api/reports/revenue-by-service-type"
+        : "/api/reports/revenue-by-area";
+
+  const response = await httpClient.get<ApiSuccessEnvelope<RevenueReport>>(path, {
+    params: filters,
+  });
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/collector-assignment — an assignment snapshot. */
+export async function getCollectorAssignmentReport(
+  filters: ReportFilterParams = {}
+): Promise<CollectorAssignmentReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<CollectorAssignmentReport>>(
+    "/api/reports/collector-assignment",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/collector-performance — what each collector collected and remitted. */
+export async function getCollectorPerformanceReport(
+  filters: ReportFilterParams = {}
+): Promise<CollectorPerformanceReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<CollectorPerformanceReport>>(
+    "/api/reports/collector-performance",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/payment-adjustments — every reversal in the range. */
+export async function getPaymentAdjustmentReport(
+  filters: ReportFilterParams = {}
+): Promise<PaymentAdjustmentReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<PaymentAdjustmentReport>>(
+    "/api/reports/payment-adjustments",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/voided-receipts — every receipt that no longer stands. */
+export async function getVoidedReceiptReport(
+  filters: ReportFilterParams = {}
+): Promise<VoidedReceiptReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<VoidedReceiptReport>>(
+    "/api/reports/voided-receipts",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/user-activity — audited actions per user and action. */
+export async function getUserActivityReport(
+  filters: AuditReportParams = {}
+): Promise<UserActivityReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<UserActivityReport>>(
+    "/api/reports/user-activity",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** The filters the subscriber master list honours: no date range, plus account status. */
+export interface SubscriberMasterListParams extends ReportFilterParams {
+  serviceStatus?: ServiceAccountStatus;
+}
+
+/** GET /api/reports/subscriber-master-list — every subscriber and their account. */
+export async function getSubscriberMasterListReport(
+  filters: SubscriberMasterListParams = {}
+): Promise<SubscriberMasterListReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<SubscriberMasterListReport>>(
+    "/api/reports/subscriber-master-list",
+    { params: filters }
+  );
+  return unwrap(response.data);
+}
+
+/** GET /api/reports/audit-log — the audit trail as a report (S6-5). */
+export async function getAuditLogReport(
+  filters: AuditReportParams = {}
+): Promise<AuditLogReport> {
+  const response = await httpClient.get<ApiSuccessEnvelope<AuditLogReport>>(
+    "/api/reports/audit-log",
+    { params: filters }
   );
   return unwrap(response.data);
 }
@@ -1601,6 +2025,16 @@ export async function getOutstandingByCollectorReport(
 function fileNameFromDisposition(disposition: string | undefined, fallback: string): string {
   const match = disposition?.match(/filename="([^"]+)"/);
   return match?.[1] ?? fallback;
+}
+
+/** Reads one numeric response header, or null when it is absent or unreadable. */
+function numericHeader(headers: Record<string, unknown>, name: string): number | null {
+  const value = headers[name];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 /** Downloads a report in the requested format. Throws when the caller may not export. */
@@ -1613,9 +2047,17 @@ async function downloadReport(
     responseType: "arraybuffer",
   });
 
+  // The cap headers are how the server tells a caller its file is incomplete
+  // (S6-6). They are read here, in the one place the renderer performs HTTP, so
+  // every caller of an export sees the same truncation facts.
+  const responseHeaders = response.headers as Record<string, unknown>;
+
   return {
     fileName: fileNameFromDisposition(response.headers["content-disposition"], fallbackFileName),
     bytes: response.data,
+    rowLimit: numericHeader(responseHeaders, "x-report-row-cap"),
+    totalRows: numericHeader(responseHeaders, "x-report-total-rows"),
+    isTruncated: responseHeaders["x-report-truncated"] === "true",
   };
 }
 

@@ -13,15 +13,27 @@ import {
   COLLECTION_RESULT_LABELS,
   INVOICE_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
+  SERVICE_ACCOUNT_STATUS_LABELS,
+  SERVICE_TYPE_LABELS,
 } from "@bcis/shared";
 import { formatCentavos, formatDateOnly } from "./format";
 import type {
+  AnnualCollectionReport,
+  AuditLogReport,
+  CollectorAssignmentReport,
+  CollectorPerformanceReport,
   CollectorRemittanceReport,
   DailyCollectionReport,
   MonthlyBillingReport,
   OutstandingByCollectorReport,
   ArAgingReport,
+  PaymentAdjustmentReport,
+  RevenueReport,
   ServiceAccountStatement,
+  SubscriberMasterListReport,
+  UserActivityReport,
+  VoidedReceiptReport,
+  WeeklyCollectionReport,
 } from "./api-client";
 
 export interface DisplayColumn {
@@ -38,6 +50,13 @@ export interface DisplayTable {
   totalsRows: string[][];
   /** True when there is nothing to show, so the screen can say so. */
   isEmpty: boolean;
+  /**
+   * A warning shown above the table, when the report is not the whole of itself.
+   *
+   * The audit trail is capped server-side (S6-6); the cap is stated here so a
+   * truncated report can never be mistaken for a complete one.
+   */
+  notice?: string;
 }
 
 function headings(headers: readonly [string, "left" | "right"][]): DisplayColumn[] {
@@ -313,5 +332,402 @@ export function buildStatementView(statement: ServiceAccountStatement): DisplayT
       ["Closing balance", "", "", "", "", formatCentavos(statement.closingBalanceCentavos)],
     ],
     isEmpty: statement.lines.length === 0,
+  };
+}
+
+// ─── The reports added by S6-1 and S6-5 ───────────────────────────────────────
+
+/** A timestamp as "DD/MM/YYYY HH:MM", for the rows that carry one. */
+function formatTimestamp(value: string): string {
+  const [datePart = "", timePart = ""] = value.split("T");
+  return `${formatDateOnly(datePart)} ${timePart.slice(0, 5)}`;
+}
+
+/** R7 — Weekly Collection Summary, one line per day. */
+export function buildWeeklyCollectionView(report: WeeklyCollectionReport): DisplayTable {
+  return collectionSummaryView(
+    "Weekly Collection Summary",
+    `Week of ${formatDateOnly(report.weekStartDate)}`,
+    "Date",
+    report
+  );
+}
+
+/** R8 — Annual Collection Summary, one line per month. */
+export function buildAnnualCollectionView(report: AnnualCollectionReport): DisplayTable {
+  return collectionSummaryView(
+    "Annual Collection Summary",
+    `Calendar year ${report.year}`,
+    "Month",
+    report
+  );
+}
+
+/** The table shared by the weekly and annual summaries: one line per period. */
+function collectionSummaryView(
+  title: string,
+  subtitle: string,
+  periodHeader: string,
+  report: WeeklyCollectionReport | AnnualCollectionReport
+): DisplayTable {
+  return {
+    title,
+    subtitle,
+    columns: headings([
+      [periodHeader, "left"],
+      ["Payments", "right"],
+      ["Cash", "right"],
+      ["GCash", "right"],
+      ["Total", "right"],
+    ]),
+    rows: report.periods.map((period) => [
+      period.periodLabel,
+      formatCount(period.totals.paymentCount),
+      formatCentavos(period.totals.cashTotalCentavos),
+      formatCentavos(period.totals.gcashTotalCentavos),
+      formatCentavos(period.totals.grandTotalCentavos),
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        formatCount(report.totals.paymentCount),
+        formatCentavos(report.totals.cashTotalCentavos),
+        formatCentavos(report.totals.gcashTotalCentavos),
+        formatCentavos(report.totals.grandTotalCentavos),
+      ],
+    ],
+    isEmpty: report.periods.length === 0,
+  };
+}
+
+/** R9 / R10 / R11 — billed revenue grouped by plan, service type, or area. */
+export function buildRevenueView(report: RevenueReport): DisplayTable {
+  const dimensionHeader =
+    report.dimension === "plan"
+      ? "Plan"
+      : report.dimension === "service_type"
+        ? "Service Type"
+        : "Area";
+
+  return {
+    title:
+      report.dimension === "plan"
+        ? "Revenue by Plan"
+        : report.dimension === "service_type"
+          ? "Revenue by Service Type"
+          : "Revenue by Area",
+    subtitle: `${formatDateOnly(report.fromDate)} to ${formatDateOnly(report.toDate)}`,
+    columns: headings([
+      [dimensionHeader, "left"],
+      ["Invoices", "right"],
+      ["Billed", "right"],
+      ["Collected", "right"],
+      ["Outstanding", "right"],
+    ]),
+    rows: report.groups.map((group) => [
+      group.groupLabel,
+      formatCount(group.invoiceCount),
+      formatCentavos(group.billedCentavos),
+      formatCentavos(group.collectedCentavos),
+      formatCentavos(group.outstandingCentavos),
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        formatCount(report.totals.invoiceCount),
+        formatCentavos(report.totals.billedCentavos),
+        formatCentavos(report.totals.collectedCentavos),
+        formatCentavos(report.totals.outstandingCentavos),
+      ],
+    ],
+    isEmpty: report.groups.length === 0,
+  };
+}
+
+/** R12 — Collector Assignment List. */
+export function buildCollectorAssignmentView(
+  report: CollectorAssignmentReport
+): DisplayTable {
+  return {
+    title: "Collector Assignment List",
+    subtitle: `${formatCount(report.accountCount)} account(s) across ${formatCount(report.collectorCount)} collector(s) and ${formatCount(report.areaCount)} area(s)`,
+    columns: headings([
+      ["Collector", "left"],
+      ["Account #", "left"],
+      ["Subscriber", "left"],
+      ["Plan", "left"],
+      ["Service Type", "left"],
+      ["Area", "left"],
+      ["Status", "left"],
+    ]),
+    rows: report.lines.map((line) => [
+      line.collectorName,
+      line.serviceAccountNumber,
+      line.subscriberName,
+      line.planName,
+      SERVICE_TYPE_LABELS[line.serviceType],
+      line.areaName,
+      SERVICE_ACCOUNT_STATUS_LABELS[line.accountStatus],
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        `${formatCount(report.accountCount)} account(s)`,
+        "",
+        "",
+        "",
+        `${formatCount(report.areaCount)} area(s)`,
+        "",
+      ],
+    ],
+    isEmpty: report.lines.length === 0,
+  };
+}
+
+/** R13 — Collector Performance. */
+export function buildCollectorPerformanceView(
+  report: CollectorPerformanceReport
+): DisplayTable {
+  return {
+    title: "Collector Performance",
+    subtitle: `${formatDateOnly(report.fromDate)} to ${formatDateOnly(report.toDate)}`,
+    columns: headings([
+      ["Collector", "left"],
+      ["Assigned", "right"],
+      ["Payments", "right"],
+      ["Collected", "right"],
+      ["Cash", "right"],
+      ["GCash", "right"],
+      ["Batches", "right"],
+      ["Expected", "right"],
+      ["Actual", "right"],
+      ["Variance", "right"],
+    ]),
+    rows: report.groups.map((group) => [
+      group.collectorName,
+      formatCount(group.assignedAccountCount),
+      formatCount(group.paymentCount),
+      formatCentavos(group.collectedCentavos),
+      formatCentavos(group.cashCentavos),
+      formatCentavos(group.gcashCentavos),
+      formatCount(group.batchCount),
+      formatCentavos(group.expectedRemittanceCentavos),
+      formatCentavos(group.actualRemittanceCentavos),
+      formatCentavos(group.varianceCentavos),
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        formatCount(report.totals.assignedAccountCount),
+        formatCount(report.totals.paymentCount),
+        formatCentavos(report.totals.collectedCentavos),
+        formatCentavos(report.totals.cashCentavos),
+        formatCentavos(report.totals.gcashCentavos),
+        formatCount(report.totals.batchCount),
+        formatCentavos(report.totals.expectedRemittanceCentavos),
+        formatCentavos(report.totals.actualRemittanceCentavos),
+        formatCentavos(report.totals.varianceCentavos),
+      ],
+    ],
+    isEmpty: report.groups.length === 0,
+  };
+}
+
+/** R14 — Payment Adjustment / Reversal Report. */
+export function buildPaymentAdjustmentView(report: PaymentAdjustmentReport): DisplayTable {
+  return {
+    title: "Payment Adjustment / Reversal Report",
+    subtitle: `${formatDateOnly(report.fromDate)} to ${formatDateOnly(report.toDate)} — ${formatCount(report.totals.reversalCount)} reversal(s)`,
+    columns: headings([
+      ["Receipt #", "left"],
+      ["Reversal #", "left"],
+      ["Payment Date", "left"],
+      ["Reversed", "left"],
+      ["Subscriber", "left"],
+      ["Account #", "left"],
+      ["Method", "left"],
+      ["Amount", "right"],
+      ["Reason", "left"],
+      ["Reversed By", "left"],
+    ]),
+    rows: report.lines.map((line) => [
+      line.receiptNumber,
+      line.reversalReceiptNumber,
+      formatDateOnly(line.paymentDate),
+      formatTimestamp(line.reversedAt),
+      line.subscriberName,
+      line.serviceAccountNumber,
+      PAYMENT_METHOD_LABELS[line.paymentMethod],
+      formatCentavos(line.amountCentavos),
+      line.reason,
+      line.reversedByName,
+    ]),
+    totalsRows: [
+      ["Cash reversed", "", "", "", "", "", "", formatCentavos(report.totals.cashReversedCentavos), "", ""],
+      ["Non-cash reversed", "", "", "", "", "", "", formatCentavos(report.totals.nonCashReversedCentavos), "", ""],
+      ["TOTAL", "", "", "", "", "", "", formatCentavos(report.totals.totalReversedCentavos), "", ""],
+    ],
+    isEmpty: report.lines.length === 0,
+  };
+}
+
+/** R15 — Voided Receipt Report. */
+export function buildVoidedReceiptView(report: VoidedReceiptReport): DisplayTable {
+  return {
+    title: "Voided Receipt Report",
+    subtitle: `${formatDateOnly(report.fromDate)} to ${formatDateOnly(report.toDate)} — ${formatCount(report.totals.receiptCount)} voided receipt(s)`,
+    columns: headings([
+      ["Receipt #", "left"],
+      ["Payment Date", "left"],
+      ["Voided", "left"],
+      ["Subscriber", "left"],
+      ["Account #", "left"],
+      ["Method", "left"],
+      ["Amount", "right"],
+      ["Reversal #", "left"],
+      ["Reason", "left"],
+    ]),
+    rows: report.lines.map((line) => [
+      line.receiptNumber,
+      formatDateOnly(line.paymentDate),
+      formatTimestamp(line.reversedAt),
+      line.subscriberName,
+      line.serviceAccountNumber,
+      PAYMENT_METHOD_LABELS[line.paymentMethod],
+      formatCentavos(line.amountCentavos),
+      line.reversalReceiptNumber,
+      line.reason,
+    ]),
+    totalsRows: [
+      ["Cash voided", "", "", "", "", "", formatCentavos(report.totals.cashVoidedCentavos), "", ""],
+      ["GCash voided", "", "", "", "", "", formatCentavos(report.totals.gcashVoidedCentavos), "", ""],
+      ["TOTAL", "", "", "", "", "", formatCentavos(report.totals.totalVoidedCentavos), "", ""],
+    ],
+    isEmpty: report.lines.length === 0,
+  };
+}
+
+/** R16 — User Activity Report. */
+export function buildUserActivityView(report: UserActivityReport): DisplayTable {
+  return {
+    title: "User Activity Report",
+    subtitle: `${formatDateOnly(report.fromDate)} to ${formatDateOnly(report.toDate)} — ${formatCount(report.totals.entryCount)} action(s) by ${formatCount(report.totals.userCount)} user(s)`,
+    columns: headings([
+      ["User", "left"],
+      ["Action", "left"],
+      ["Count", "right"],
+      ["Last Performed", "left"],
+    ]),
+    rows: report.groups.map((group) => [
+      group.username,
+      group.action,
+      formatCount(group.actionCount),
+      formatTimestamp(group.lastPerformedAt),
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        `${formatCount(report.totals.distinctActionCount)} distinct action(s)`,
+        formatCount(report.totals.entryCount),
+        "",
+      ],
+    ],
+    isEmpty: report.groups.length === 0,
+  };
+}
+
+/** R17 — Subscriber Master List, one line per service account. */
+export function buildSubscriberMasterListView(
+  report: SubscriberMasterListReport
+): DisplayTable {
+  return {
+    title: "Subscriber Master List",
+    subtitle: `${formatCount(report.subscriberCount)} subscriber(s), ${formatCount(report.accountCount)} service account(s)`,
+    columns: headings([
+      ["Subscriber", "left"],
+      ["Account No", "left"],
+      ["Phone", "left"],
+      ["Email", "left"],
+      ["Service Address", "left"],
+      ["Area", "left"],
+      ["Service Account", "left"],
+      ["Plan", "left"],
+      ["Service Type", "left"],
+      ["Status", "left"],
+      ["Collector", "left"],
+    ]),
+    rows: report.rows.map((row) => [
+      row.subscriberName,
+      row.subscriberAccountNumber,
+      row.primaryPhone,
+      row.emailAddress ?? "—",
+      row.serviceAddress,
+      row.areaName ?? "—",
+      row.serviceAccountNumber ?? "—",
+      row.planName ?? "—",
+      row.serviceType === null ? "—" : SERVICE_TYPE_LABELS[row.serviceType],
+      row.accountStatus === null ? "—" : SERVICE_ACCOUNT_STATUS_LABELS[row.accountStatus],
+      row.collectorName ?? "—",
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        `${formatCount(report.subscriberCount)} subscriber(s)`,
+        "",
+        "",
+        "",
+        "",
+        `${formatCount(report.accountCount)} account(s)`,
+        "",
+        "",
+        "",
+        "",
+      ],
+    ],
+    isEmpty: report.rows.length === 0,
+  };
+}
+
+/** R18 / S6-5 — Audit Trail Report, with the export-cap notice when it applies. */
+export function buildAuditLogView(report: AuditLogReport): DisplayTable {
+  const omitted = report.totalRows - report.rows.length;
+  const notice = report.isTruncated
+    ? `Showing the first ${formatCount(report.rows.length)} of ${formatCount(report.totalRows)} entries — the ${formatCount(report.rowLimit)}-row cap omitted ${formatCount(omitted)}. Narrow the filters to see the rest.`
+    : undefined;
+
+  return {
+    title: "Audit Trail Report",
+    subtitle: `${formatDateOnly(report.fromDate)} to ${formatDateOnly(report.toDate)} — ${formatCount(report.totalRows)} entr(ies)`,
+    columns: headings([
+      ["Performed At", "left"],
+      ["User", "left"],
+      ["Action", "left"],
+      ["Entity", "left"],
+      ["Entity Id", "left"],
+      ["Description", "left"],
+      ["Client IP", "left"],
+    ]),
+    rows: report.rows.map((row) => [
+      formatTimestamp(row.performedAt),
+      row.performedByUsername ?? "—",
+      row.action,
+      row.entityType,
+      row.entityId,
+      row.description,
+      row.clientIpAddress ?? "—",
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        `${formatCount(report.rowLimit)}-row cap`,
+        "",
+        "",
+        "",
+        `${formatCount(report.totalRows)} entr(ies)`,
+        "",
+      ],
+    ],
+    isEmpty: report.rows.length === 0,
+    ...(notice === undefined ? {} : { notice }),
   };
 }
