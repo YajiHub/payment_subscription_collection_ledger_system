@@ -57,6 +57,13 @@ else
   echo "pandoc not found — kept test-report.txt instead of test-report.pdf" >&2
 fi
 
+# Section 7.1 evidence: the AT-01…AT-12 traceability document (S10-3) and the
+# bug log (S10-4) ship beside the test report. They are copies of the committed
+# sources in docs/, exported to PDF when pandoc is available.
+convert_markdown "$REPOSITORY_ROOT/docs/testing/acceptance-traceability.md" \
+  "$SUBMISSION_DIR/acceptance-traceability.pdf"
+convert_markdown "$REPOSITORY_ROOT/docs/bug-log.md" "$SUBMISSION_DIR/bug-log.pdf"
+
 # Sample documents, when they have been generated into docs/samples/.
 if [ -d "$REPOSITORY_ROOT/docs/samples" ]; then
   cp -R "$REPOSITORY_ROOT/docs/samples/." "$SUBMISSION_DIR/samples/"

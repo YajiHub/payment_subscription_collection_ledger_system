@@ -1,0 +1,788 @@
+BCIS Subscription Billing and Collection System
+Committed test-report artifact (activity section 7.1: automated test output)
+
+Date of run : 2026-09-27 (UTC)
+Repository  : git revision daed2aa (branch main)
+Host        : Linux; Node v22.23.2; pnpm 10.15.1
+Database    : PostgreSQL 16.15, database bcis_test (live; the .postgres.test.ts
+              suites ran against it and were NOT skipped)
+
+Commands run, in this order:
+
+    pnpm test
+    pnpm typecheck
+    pnpm lint
+
+The three tool outputs are pasted verbatim below. The only edit is that ANSI
+colour escape sequences were stripped so the file is readable; every line the
+tools printed is present. Timing and the commit hash are the values the tools
+and git reported at run time.
+
+Note on environment: an initial `pnpm test` on a `bcis_test` database polluted by
+an earlier interrupted demo-seed run produced two failures (a whole-database
+schema invariant and the demo dataset's "refuse to seed twice" guard). That was
+environmental, not a code fault: the database was dropped, recreated and migrated
+clean, and the run captured below is the current passing one.
+
+================================================================================
+$ pnpm test
+================================================================================
+
+> bcis-system@0.1.0 test /home/yaji/projects/subscription_and_collection_ledger_system
+> pnpm -r --if-present test
+
+Scope: 3 of 4 workspace projects
+apps/client test$ vitest run
+apps/server test$ vitest run
+apps/client test: The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+apps/server test:  RUN  v2.1.9 /home/yaji/projects/subscription_and_collection_ledger_system/apps/server
+apps/client test:  RUN  v2.1.9 /home/yaji/projects/subscription_and_collection_ledger_system/apps/client
+apps/client test:  ✓ src/components/ui/Modal.test.tsx (12 tests) 219ms
+apps/client test:  ✓ src/components/session/SessionLockGate.test.tsx (6 tests) 329ms
+apps/client test:  ✓ src/pages/ReportsCenterPage.test.tsx (7 tests) 1294ms
+apps/client test:    ✓ ReportsCenterPage > lists all eighteen report types, the six originals merged with the twelve added 497ms
+apps/server test: {"level":40,"time":1790521819267,"pid":377181,"hostname":"LEGION","reqId":"req-5","code":"CONFLICT","msg":"A selected service account is already in an open collector batch"}
+apps/server test: {"level":40,"time":1790521819280,"pid":377181,"hostname":"LEGION","reqId":"req-6","code":"CONFLICT","msg":"Batch number CB-20250124-0001 is already in use"}
+apps/server test: {"level":40,"time":1790521819296,"pid":377181,"hostname":"LEGION","reqId":"req-7","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521819301,"pid":377181,"hostname":"LEGION","reqId":"req-9","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521819320,"pid":377181,"hostname":"LEGION","reqId":"req-k","code":"VALIDATION_ERROR","msg":"Variance notes are required when the cash handed in differs from what was collected"}
+apps/server test: {"level":40,"time":1790521819323,"pid":377181,"hostname":"LEGION","reqId":"req-m","code":"CONFLICT","msg":"A reconciled batch cannot move to reconciled"}
+apps/server test: {"level":40,"time":1790521819324,"pid":377181,"hostname":"LEGION","reqId":"req-n","code":"CONFLICT","msg":"A open batch cannot move to reconciled"}
+apps/server test: {"level":40,"time":1790521819327,"pid":377181,"hostname":"LEGION","reqId":"req-r","code":"CONFLICT","msg":"A remitted batch cannot move to closed"}
+apps/server test: {"level":40,"time":1790521819328,"pid":377181,"hostname":"LEGION","reqId":"req-s","code":"CONFLICT","msg":"Only a submitted batch can be remitted"}
+apps/server test:  ✓ test/collections.routes.test.ts (43 tests) 362ms
+apps/client test:  ✓ src/pages/AddSubscriberPage.test.tsx (5 tests) 2364ms
+apps/client test:    ✓ AddSubscriberPage > refuses an implausibly short service address with a message beside it 480ms
+apps/client test:    ✓ AddSubscriberPage > asks for a plan beside the picker instead of in a banner 439ms
+apps/client test:    ✓ AddSubscriberPage > posts the same subscriber body the screen always sent, with blank optionals left out 456ms
+apps/client test:    ✓ AddSubscriberPage > sends the optional fields it was given, and refuses an invalid email beside the field 696ms
+apps/client test:  ✓ src/pages/CollectorBatchDetailPage.test.tsx (9 tests) 1193ms
+apps/client test:    ✓ CollectorBatchDetailPage lifecycle actions > offers only the actions legal from open 331ms
+apps/client test:  ✓ src/pages/BackupManagementPage.test.tsx (5 tests) 963ms
+apps/client test:    ✓ BackupManagementPage > creates a backup and reports the verified result 316ms
+apps/server test: {"level":50,"time":1790521820785,"pid":377398,"hostname":"LEGION","reqId":"req-7","err":{"type":"Error","message":"ledger write failed on the second invoice","stack":"Error: ledger write failed on the second invoice\n    at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/billing.routes.test.ts:373:33\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11\n    at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)\n    at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)\n    at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)"},"msg":"ledger write failed on the second invoice"}
+apps/server test: {"level":50,"time":1790521820794,"pid":377398,"hostname":"LEGION","reqId":"req-8","err":{"type":"Error","message":"simulated failure while inserting the invoice","stack":"Error: simulated failure while inserting the invoice\n    at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/billing.routes.test.ts:399:33\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11\n    at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)\n    at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)\n    at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)"},"msg":"simulated failure while inserting the invoice"}
+apps/server test: {"level":40,"time":1790521820804,"pid":377398,"hostname":"LEGION","reqId":"req-d","code":"CONFLICT","msg":"Cannot void an invoice settled by advance credit. Reverse the credit instead."}
+apps/server test: {"level":40,"time":1790521820805,"pid":377398,"hostname":"LEGION","reqId":"req-e","code":"CONFLICT","msg":"Cannot void a fully paid invoice. Use a payment reversal instead."}
+apps/client test:  ✓ src/pages/DashboardPage.test.tsx (3 tests) 248ms
+apps/server test:  ✓ test/billing.routes.test.ts (19 tests) 188ms
+apps/client test:  ✓ src/pages/PostPaymentPage.test.tsx (15 tests) 3147ms
+apps/client test:    ✓ PostPaymentPage > focuses the date field and reports it when the payment date is cleared 438ms
+apps/client test:    ✓ PostPaymentPage > asks for the reference beside the field and posts the GCash block in the same shape 332ms
+apps/client test:  ✓ src/lib/collector-batch-actions.test.ts (16 tests) 11ms
+apps/client test:  ✓ src/components/table/DataTable.test.tsx (7 tests) 604ms
+apps/server test: {"level":40,"time":1790521822118,"pid":377494,"hostname":"LEGION","reqId":"req-9","code":"VALIDATION_ERROR","msg":"A date is required in YYYY-MM-DD format"}
+apps/server test: {"level":40,"time":1790521822127,"pid":377494,"hostname":"LEGION","reqId":"req-c","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521822131,"pid":377494,"hostname":"LEGION","reqId":"req-g","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521822230,"pid":377494,"hostname":"LEGION","reqId":"req-o","code":"VALIDATION_ERROR","msg":"A year is required"}
+apps/server test: {"level":40,"time":1790521822231,"pid":377494,"hostname":"LEGION","reqId":"req-p","code":"VALIDATION_ERROR","msg":"Invalid enum value. Expected 'daily_collection' | 'monthly_billing' | 'ar_aging' | 'subscriber_soa' | 'collector_remittance' | 'outstanding_by_collector' | 'weekly_collection' | 'annual_collection' | 'revenue_by_plan' | 'revenue_by_service_type' | 'revenue_by_area' | 'collector_assignment' | 'collector_performance' | 'payment_adjustments' | 'voided_receipts' | 'user_activity' | 'subscriber_master_list' | 'audit_log', received 'profit_and_loss'"}
+apps/server test:  ✓ test/reports.routes.test.ts (31 tests) 313ms
+apps/client test:  ✓ src/components/AppNavigation.test.tsx (6 tests) 375ms
+apps/client test:  ✓ src/pages/UserManagementPage.test.tsx (4 tests) 828ms
+apps/client test:    ✓ UserManagementPage copy contract > renders the heading and add-account button the smoke check asserts 302ms
+apps/client test:    ✓ UserManagementPage form > posts the same new-user body the screen always sent 308ms
+apps/client test:  ✓ src/pages/PlanManagementPage.test.tsx (4 tests) 1126ms
+apps/client test:    ✓ PlanManagementPage > reports the missing name and rate beside their fields and focuses the name 484ms
+apps/client test:  ✓ src/pages/SuspensionOperationsPage.test.tsx (3 tests) 695ms
+apps/client test:    ✓ SuspensionOperationsPage > previews the candidates without suspending anything 344ms
+apps/server test:  ✓ test/billing-engine.postgres.test.ts (15 tests) 1013ms
+apps/client test:  ✓ src/pages/ReceivablesAgingPage.test.tsx (2 tests) 972ms
+apps/client test:    ✓ ReceivablesAgingPage filters > sends the collector, area, plan and service type it is given 819ms
+apps/client test:  ✓ src/pages/OverdueAccountsPage.test.tsx (2 tests) 937ms
+apps/client test:    ✓ OverdueAccountsPage filters > sends the collector, area, plan, service type and delinquency age it is given 880ms
+apps/client test:  ✓ src/pages/InvoiceListPage.test.tsx (2 tests) 488ms
+apps/client test:  ✓ src/components/form/TextField.test.tsx (4 tests) 142ms
+apps/client test:  ✓ src/pages/PaymentHistoryPage.test.tsx (2 tests) 447ms
+apps/server test: {"level":40,"time":1790521825397,"pid":377725,"hostname":"LEGION","reqId":"req-4","code":"CONFLICT","msg":"GCash reference GCASH-DUP-001 has already been used. Duplicate payment rejected."}
+apps/server test: {"level":40,"time":1790521825404,"pid":377725,"hostname":"LEGION","reqId":"req-6","code":"CONFLICT","msg":"GCash reference GCASH-OK-001 has already been used. Duplicate payment rejected."}
+apps/server test: {"level":50,"time":1790521825407,"pid":377725,"hostname":"LEGION","reqId":"req-8","err":{"type":"Error","message":"simulated write failure","stack":"Error: simulated write failure\n    at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/payments.routes.test.ts:427:33\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11\n    at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)\n    at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)\n    at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)"},"msg":"simulated write failure"}
+apps/server test: {"level":40,"time":1790521825420,"pid":377725,"hostname":"LEGION","reqId":"req-b","code":"CONFLICT","msg":"Payment has already been reversed"}
+apps/server test: {"level":40,"time":1790521825421,"pid":377725,"hostname":"LEGION","reqId":"req-c","code":"CONFLICT","msg":"This GCash payment is still awaiting verification and has not been posted, so there is nothing to reverse. Reject it instead."}
+apps/server test: {"level":40,"time":1790521825422,"pid":377725,"hostname":"LEGION","reqId":"req-d","code":"CONFLICT","msg":"This GCash payment was rejected and never posted, so there is nothing to reverse."}
+apps/server test: {"level":40,"time":1790521825426,"pid":377725,"hostname":"LEGION","reqId":"req-g","code":"VALIDATION_ERROR","msg":"Reversal reason must be at least 10 characters"}
+apps/server test:  ✓ test/payments.routes.test.ts (20 tests) 154ms
+apps/client test:  ✓ src/pages/LoginPage.test.tsx (2 tests) 230ms
+apps/client test:  Test Files  20 passed (20)
+apps/client test:       Tests  116 passed (116)
+apps/client test:    Start at  23:10:15
+apps/client test:    Duration  10.43s (transform 1.80s, setup 4.03s, collect 8.32s, tests 16.61s, environment 15.53s, prepare 1.48s)
+apps/client test: Done
+apps/server test: {"level":40,"time":1790521826248,"pid":377866,"hostname":"LEGION","reqId":"req-2","code":"NOT_FOUND","msg":"Service account could not be created"}
+apps/server test: {"level":40,"time":1790521826285,"pid":377866,"hostname":"LEGION","reqId":"req-1","code":"VALIDATION_ERROR","msg":"Suspension reason must be at least 10 characters"}
+apps/server test: {"level":50,"time":1790521826290,"pid":377866,"hostname":"LEGION","reqId":"req-3","err":{"type":"Error","message":"connection reset before the audit row was written","stack":"Error: connection reset before the audit row was written\n    at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/subscribers.routes.test.ts:435:33\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11\n    at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)\n    at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)\n    at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)"},"msg":"connection reset before the audit row was written"}
+apps/server test: {"level":40,"time":1790521826296,"pid":377866,"hostname":"LEGION","reqId":"req-4","code":"CONFLICT","msg":"This service account is already suspended"}
+apps/server test: {"level":50,"time":1790521826299,"pid":377866,"hostname":"LEGION","reqId":"req-6","err":{"type":"Error","message":"connection reset before the audit row was written","stack":"Error: connection reset before the audit row was written\n    at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/subscribers.routes.test.ts:541:33\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11\n    at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)\n    at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)\n    at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)"},"msg":"connection reset before the audit row was written"}
+apps/server test: {"level":40,"time":1790521826300,"pid":377866,"hostname":"LEGION","reqId":"req-7","code":"CONFLICT","msg":"Only a suspended service account can be reconnected"}
+apps/server test: {"level":40,"time":1790521826301,"pid":377866,"hostname":"LEGION","reqId":"req-8","code":"CONFLICT","msg":"A terminated service account cannot be reconnected"}
+apps/server test: {"level":50,"time":1790521826303,"pid":377866,"hostname":"LEGION","reqId":"req-a","err":{"type":"Error","message":"connection reset before the audit row was written","stack":"Error: connection reset before the audit row was written\n    at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/subscribers.routes.test.ts:632:33\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14\n    at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11\n    at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)\n    at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)\n    at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)\n    at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)"},"msg":"connection reset before the audit row was written"}
+apps/server test: {"level":40,"time":1790521826328,"pid":377866,"hostname":"LEGION","reqId":"req-8","code":"VALIDATION_ERROR","msg":"A valid subscriber id is required"}
+apps/server test:  ✓ test/subscribers.routes.test.ts (24 tests) 166ms
+apps/server test:  ✓ test/report-calculations.test.ts (38 tests) 125ms
+apps/server test: {"level":40,"time":1790521827950,"pid":377915,"hostname":"LEGION","reqId":"req-7","code":"CONFLICT","msg":"This assignment's collection was voided; create a new batch to collect again"}
+apps/server test: {"level":40,"time":1790521827964,"pid":377915,"hostname":"LEGION","reqId":"req-9","code":"CONFLICT","msg":"A submitted batch cannot move to submitted"}
+apps/server test: {"level":40,"time":1790521827983,"pid":377915,"hostname":"LEGION","reqId":"req-c","code":"VALIDATION_ERROR","msg":"Variance notes are required when the cash handed in differs from what was collected"}
+apps/server test: {"level":40,"time":1790521827993,"pid":377915,"hostname":"LEGION","reqId":"req-e","code":"CONFLICT","msg":"A reconciled batch cannot move to reconciled"}
+apps/server test: {"level":40,"time":1790521828029,"pid":377915,"hostname":"LEGION","reqId":"req-i","code":"CONFLICT","msg":"A selected service account is already in an open collector batch"}
+apps/server test: {"level":40,"time":1790521828093,"pid":377915,"hostname":"LEGION","reqId":"req-p","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521828096,"pid":377915,"hostname":"LEGION","reqId":"req-q","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test:  ✓ test/collections.postgres.test.ts (7 tests) 434ms
+apps/server test: {"level":40,"time":1790521829047,"pid":377948,"hostname":"LEGION","reqId":"req-5","code":"CONFLICT","msg":"GCash reference GCASH-INT-D4BD7BB3 has already been used. Duplicate payment rejected."}
+apps/server test: {"level":40,"time":1790521829115,"pid":377948,"hostname":"LEGION","reqId":"req-b","code":"CONFLICT","msg":"GCash reference GCASHWP36009C27A has already been used. Duplicate payment rejected."}
+apps/server test:  ✓ test/payments.postgres.test.ts (5 tests) 277ms
+apps/server test:  ✓ test/report-families.test.ts (22 tests) 21ms
+apps/server test: {"level":40,"time":1790521830506,"pid":377998,"hostname":"LEGION","reqId":"req-5z","code":"NOT_FOUND","msg":"User not found"}
+apps/server test: {"level":40,"time":1790521830509,"pid":377998,"hostname":"LEGION","reqId":"req-64","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830512,"pid":377998,"hostname":"LEGION","reqId":"req-69","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830514,"pid":377998,"hostname":"LEGION","reqId":"req-6e","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830517,"pid":377998,"hostname":"LEGION","reqId":"req-6j","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830521,"pid":377998,"hostname":"LEGION","reqId":"req-6t","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830522,"pid":377998,"hostname":"LEGION","reqId":"req-6u","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830523,"pid":377998,"hostname":"LEGION","reqId":"req-6x","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830524,"pid":377998,"hostname":"LEGION","reqId":"req-6y","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830525,"pid":377998,"hostname":"LEGION","reqId":"req-6z","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830527,"pid":377998,"hostname":"LEGION","reqId":"req-73","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830527,"pid":377998,"hostname":"LEGION","reqId":"req-74","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830530,"pid":377998,"hostname":"LEGION","reqId":"req-78","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830530,"pid":377998,"hostname":"LEGION","reqId":"req-79","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830535,"pid":377998,"hostname":"LEGION","reqId":"req-7i","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830536,"pid":377998,"hostname":"LEGION","reqId":"req-7j","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830536,"pid":377998,"hostname":"LEGION","reqId":"req-7k","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830537,"pid":377998,"hostname":"LEGION","reqId":"req-7l","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830537,"pid":377998,"hostname":"LEGION","reqId":"req-7m","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830538,"pid":377998,"hostname":"LEGION","reqId":"req-7n","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830539,"pid":377998,"hostname":"LEGION","reqId":"req-7o","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830539,"pid":377998,"hostname":"LEGION","reqId":"req-7p","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830540,"pid":377998,"hostname":"LEGION","reqId":"req-7q","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830540,"pid":377998,"hostname":"LEGION","reqId":"req-7r","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830541,"pid":377998,"hostname":"LEGION","reqId":"req-7s","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830542,"pid":377998,"hostname":"LEGION","reqId":"req-7t","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830542,"pid":377998,"hostname":"LEGION","reqId":"req-7u","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830543,"pid":377998,"hostname":"LEGION","reqId":"req-7v","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830543,"pid":377998,"hostname":"LEGION","reqId":"req-7w","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830544,"pid":377998,"hostname":"LEGION","reqId":"req-7x","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830544,"pid":377998,"hostname":"LEGION","reqId":"req-7y","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830546,"pid":377998,"hostname":"LEGION","reqId":"req-82","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830546,"pid":377998,"hostname":"LEGION","reqId":"req-83","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830554,"pid":377998,"hostname":"LEGION","reqId":"req-8h","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830554,"pid":377998,"hostname":"LEGION","reqId":"req-8i","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830555,"pid":377998,"hostname":"LEGION","reqId":"req-8j","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830555,"pid":377998,"hostname":"LEGION","reqId":"req-8k","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830556,"pid":377998,"hostname":"LEGION","reqId":"req-8l","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830556,"pid":377998,"hostname":"LEGION","reqId":"req-8m","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830556,"pid":377998,"hostname":"LEGION","reqId":"req-8n","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830558,"pid":377998,"hostname":"LEGION","reqId":"req-8r","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830559,"pid":377998,"hostname":"LEGION","reqId":"req-8s","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830560,"pid":377998,"hostname":"LEGION","reqId":"req-8w","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830561,"pid":377998,"hostname":"LEGION","reqId":"req-8x","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830562,"pid":377998,"hostname":"LEGION","reqId":"req-91","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830563,"pid":377998,"hostname":"LEGION","reqId":"req-92","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830564,"pid":377998,"hostname":"LEGION","reqId":"req-96","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830565,"pid":377998,"hostname":"LEGION","reqId":"req-97","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830567,"pid":377998,"hostname":"LEGION","reqId":"req-9b","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830567,"pid":377998,"hostname":"LEGION","reqId":"req-9c","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830569,"pid":377998,"hostname":"LEGION","reqId":"req-9g","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830569,"pid":377998,"hostname":"LEGION","reqId":"req-9h","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830570,"pid":377998,"hostname":"LEGION","reqId":"req-9i","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830570,"pid":377998,"hostname":"LEGION","reqId":"req-9j","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830571,"pid":377998,"hostname":"LEGION","reqId":"req-9k","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830573,"pid":377998,"hostname":"LEGION","reqId":"req-9q","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830574,"pid":377998,"hostname":"LEGION","reqId":"req-9r","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830575,"pid":377998,"hostname":"LEGION","reqId":"req-9v","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830576,"pid":377998,"hostname":"LEGION","reqId":"req-9w","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830578,"pid":377998,"hostname":"LEGION","reqId":"req-a0","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830578,"pid":377998,"hostname":"LEGION","reqId":"req-a1","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830586,"pid":377998,"hostname":"LEGION","reqId":"req-aa","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521830587,"pid":377998,"hostname":"LEGION","reqId":"req-ab","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521830589,"pid":377998,"hostname":"LEGION","reqId":"req-ac","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521830591,"pid":377998,"hostname":"LEGION","reqId":"req-ad","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521830592,"pid":377998,"hostname":"LEGION","reqId":"req-ae","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521830593,"pid":377998,"hostname":"LEGION","reqId":"req-af","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830594,"pid":377998,"hostname":"LEGION","reqId":"req-ag","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830596,"pid":377998,"hostname":"LEGION","reqId":"req-ak","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830597,"pid":377998,"hostname":"LEGION","reqId":"req-al","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830599,"pid":377998,"hostname":"LEGION","reqId":"req-ap","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521830600,"pid":377998,"hostname":"LEGION","reqId":"req-aq","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521830602,"pid":377998,"hostname":"LEGION","reqId":"req-au","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830605,"pid":377998,"hostname":"LEGION","reqId":"req-az","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830611,"pid":377998,"hostname":"LEGION","reqId":"req-b4","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521830612,"pid":377998,"hostname":"LEGION","reqId":"req-b5","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521830613,"pid":377998,"hostname":"LEGION","reqId":"req-b6","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521830614,"pid":377998,"hostname":"LEGION","reqId":"req-b7","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521830614,"pid":377998,"hostname":"LEGION","reqId":"req-b8","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521830615,"pid":377998,"hostname":"LEGION","reqId":"req-b9","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830617,"pid":377998,"hostname":"LEGION","reqId":"req-bb","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830619,"pid":377998,"hostname":"LEGION","reqId":"req-be","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830620,"pid":377998,"hostname":"LEGION","reqId":"req-bf","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830621,"pid":377998,"hostname":"LEGION","reqId":"req-bg","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830622,"pid":377998,"hostname":"LEGION","reqId":"req-bh","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830623,"pid":377998,"hostname":"LEGION","reqId":"req-bi","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830628,"pid":377998,"hostname":"LEGION","reqId":"req-bo","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830629,"pid":377998,"hostname":"LEGION","reqId":"req-bq","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830631,"pid":377998,"hostname":"LEGION","reqId":"req-bt","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830632,"pid":377998,"hostname":"LEGION","reqId":"req-bv","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830633,"pid":377998,"hostname":"LEGION","reqId":"req-by","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830634,"pid":377998,"hostname":"LEGION","reqId":"req-c0","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830636,"pid":377998,"hostname":"LEGION","reqId":"req-c3","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830638,"pid":377998,"hostname":"LEGION","reqId":"req-c5","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830644,"pid":377998,"hostname":"LEGION","reqId":"req-cd","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830645,"pid":377998,"hostname":"LEGION","reqId":"req-ce","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830645,"pid":377998,"hostname":"LEGION","reqId":"req-cf","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830646,"pid":377998,"hostname":"LEGION","reqId":"req-cg","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830647,"pid":377998,"hostname":"LEGION","reqId":"req-ch","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521830647,"pid":377998,"hostname":"LEGION","reqId":"req-ci","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830660,"pid":377998,"hostname":"LEGION","reqId":"req-d2","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830663,"pid":377998,"hostname":"LEGION","reqId":"req-d7","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830663,"pid":377998,"hostname":"LEGION","reqId":"req-d8","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830664,"pid":377998,"hostname":"LEGION","reqId":"req-d9","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830665,"pid":377998,"hostname":"LEGION","reqId":"req-db","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830668,"pid":377998,"hostname":"LEGION","reqId":"req-dh","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830669,"pid":377998,"hostname":"LEGION","reqId":"req-di","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830669,"pid":377998,"hostname":"LEGION","reqId":"req-dj","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830671,"pid":377998,"hostname":"LEGION","reqId":"req-dl","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830677,"pid":377998,"hostname":"LEGION","reqId":"req-dw","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830677,"pid":377998,"hostname":"LEGION","reqId":"req-dx","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830679,"pid":377998,"hostname":"LEGION","reqId":"req-e1","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830680,"pid":377998,"hostname":"LEGION","reqId":"req-e2","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830680,"pid":377998,"hostname":"LEGION","reqId":"req-e3","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830681,"pid":377998,"hostname":"LEGION","reqId":"req-e4","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830681,"pid":377998,"hostname":"LEGION","reqId":"req-e5","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830682,"pid":377998,"hostname":"LEGION","reqId":"req-e6","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830682,"pid":377998,"hostname":"LEGION","reqId":"req-e7","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830684,"pid":377998,"hostname":"LEGION","reqId":"req-eb","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830685,"pid":377998,"hostname":"LEGION","reqId":"req-ed","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830687,"pid":377998,"hostname":"LEGION","reqId":"req-eg","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830688,"pid":377998,"hostname":"LEGION","reqId":"req-ej","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830689,"pid":377998,"hostname":"LEGION","reqId":"req-el","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830693,"pid":377998,"hostname":"LEGION","reqId":"req-eo","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830694,"pid":377998,"hostname":"LEGION","reqId":"req-eq","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830696,"pid":377998,"hostname":"LEGION","reqId":"req-et","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830697,"pid":377998,"hostname":"LEGION","reqId":"req-ev","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830697,"pid":377998,"hostname":"LEGION","reqId":"req-ew","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830698,"pid":377998,"hostname":"LEGION","reqId":"req-ex","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830699,"pid":377998,"hostname":"LEGION","reqId":"req-ey","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830699,"pid":377998,"hostname":"LEGION","reqId":"req-ez","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830700,"pid":377998,"hostname":"LEGION","reqId":"req-f0","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830701,"pid":377998,"hostname":"LEGION","reqId":"req-f2","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830703,"pid":377998,"hostname":"LEGION","reqId":"req-f5","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830704,"pid":377998,"hostname":"LEGION","reqId":"req-f7","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830706,"pid":377998,"hostname":"LEGION","reqId":"req-fa","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830706,"pid":377998,"hostname":"LEGION","reqId":"req-fb","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830707,"pid":377998,"hostname":"LEGION","reqId":"req-fc","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830707,"pid":377998,"hostname":"LEGION","reqId":"req-fd","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830708,"pid":377998,"hostname":"LEGION","reqId":"req-fe","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830708,"pid":377998,"hostname":"LEGION","reqId":"req-ff","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830711,"pid":377998,"hostname":"LEGION","reqId":"req-fj","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521830711,"pid":377998,"hostname":"LEGION","reqId":"req-fk","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830712,"pid":377998,"hostname":"LEGION","reqId":"req-fl","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830727,"pid":377998,"hostname":"LEGION","reqId":"req-g9","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830728,"pid":377998,"hostname":"LEGION","reqId":"req-ga","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830739,"pid":377998,"hostname":"LEGION","reqId":"req-gt","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830740,"pid":377998,"hostname":"LEGION","reqId":"req-gu","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830741,"pid":377998,"hostname":"LEGION","reqId":"req-gx","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521830749,"pid":377998,"hostname":"LEGION","reqId":"req-h8","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830750,"pid":377998,"hostname":"LEGION","reqId":"req-h9","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830750,"pid":377998,"hostname":"LEGION","reqId":"req-ha","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830751,"pid":377998,"hostname":"LEGION","reqId":"req-hb","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830751,"pid":377998,"hostname":"LEGION","reqId":"req-hc","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830786,"pid":377998,"hostname":"LEGION","reqId":"req-iw","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830788,"pid":377998,"hostname":"LEGION","reqId":"req-j0","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830789,"pid":377998,"hostname":"LEGION","reqId":"req-j1","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830791,"pid":377998,"hostname":"LEGION","reqId":"req-j5","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830922,"pid":377998,"hostname":"LEGION","reqId":"req-jq","code":"INTERNAL_ERROR","msg":"Backup was created but could not be recorded"}
+apps/server test: {"level":40,"time":1790521830925,"pid":377998,"hostname":"LEGION","reqId":"req-jv","code":"NOT_FOUND","msg":"Backup not found"}
+apps/server test: {"level":40,"time":1790521830928,"pid":377998,"hostname":"LEGION","reqId":"req-k0","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830935,"pid":377998,"hostname":"LEGION","reqId":"req-kc","code":"NOT_FOUND","msg":"User not found"}
+apps/server test: {"level":40,"time":1790521830936,"pid":377998,"hostname":"LEGION","reqId":"req-kd","code":"NOT_FOUND","msg":"User not found"}
+apps/server test: {"level":40,"time":1790521830938,"pid":377998,"hostname":"LEGION","reqId":"req-kj","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830939,"pid":377998,"hostname":"LEGION","reqId":"req-kk","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830942,"pid":377998,"hostname":"LEGION","reqId":"req-kq","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830943,"pid":377998,"hostname":"LEGION","reqId":"req-kr","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830946,"pid":377998,"hostname":"LEGION","reqId":"req-kx","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830946,"pid":377998,"hostname":"LEGION","reqId":"req-ky","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830949,"pid":377998,"hostname":"LEGION","reqId":"req-l4","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830950,"pid":377998,"hostname":"LEGION","reqId":"req-l5","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830956,"pid":377998,"hostname":"LEGION","reqId":"req-li","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830957,"pid":377998,"hostname":"LEGION","reqId":"req-lj","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830957,"pid":377998,"hostname":"LEGION","reqId":"req-lk","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830958,"pid":377998,"hostname":"LEGION","reqId":"req-lm","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830959,"pid":377998,"hostname":"LEGION","reqId":"req-lo","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830960,"pid":377998,"hostname":"LEGION","reqId":"req-lp","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830960,"pid":377998,"hostname":"LEGION","reqId":"req-lq","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830961,"pid":377998,"hostname":"LEGION","reqId":"req-lr","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830964,"pid":377998,"hostname":"LEGION","reqId":"req-lw","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830964,"pid":377998,"hostname":"LEGION","reqId":"req-lx","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830965,"pid":377998,"hostname":"LEGION","reqId":"req-ly","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830967,"pid":377998,"hostname":"LEGION","reqId":"req-m3","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830968,"pid":377998,"hostname":"LEGION","reqId":"req-m4","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830968,"pid":377998,"hostname":"LEGION","reqId":"req-m5","code":"NOT_FOUND","msg":"Plan not found"}
+apps/server test: {"level":40,"time":1790521830974,"pid":377998,"hostname":"LEGION","reqId":"req-mh","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830974,"pid":377998,"hostname":"LEGION","reqId":"req-mi","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830975,"pid":377998,"hostname":"LEGION","reqId":"req-mj","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830975,"pid":377998,"hostname":"LEGION","reqId":"req-mk","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830976,"pid":377998,"hostname":"LEGION","reqId":"req-ml","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830976,"pid":377998,"hostname":"LEGION","reqId":"req-mm","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830976,"pid":377998,"hostname":"LEGION","reqId":"req-mn","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830977,"pid":377998,"hostname":"LEGION","reqId":"req-mo","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830977,"pid":377998,"hostname":"LEGION","reqId":"req-mp","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830978,"pid":377998,"hostname":"LEGION","reqId":"req-mq","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830978,"pid":377998,"hostname":"LEGION","reqId":"req-mr","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830979,"pid":377998,"hostname":"LEGION","reqId":"req-ms","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830979,"pid":377998,"hostname":"LEGION","reqId":"req-mt","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830980,"pid":377998,"hostname":"LEGION","reqId":"req-mu","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830980,"pid":377998,"hostname":"LEGION","reqId":"req-mv","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830981,"pid":377998,"hostname":"LEGION","reqId":"req-mw","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830981,"pid":377998,"hostname":"LEGION","reqId":"req-mx","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830982,"pid":377998,"hostname":"LEGION","reqId":"req-my","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830982,"pid":377998,"hostname":"LEGION","reqId":"req-mz","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830983,"pid":377998,"hostname":"LEGION","reqId":"req-n0","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830983,"pid":377998,"hostname":"LEGION","reqId":"req-n1","code":"NOT_FOUND","msg":"Subscriber not found"}
+apps/server test: {"level":40,"time":1790521830984,"pid":377998,"hostname":"LEGION","reqId":"req-n2","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830984,"pid":377998,"hostname":"LEGION","reqId":"req-n3","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830985,"pid":377998,"hostname":"LEGION","reqId":"req-n4","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830987,"pid":377998,"hostname":"LEGION","reqId":"req-n9","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830987,"pid":377998,"hostname":"LEGION","reqId":"req-na","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830988,"pid":377998,"hostname":"LEGION","reqId":"req-nb","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830988,"pid":377998,"hostname":"LEGION","reqId":"req-nc","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521830998,"pid":377998,"hostname":"LEGION","reqId":"req-nu","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830999,"pid":377998,"hostname":"LEGION","reqId":"req-nv","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521830999,"pid":377998,"hostname":"LEGION","reqId":"req-nw","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831000,"pid":377998,"hostname":"LEGION","reqId":"req-nx","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831000,"pid":377998,"hostname":"LEGION","reqId":"req-ny","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831001,"pid":377998,"hostname":"LEGION","reqId":"req-nz","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831001,"pid":377998,"hostname":"LEGION","reqId":"req-o0","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831002,"pid":377998,"hostname":"LEGION","reqId":"req-o1","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831002,"pid":377998,"hostname":"LEGION","reqId":"req-o2","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831003,"pid":377998,"hostname":"LEGION","reqId":"req-o3","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831005,"pid":377998,"hostname":"LEGION","reqId":"req-o8","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831005,"pid":377998,"hostname":"LEGION","reqId":"req-o9","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831006,"pid":377998,"hostname":"LEGION","reqId":"req-oa","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831006,"pid":377998,"hostname":"LEGION","reqId":"req-ob","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831008,"pid":377998,"hostname":"LEGION","reqId":"req-of","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831009,"pid":377998,"hostname":"LEGION","reqId":"req-og","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831009,"pid":377998,"hostname":"LEGION","reqId":"req-oh","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831009,"pid":377998,"hostname":"LEGION","reqId":"req-oi","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831011,"pid":377998,"hostname":"LEGION","reqId":"req-om","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831011,"pid":377998,"hostname":"LEGION","reqId":"req-on","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831012,"pid":377998,"hostname":"LEGION","reqId":"req-oo","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831012,"pid":377998,"hostname":"LEGION","reqId":"req-op","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831014,"pid":377998,"hostname":"LEGION","reqId":"req-ot","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831014,"pid":377998,"hostname":"LEGION","reqId":"req-ou","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831015,"pid":377998,"hostname":"LEGION","reqId":"req-ov","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831015,"pid":377998,"hostname":"LEGION","reqId":"req-ow","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831017,"pid":377998,"hostname":"LEGION","reqId":"req-p0","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831017,"pid":377998,"hostname":"LEGION","reqId":"req-p1","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831018,"pid":377998,"hostname":"LEGION","reqId":"req-p2","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831018,"pid":377998,"hostname":"LEGION","reqId":"req-p3","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831020,"pid":377998,"hostname":"LEGION","reqId":"req-p7","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831021,"pid":377998,"hostname":"LEGION","reqId":"req-p8","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831021,"pid":377998,"hostname":"LEGION","reqId":"req-p9","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831022,"pid":377998,"hostname":"LEGION","reqId":"req-pa","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831022,"pid":377998,"hostname":"LEGION","reqId":"req-pb","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831023,"pid":377998,"hostname":"LEGION","reqId":"req-pc","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831023,"pid":377998,"hostname":"LEGION","reqId":"req-pd","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831028,"pid":377998,"hostname":"LEGION","reqId":"req-pl","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831028,"pid":377998,"hostname":"LEGION","reqId":"req-pm","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831029,"pid":377998,"hostname":"LEGION","reqId":"req-pn","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831031,"pid":377998,"hostname":"LEGION","reqId":"req-ps","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831031,"pid":377998,"hostname":"LEGION","reqId":"req-pt","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831032,"pid":377998,"hostname":"LEGION","reqId":"req-pu","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831033,"pid":377998,"hostname":"LEGION","reqId":"req-pz","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831034,"pid":377998,"hostname":"LEGION","reqId":"req-q0","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831034,"pid":377998,"hostname":"LEGION","reqId":"req-q1","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831039,"pid":377998,"hostname":"LEGION","reqId":"req-qd","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831040,"pid":377998,"hostname":"LEGION","reqId":"req-qe","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831040,"pid":377998,"hostname":"LEGION","reqId":"req-qf","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831040,"pid":377998,"hostname":"LEGION","reqId":"req-qg","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831041,"pid":377998,"hostname":"LEGION","reqId":"req-qh","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831041,"pid":377998,"hostname":"LEGION","reqId":"req-qi","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831042,"pid":377998,"hostname":"LEGION","reqId":"req-qj","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831042,"pid":377998,"hostname":"LEGION","reqId":"req-qk","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831043,"pid":377998,"hostname":"LEGION","reqId":"req-ql","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831043,"pid":377998,"hostname":"LEGION","reqId":"req-qm","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831046,"pid":377998,"hostname":"LEGION","reqId":"req-qr","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831046,"pid":377998,"hostname":"LEGION","reqId":"req-qs","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831047,"pid":377998,"hostname":"LEGION","reqId":"req-qt","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831049,"pid":377998,"hostname":"LEGION","reqId":"req-qy","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831049,"pid":377998,"hostname":"LEGION","reqId":"req-qz","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831050,"pid":377998,"hostname":"LEGION","reqId":"req-r0","code":"NOT_FOUND","msg":"Invoice not found"}
+apps/server test: {"level":40,"time":1790521831051,"pid":377998,"hostname":"LEGION","reqId":"req-r5","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831052,"pid":377998,"hostname":"LEGION","reqId":"req-r6","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831054,"pid":377998,"hostname":"LEGION","reqId":"req-rc","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831055,"pid":377998,"hostname":"LEGION","reqId":"req-rd","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831057,"pid":377998,"hostname":"LEGION","reqId":"req-rj","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521831058,"pid":377998,"hostname":"LEGION","reqId":"req-rk","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521831058,"pid":377998,"hostname":"LEGION","reqId":"req-rl","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521831059,"pid":377998,"hostname":"LEGION","reqId":"req-rm","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521831059,"pid":377998,"hostname":"LEGION","reqId":"req-rn","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521831061,"pid":377998,"hostname":"LEGION","reqId":"req-rp","code":"VALIDATION_ERROR","msg":"String must contain at most 30 character(s)"}
+apps/server test: {"level":40,"time":1790521831062,"pid":377998,"hostname":"LEGION","reqId":"req-rq","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831063,"pid":377998,"hostname":"LEGION","reqId":"req-rr","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831063,"pid":377998,"hostname":"LEGION","reqId":"req-rs","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831066,"pid":377998,"hostname":"LEGION","reqId":"req-rx","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831069,"pid":377998,"hostname":"LEGION","reqId":"req-ry","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831070,"pid":377998,"hostname":"LEGION","reqId":"req-rz","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831071,"pid":377998,"hostname":"LEGION","reqId":"req-s0","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831071,"pid":377998,"hostname":"LEGION","reqId":"req-s1","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831072,"pid":377998,"hostname":"LEGION","reqId":"req-s3","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831076,"pid":377998,"hostname":"LEGION","reqId":"req-sb","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831076,"pid":377998,"hostname":"LEGION","reqId":"req-sc","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831076,"pid":377998,"hostname":"LEGION","reqId":"req-sd","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831078,"pid":377998,"hostname":"LEGION","reqId":"req-si","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831079,"pid":377998,"hostname":"LEGION","reqId":"req-sj","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831079,"pid":377998,"hostname":"LEGION","reqId":"req-sk","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831082,"pid":377998,"hostname":"LEGION","reqId":"req-sp","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831082,"pid":377998,"hostname":"LEGION","reqId":"req-sq","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831082,"pid":377998,"hostname":"LEGION","reqId":"req-sr","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831084,"pid":377998,"hostname":"LEGION","reqId":"req-sw","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831085,"pid":377998,"hostname":"LEGION","reqId":"req-sx","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831085,"pid":377998,"hostname":"LEGION","reqId":"req-sy","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831091,"pid":377998,"hostname":"LEGION","reqId":"req-ta","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831092,"pid":377998,"hostname":"LEGION","reqId":"req-tb","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831092,"pid":377998,"hostname":"LEGION","reqId":"req-tc","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831093,"pid":377998,"hostname":"LEGION","reqId":"req-td","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831093,"pid":377998,"hostname":"LEGION","reqId":"req-te","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831094,"pid":377998,"hostname":"LEGION","reqId":"req-tg","code":"NOT_FOUND","msg":"Payment not found"}
+apps/server test: {"level":40,"time":1790521831094,"pid":377998,"hostname":"LEGION","reqId":"req-th","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831095,"pid":377998,"hostname":"LEGION","reqId":"req-ti","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831106,"pid":377998,"hostname":"LEGION","reqId":"req-u9","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831106,"pid":377998,"hostname":"LEGION","reqId":"req-ua","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831108,"pid":377998,"hostname":"LEGION","reqId":"req-ug","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831109,"pid":377998,"hostname":"LEGION","reqId":"req-uh","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831109,"pid":377998,"hostname":"LEGION","reqId":"req-ui","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831110,"pid":377998,"hostname":"LEGION","reqId":"req-uk","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831111,"pid":377998,"hostname":"LEGION","reqId":"req-um","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831115,"pid":377998,"hostname":"LEGION","reqId":"req-uu","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831115,"pid":377998,"hostname":"LEGION","reqId":"req-uv","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831116,"pid":377998,"hostname":"LEGION","reqId":"req-uw","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831116,"pid":377998,"hostname":"LEGION","reqId":"req-uy","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831117,"pid":377998,"hostname":"LEGION","reqId":"req-v0","code":"NOT_FOUND","msg":"Service account not found"}
+apps/server test: {"level":40,"time":1790521831123,"pid":377998,"hostname":"LEGION","reqId":"req-vf","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831124,"pid":377998,"hostname":"LEGION","reqId":"req-vg","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831124,"pid":377998,"hostname":"LEGION","reqId":"req-vh","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831124,"pid":377998,"hostname":"LEGION","reqId":"req-vi","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831126,"pid":377998,"hostname":"LEGION","reqId":"req-vm","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831126,"pid":377998,"hostname":"LEGION","reqId":"req-vn","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831127,"pid":377998,"hostname":"LEGION","reqId":"req-vo","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831127,"pid":377998,"hostname":"LEGION","reqId":"req-vp","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831127,"pid":377998,"hostname":"LEGION","reqId":"req-vq","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831128,"pid":377998,"hostname":"LEGION","reqId":"req-vr","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831128,"pid":377998,"hostname":"LEGION","reqId":"req-vs","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831129,"pid":377998,"hostname":"LEGION","reqId":"req-vt","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831129,"pid":377998,"hostname":"LEGION","reqId":"req-vu","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831130,"pid":377998,"hostname":"LEGION","reqId":"req-vv","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831130,"pid":377998,"hostname":"LEGION","reqId":"req-vw","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831132,"pid":377998,"hostname":"LEGION","reqId":"req-w0","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831132,"pid":377998,"hostname":"LEGION","reqId":"req-w1","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831132,"pid":377998,"hostname":"LEGION","reqId":"req-w2","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831133,"pid":377998,"hostname":"LEGION","reqId":"req-w3","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831135,"pid":377998,"hostname":"LEGION","reqId":"req-w7","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831135,"pid":377998,"hostname":"LEGION","reqId":"req-w8","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831136,"pid":377998,"hostname":"LEGION","reqId":"req-wa","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831137,"pid":377998,"hostname":"LEGION","reqId":"req-we","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831138,"pid":377998,"hostname":"LEGION","reqId":"req-wf","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831139,"pid":377998,"hostname":"LEGION","reqId":"req-wh","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831140,"pid":377998,"hostname":"LEGION","reqId":"req-wl","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831141,"pid":377998,"hostname":"LEGION","reqId":"req-wm","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831144,"pid":377998,"hostname":"LEGION","reqId":"req-wo","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831146,"pid":377998,"hostname":"LEGION","reqId":"req-ws","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831146,"pid":377998,"hostname":"LEGION","reqId":"req-wt","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831147,"pid":377998,"hostname":"LEGION","reqId":"req-wu","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831148,"pid":377998,"hostname":"LEGION","reqId":"req-wv","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831148,"pid":377998,"hostname":"LEGION","reqId":"req-ww","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831149,"pid":377998,"hostname":"LEGION","reqId":"req-wx","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831149,"pid":377998,"hostname":"LEGION","reqId":"req-wy","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831150,"pid":377998,"hostname":"LEGION","reqId":"req-wz","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831150,"pid":377998,"hostname":"LEGION","reqId":"req-x0","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831151,"pid":377998,"hostname":"LEGION","reqId":"req-x1","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831151,"pid":377998,"hostname":"LEGION","reqId":"req-x2","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831153,"pid":377998,"hostname":"LEGION","reqId":"req-x6","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831153,"pid":377998,"hostname":"LEGION","reqId":"req-x7","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831154,"pid":377998,"hostname":"LEGION","reqId":"req-x8","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831154,"pid":377998,"hostname":"LEGION","reqId":"req-x9","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831156,"pid":377998,"hostname":"LEGION","reqId":"req-xd","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831156,"pid":377998,"hostname":"LEGION","reqId":"req-xe","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831157,"pid":377998,"hostname":"LEGION","reqId":"req-xf","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831157,"pid":377998,"hostname":"LEGION","reqId":"req-xg","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831158,"pid":377998,"hostname":"LEGION","reqId":"req-xh","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831158,"pid":377998,"hostname":"LEGION","reqId":"req-xi","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831159,"pid":377998,"hostname":"LEGION","reqId":"req-xj","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831159,"pid":377998,"hostname":"LEGION","reqId":"req-xk","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831160,"pid":377998,"hostname":"LEGION","reqId":"req-xl","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831161,"pid":377998,"hostname":"LEGION","reqId":"req-xo","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831162,"pid":377998,"hostname":"LEGION","reqId":"req-xq","code":"NOT_FOUND","msg":"Collector batch not found"}
+apps/server test: {"level":40,"time":1790521831162,"pid":377998,"hostname":"LEGION","reqId":"req-xr","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831163,"pid":377998,"hostname":"LEGION","reqId":"req-xs","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831163,"pid":377998,"hostname":"LEGION","reqId":"req-xt","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831164,"pid":377998,"hostname":"LEGION","reqId":"req-xu","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831179,"pid":377998,"hostname":"LEGION","reqId":"req-yq","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831180,"pid":377998,"hostname":"LEGION","reqId":"req-yr","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831180,"pid":377998,"hostname":"LEGION","reqId":"req-ys","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831181,"pid":377998,"hostname":"LEGION","reqId":"req-yt","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831192,"pid":377998,"hostname":"LEGION","reqId":"req-zi","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831192,"pid":377998,"hostname":"LEGION","reqId":"req-zj","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831192,"pid":377998,"hostname":"LEGION","reqId":"req-zk","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831193,"pid":377998,"hostname":"LEGION","reqId":"req-zm","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831194,"pid":377998,"hostname":"LEGION","reqId":"req-zo","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521831200,"pid":377998,"hostname":"LEGION","reqId":"req-103","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831201,"pid":377998,"hostname":"LEGION","reqId":"req-104","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831201,"pid":377998,"hostname":"LEGION","reqId":"req-105","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831202,"pid":377998,"hostname":"LEGION","reqId":"req-106","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831202,"pid":377998,"hostname":"LEGION","reqId":"req-107","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831203,"pid":377998,"hostname":"LEGION","reqId":"req-109","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831240,"pid":377998,"hostname":"LEGION","reqId":"req-12f","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831240,"pid":377998,"hostname":"LEGION","reqId":"req-12g","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831241,"pid":377998,"hostname":"LEGION","reqId":"req-12j","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831242,"pid":377998,"hostname":"LEGION","reqId":"req-12l","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831242,"pid":377998,"hostname":"LEGION","reqId":"req-12m","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831243,"pid":377998,"hostname":"LEGION","reqId":"req-12n","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831244,"pid":377998,"hostname":"LEGION","reqId":"req-12q","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831245,"pid":377998,"hostname":"LEGION","reqId":"req-12s","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831366,"pid":377998,"hostname":"LEGION","reqId":"req-13l","code":"INTERNAL_ERROR","msg":"Backup was created but could not be recorded"}
+apps/server test: {"level":40,"time":1790521831474,"pid":377998,"hostname":"LEGION","reqId":"req-13m","code":"INTERNAL_ERROR","msg":"Backup was created but could not be recorded"}
+apps/server test: {"level":40,"time":1790521831477,"pid":377998,"hostname":"LEGION","reqId":"req-13s","code":"NOT_FOUND","msg":"Backup not found"}
+apps/server test: {"level":40,"time":1790521831478,"pid":377998,"hostname":"LEGION","reqId":"req-13t","code":"NOT_FOUND","msg":"Backup not found"}
+apps/server test: {"level":40,"time":1790521831481,"pid":377998,"hostname":"LEGION","reqId":"req-13z","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521831481,"pid":377998,"hostname":"LEGION","reqId":"req-140","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test:  ✓ test/rbac-matrix.test.ts (9 tests) 1182ms
+apps/server test:    ✓ RBAC matrix sweep > allows and denies every role on every permissioned route exactly as the matrix says 431ms
+apps/server test:    ✓ RBAC matrix sweep > allows and denies the seven stored roles via the database-resolved path 553ms
+apps/server test:  ✓ test/demo-dataset.postgres.test.ts (9 tests) 5769ms
+apps/server test:    ✓ Demo dataset against real PostgreSQL > is deterministic: the same seed reproduces identical counts and identical totals 2699ms
+apps/server test: {"level":40,"time":1790521838557,"pid":378116,"hostname":"LEGION","reqId":"req-4","code":"VALIDATION_ERROR","msg":"A GCash rejection needs a reason of at least 10 characters"}
+apps/server test: {"level":40,"time":1790521838560,"pid":378116,"hostname":"LEGION","reqId":"req-5","code":"VALIDATION_ERROR","msg":"A GCash rejection needs a reason of at least 10 characters"}
+apps/server test: {"level":40,"time":1790521838561,"pid":378116,"hostname":"LEGION","reqId":"req-6","code":"CONFLICT","msg":"Only a GCash payment awaiting verification can be verified; this payment is posted"}
+apps/server test: {"level":40,"time":1790521838562,"pid":378116,"hostname":"LEGION","reqId":"req-7","code":"CONFLICT","msg":"Only a GCash payment awaiting verification can be rejected; this payment is rejected"}
+apps/server test:  ✓ test/gcash-verification.test.ts (11 tests) 111ms
+apps/server test:  ✓ test/wp1-schema.postgres.test.ts (13 tests) 41ms
+apps/server test: {"level":40,"time":1790521839796,"pid":378169,"hostname":"LEGION","reqId":"req-4","code":"VALIDATION_ERROR","msg":"The discount rate must be a whole number of basis points"}
+apps/server test: {"level":40,"time":1790521839799,"pid":378169,"hostname":"LEGION","reqId":"req-5","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521839800,"pid":378169,"hostname":"LEGION","reqId":"req-6","code":"VALIDATION_ERROR","msg":"Provide either a discount amount or a discount rate, but not both"}
+apps/server test: {"level":40,"time":1790521839801,"pid":378169,"hostname":"LEGION","reqId":"req-7","code":"CONFLICT","msg":"Only a draft invoice can be discounted"}
+apps/server test: {"level":40,"time":1790521839803,"pid":378169,"hostname":"LEGION","reqId":"req-8","code":"VALIDATION_ERROR","msg":"The discount cannot exceed the invoice's unpaid total"}
+apps/server test:  ✓ test/invoice-adjustments.routes.test.ts (9 tests) 105ms
+apps/server test:  ✓ test/ledger.postgres.test.ts (5 tests) 237ms
+apps/server test: {"level":40,"time":1790521841599,"pid":378223,"hostname":"LEGION","reqId":"req-1","code":"VALIDATION_ERROR","msg":"File content does not match a valid image format"}
+apps/server test: stderr | test/security-hardening.test.ts > mass assignment > ignores a client-supplied isActive and passwordHash on a user update
+apps/server test: [RBAC] role 'administrator' is not seeded; user 6041c1d9-7938-406b-bbce-4310d868e858 resolves to no permissions
+apps/server test: stderr | test/security-hardening.test.ts > secrets never reach a response > does not return a password or hash from POST /api/users
+apps/server test: [RBAC] role 'cashier' is not seeded; user 1f891a4b-8f05-41e7-b251-824383965eba resolves to no permissions
+apps/server test: {"level":40,"time":1790521841902,"pid":378223,"hostname":"LEGION","reqId":"req-1","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521842087,"pid":378223,"hostname":"LEGION","reqId":"req-2","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521842270,"pid":378223,"hostname":"LEGION","reqId":"req-3","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521842452,"pid":378223,"hostname":"LEGION","reqId":"req-4","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521842631,"pid":378223,"hostname":"LEGION","reqId":"req-5","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521842812,"pid":378223,"hostname":"LEGION","reqId":"req-6","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521842998,"pid":378223,"hostname":"LEGION","reqId":"req-7","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521843180,"pid":378223,"hostname":"LEGION","reqId":"req-8","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521843361,"pid":378223,"hostname":"LEGION","reqId":"req-9","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521843548,"pid":378223,"hostname":"LEGION","reqId":"req-a","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test:  ✓ test/security-hardening.test.ts (22 tests) 2181ms
+apps/server test:    ✓ rate limiting and transport hardening > blocks the eleventh login attempt within the window with 429 1841ms
+apps/server test: {"level":40,"time":1790521844337,"pid":378252,"hostname":"LEGION","reqId":"req-2","code":"VALIDATION_ERROR","msg":"The manual allocation accounts for 10000 centavos but the payment is 100000; every centavo must be allocated or declared as advance credit"}
+apps/server test: {"level":40,"time":1790521844340,"pid":378252,"hostname":"LEGION","reqId":"req-3","code":"VALIDATION_ERROR","msg":"The manual allocation accounts for 130000 centavos but the payment is 100000; every centavo must be allocated or declared as advance credit"}
+apps/server test: {"level":40,"time":1790521844341,"pid":378252,"hostname":"LEGION","reqId":"req-4","code":"VALIDATION_ERROR","msg":"Invoice INV-2025-01-000001 owes 50000 centavos; 60000 would over-allocate it"}
+apps/server test: {"level":40,"time":1790521844343,"pid":378252,"hostname":"LEGION","reqId":"req-5","code":"VALIDATION_ERROR","msg":"Invoice d85f824c-75c9-41b0-af13-75e0d726c9a7 is not an outstanding invoice of this service account"}
+apps/server test: {"level":40,"time":1790521844344,"pid":378252,"hostname":"LEGION","reqId":"req-6","code":"VALIDATION_ERROR","msg":"Invoice 01aee879-3db1-4bac-b6eb-045c7402bdd0 was chosen more than once"}
+apps/server test: {"level":40,"time":1790521844346,"pid":378252,"hostname":"LEGION","reqId":"req-7","code":"VALIDATION_ERROR","msg":"A manual allocation needs a reason of at least 10 characters"}
+apps/server test: {"level":40,"time":1790521844349,"pid":378252,"hostname":"LEGION","reqId":"req-9","code":"VALIDATION_ERROR","msg":"Invalid enum value. Expected 'cash' | 'bank_transfer' | 'check' | 'other', received 'gcash'"}
+apps/server test:  ✓ test/manual-allocation.test.ts (9 tests) 97ms
+apps/server test:  ✓ test/report-filters.postgres.test.ts (8 tests) 82ms
+apps/server test: {"level":40,"time":1790521845683,"pid":378305,"hostname":"LEGION","reqId":"req-c","code":"VALIDATION_ERROR","msg":"Justification must be at least 10 characters"}
+apps/server test:  ✓ test/ledger.routes.test.ts (12 tests) 100ms
+apps/server test: {"level":40,"time":1790521846462,"pid":378331,"hostname":"LEGION","reqId":"req-15","code":"VALIDATION_ERROR","msg":"The collector id must be a UUID"}
+apps/server test: {"level":40,"time":1790521846486,"pid":378331,"hostname":"LEGION","reqId":"req-17","code":"FORBIDDEN","msg":"The audit trail needs the audit:read permission"}
+apps/server test: {"level":40,"time":1790521846572,"pid":378331,"hostname":"LEGION","reqId":"req-1o","code":"VALIDATION_ERROR","msg":"Number must be less than or equal to 200"}
+apps/server test: {"level":40,"time":1790521846573,"pid":378331,"hostname":"LEGION","reqId":"req-1p","code":"VALIDATION_ERROR","msg":"Number must be less than or equal to 200"}
+apps/server test: {"level":40,"time":1790521846574,"pid":378331,"hostname":"LEGION","reqId":"req-1q","code":"VALIDATION_ERROR","msg":"Number must be greater than or equal to 1"}
+apps/server test:  ✓ test/report-endpoints.test.ts (19 tests) 221ms
+apps/server test: {"level":40,"time":1790521847406,"pid":378357,"hostname":"LEGION","reqId":"req-2","code":"VALIDATION_ERROR","msg":"Restoring overwrites the database; send { confirm: true } to proceed"}
+apps/server test: {"level":40,"time":1790521847408,"pid":378357,"hostname":"LEGION","reqId":"req-3","code":"CONFLICT","msg":"This backup has not been verified; verify it before restoring so a corrupt archive cannot overwrite the database"}
+apps/server test:  ✓ test/backup.routes.test.ts (16 tests) 201ms
+apps/server test:  ✓ test/dashboard-kpis.test.ts (14 tests) 5ms
+apps/server test:  ✓ test/audit-coverage.test.ts (16 tests) 95ms
+apps/server test:  ✓ test/payment-methods.test.ts (9 tests) 96ms
+apps/server test: stderr | test/audit.routes.test.ts > audit logger > swallows a write failure so the main operation is never broken
+apps/server test: [AUDIT] Failed to write audit log entry: Error: audit table is down
+apps/server test:     at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/audit.routes.test.ts:189:33
+apps/server test:     at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+apps/server test:     at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+apps/server test:     at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+apps/server test:     at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+apps/server test:     at processTicksAndRejections (node:internal/process/task_queues:103:5)
+apps/server test:     at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+apps/server test:     at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+apps/server test:     at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+apps/server test:     at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+apps/server test: [AUDIT] Entry that failed: {"action":"payment.posted","entityType":"payment","entityId":"bab5256a-fa25-4a0f-b3b0-cc9d0e217d8c","description":"does not matter"}
+apps/server test: {"level":40,"time":1790521850308,"pid":378452,"hostname":"LEGION","reqId":"req-2","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: stderr | test/audit.routes.test.ts > audit trail through the API > audits the creation of a user account
+apps/server test: [RBAC] role 'cashier' is not seeded; user d7a4c824-709b-4ac9-8deb-edd9015da6d9 resolves to no permissions
+apps/server test: stderr | test/audit.routes.test.ts > audit trail through the API > audits a role change with the previous and new roles
+apps/server test: [RBAC] role 'read_only_viewer' is not seeded; user 5184e18f-bc2f-4c9a-8649-4cb6e6c7eeb8 resolves to no permissions
+apps/server test:  ✓ test/audit.routes.test.ts (14 tests) 314ms
+apps/server test:  ✓ test/subscribers.postgres.test.ts (1 test) 179ms
+apps/server test:  ✓ test/rbac-permission-cache.postgres.test.ts (5 tests) 155ms
+apps/server test:  ✓ test/ledger-directions.test.ts (10 tests) 7ms
+apps/server test: {"level":40,"time":1790521852997,"pid":378556,"hostname":"LEGION","reqId":"req-1","code":"TOO_MANY_REQUESTS","msg":"Too many failed login attempts. Try again in 15 minute(s)."}
+apps/server test: {"level":40,"time":1790521853002,"pid":378556,"hostname":"LEGION","reqId":"req-2","code":"TOO_MANY_REQUESTS","msg":"Too many failed login attempts. Try again in 15 minute(s)."}
+apps/server test: {"level":40,"time":1790521853004,"pid":378556,"hostname":"LEGION","reqId":"req-3","code":"TOO_MANY_REQUESTS","msg":"Too many failed login attempts. Try again in 15 minute(s)."}
+apps/server test:  ✓ test/login-lockout.test.ts (11 tests) 90ms
+apps/server test:  ✓ test/service-control.test.ts (6 tests) 90ms
+apps/server test:  ✓ test/report-filter-fidelity.test.ts (43 tests) 17ms
+apps/server test:  ✓ test/subscriber-lifecycle.integration.test.ts (2 tests) 88ms
+apps/server test: stderr | test/users.routes.test.ts > user management routes > allows an Admin to create a user and stores a bcrypt hash, never the plaintext
+apps/server test: [RBAC] role 'cashier' is not seeded; user fa44a3a3-1e5b-4d5d-aad3-3e7c6f52b726 resolves to no permissions
+apps/server test: {"level":40,"time":1790521855617,"pid":378650,"hostname":"LEGION","reqId":"req-8","code":"VALIDATION_ERROR","msg":"A valid user id is required"}
+apps/server test:  ✓ test/users.routes.test.ts (8 tests) 98ms
+apps/server test: {"level":40,"time":1790521856334,"pid":378676,"hostname":"LEGION","reqId":"req-3","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521856523,"pid":378676,"hostname":"LEGION","reqId":"req-4","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521856707,"pid":378676,"hostname":"LEGION","reqId":"req-5","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521856711,"pid":378676,"hostname":"LEGION","reqId":"req-6","code":"FORBIDDEN","msg":"Account is deactivated. Contact your administrator."}
+apps/server test:  ✓ test/auth.routes.test.ts (10 tests) 480ms
+apps/server test: {"level":40,"time":1790521857429,"pid":378711,"hostname":"LEGION","reqId":"req-4","code":"VALIDATION_ERROR","msg":"Unknown system setting: totally_made_up"}
+apps/server test: {"level":40,"time":1790521857431,"pid":378711,"hostname":"LEGION","reqId":"req-5","code":"VALIDATION_ERROR","msg":"late_fee_centavos must be a positive whole number of centavos (for example 5000)"}
+apps/server test: {"level":40,"time":1790521857432,"pid":378711,"hostname":"LEGION","reqId":"req-6","code":"VALIDATION_ERROR","msg":"late_fee_centavos must be a positive whole number of centavos (for example 5000)"}
+apps/server test: {"level":40,"time":1790521857434,"pid":378711,"hostname":"LEGION","reqId":"req-7","code":"VALIDATION_ERROR","msg":"late_fee_centavos must be a positive whole number of centavos (for example 5000)"}
+apps/server test: {"level":40,"time":1790521857442,"pid":378711,"hostname":"LEGION","reqId":"req-8","code":"VALIDATION_ERROR","msg":"late_fee_centavos must be a positive whole number of centavos (for example 5000)"}
+apps/server test: {"level":40,"time":1790521857444,"pid":378711,"hostname":"LEGION","reqId":"req-9","code":"VALIDATION_ERROR","msg":"invoice_due_day_of_month must be a whole number between 1 and 28 so every month has that day"}
+apps/server test:  ✓ test/system-settings.test.ts (11 tests) 130ms
+apps/server test: {"level":40,"time":1790521858211,"pid":378739,"hostname":"LEGION","reqId":"req-1","code":"VALIDATION_ERROR","msg":"Number must be greater than or equal to 1"}
+apps/server test: {"level":40,"time":1790521858216,"pid":378739,"hostname":"LEGION","reqId":"req-2","code":"VALIDATION_ERROR","msg":"Invalid enum value. Expected 'internet' | 'cable_tv' | 'bundle', received 'bogus'"}
+apps/server test: {"level":40,"time":1790521858217,"pid":378739,"hostname":"LEGION","reqId":"req-3","code":"VALIDATION_ERROR","msg":"Invalid enum value. Expected 'true' | 'false', received 'maybe'"}
+apps/server test: {"level":40,"time":1790521858217,"pid":378739,"hostname":"LEGION","reqId":"req-4","code":"VALIDATION_ERROR","msg":"Number must be greater than or equal to 1"}
+apps/server test: {"level":40,"time":1790521858218,"pid":378739,"hostname":"LEGION","reqId":"req-5","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858219,"pid":378739,"hostname":"LEGION","reqId":"req-6","code":"VALIDATION_ERROR","msg":"Invalid enum value. Expected 'draft' | 'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'void' | 'credited' | 'posted', received 'bogus'"}
+apps/server test: {"level":40,"time":1790521858220,"pid":378739,"hostname":"LEGION","reqId":"req-7","code":"VALIDATION_ERROR","msg":"Number must be greater than or equal to 1"}
+apps/server test: {"level":40,"time":1790521858221,"pid":378739,"hostname":"LEGION","reqId":"req-8","code":"VALIDATION_ERROR","msg":"Invalid date"}
+apps/server test: {"level":40,"time":1790521858223,"pid":378739,"hostname":"LEGION","reqId":"req-9","code":"VALIDATION_ERROR","msg":"A date is required in YYYY-MM-DD format"}
+apps/server test: {"level":40,"time":1790521858224,"pid":378739,"hostname":"LEGION","reqId":"req-a","code":"VALIDATION_ERROR","msg":"Number must be greater than or equal to 0"}
+apps/server test: {"level":40,"time":1790521858225,"pid":378739,"hostname":"LEGION","reqId":"req-b","code":"VALIDATION_ERROR","msg":"A date is required in YYYY-MM-DD format"}
+apps/server test: {"level":40,"time":1790521858225,"pid":378739,"hostname":"LEGION","reqId":"req-c","code":"VALIDATION_ERROR","msg":"Expected number, received nan"}
+apps/server test: {"level":40,"time":1790521858226,"pid":378739,"hostname":"LEGION","reqId":"req-d","code":"VALIDATION_ERROR","msg":"A date is required in YYYY-MM-DD format"}
+apps/server test: {"level":40,"time":1790521858226,"pid":378739,"hostname":"LEGION","reqId":"req-e","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858228,"pid":378739,"hostname":"LEGION","reqId":"req-g","code":"VALIDATION_ERROR","msg":"A valid user id is required"}
+apps/server test: {"level":40,"time":1790521858228,"pid":378739,"hostname":"LEGION","reqId":"req-h","code":"VALIDATION_ERROR","msg":"A valid plan id is required"}
+apps/server test: {"level":40,"time":1790521858229,"pid":378739,"hostname":"LEGION","reqId":"req-i","code":"VALIDATION_ERROR","msg":"A valid subscriber id is required"}
+apps/server test: {"level":40,"time":1790521858229,"pid":378739,"hostname":"LEGION","reqId":"req-j","code":"VALIDATION_ERROR","msg":"A valid subscriber id is required"}
+apps/server test: {"level":40,"time":1790521858230,"pid":378739,"hostname":"LEGION","reqId":"req-k","code":"VALIDATION_ERROR","msg":"A valid service account id is required"}
+apps/server test: {"level":40,"time":1790521858230,"pid":378739,"hostname":"LEGION","reqId":"req-l","code":"VALIDATION_ERROR","msg":"A valid service account id is required"}
+apps/server test: {"level":40,"time":1790521858230,"pid":378739,"hostname":"LEGION","reqId":"req-m","code":"VALIDATION_ERROR","msg":"A valid service account id is required"}
+apps/server test: {"level":40,"time":1790521858231,"pid":378739,"hostname":"LEGION","reqId":"req-n","code":"VALIDATION_ERROR","msg":"A valid service account id is required"}
+apps/server test: {"level":40,"time":1790521858231,"pid":378739,"hostname":"LEGION","reqId":"req-o","code":"VALIDATION_ERROR","msg":"A valid service account id is required"}
+apps/server test: {"level":40,"time":1790521858232,"pid":378739,"hostname":"LEGION","reqId":"req-p","code":"VALIDATION_ERROR","msg":"A valid invoice id is required"}
+apps/server test: {"level":40,"time":1790521858232,"pid":378739,"hostname":"LEGION","reqId":"req-q","code":"VALIDATION_ERROR","msg":"A valid payment id is required"}
+apps/server test: {"level":40,"time":1790521858233,"pid":378739,"hostname":"LEGION","reqId":"req-r","code":"VALIDATION_ERROR","msg":"A valid service account id is required"}
+apps/server test: {"level":40,"time":1790521858233,"pid":378739,"hostname":"LEGION","reqId":"req-s","code":"VALIDATION_ERROR","msg":"A valid collector batch id is required"}
+apps/server test: {"level":40,"time":1790521858233,"pid":378739,"hostname":"LEGION","reqId":"req-t","code":"VALIDATION_ERROR","msg":"A valid invoice id is required"}
+apps/server test: {"level":40,"time":1790521858234,"pid":378739,"hostname":"LEGION","reqId":"req-u","code":"VALIDATION_ERROR","msg":"A valid collector batch id is required"}
+apps/server test: {"level":40,"time":1790521858236,"pid":378739,"hostname":"LEGION","reqId":"req-v","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858240,"pid":378739,"hostname":"LEGION","reqId":"req-w","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858241,"pid":378739,"hostname":"LEGION","reqId":"req-x","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858242,"pid":378739,"hostname":"LEGION","reqId":"req-y","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858242,"pid":378739,"hostname":"LEGION","reqId":"req-z","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858243,"pid":378739,"hostname":"LEGION","reqId":"req-10","code":"VALIDATION_ERROR","msg":"Number must be greater than or equal to 0"}
+apps/server test: {"level":40,"time":1790521858244,"pid":378739,"hostname":"LEGION","reqId":"req-11","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858244,"pid":378739,"hostname":"LEGION","reqId":"req-12","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858245,"pid":378739,"hostname":"LEGION","reqId":"req-13","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858246,"pid":378739,"hostname":"LEGION","reqId":"req-14","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858247,"pid":378739,"hostname":"LEGION","reqId":"req-15","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858247,"pid":378739,"hostname":"LEGION","reqId":"req-16","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858248,"pid":378739,"hostname":"LEGION","reqId":"req-17","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858249,"pid":378739,"hostname":"LEGION","reqId":"req-18","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858249,"pid":378739,"hostname":"LEGION","reqId":"req-19","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858250,"pid":378739,"hostname":"LEGION","reqId":"req-1a","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858251,"pid":378739,"hostname":"LEGION","reqId":"req-1b","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858251,"pid":378739,"hostname":"LEGION","reqId":"req-1c","code":"VALIDATION_ERROR","msg":"Provide at least one of fullName or role"}
+apps/server test: {"level":40,"time":1790521858252,"pid":378739,"hostname":"LEGION","reqId":"req-1d","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858253,"pid":378739,"hostname":"LEGION","reqId":"req-1e","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858253,"pid":378739,"hostname":"LEGION","reqId":"req-1f","code":"VALIDATION_ERROR","msg":"Provide at least one field to update"}
+apps/server test: {"level":40,"time":1790521858254,"pid":378739,"hostname":"LEGION","reqId":"req-1g","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858255,"pid":378739,"hostname":"LEGION","reqId":"req-1h","code":"VALIDATION_ERROR","msg":"Reconnection reason must be at least 10 characters"}
+apps/server test: {"level":40,"time":1790521858255,"pid":378739,"hostname":"LEGION","reqId":"req-1i","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858256,"pid":378739,"hostname":"LEGION","reqId":"req-1j","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test: {"level":40,"time":1790521858259,"pid":378739,"hostname":"LEGION","reqId":"req-1l","code":"VALIDATION_ERROR","msg":"Required"}
+apps/server test:  ✓ test/input-validation.test.ts (2 tests) 126ms
+apps/server test:  ✓ test/phase9-invariants.postgres.test.ts (7 tests) 36ms
+apps/server test: stderr | test/permission-resolver.test.ts > database-backed permission resolution > FAILS CLOSED when the database is unavailable during a refresh
+apps/server test: [RBAC] Could not resolve permissions from the database; refusing every request until it recovers Error: connection refused
+apps/server test:     at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/permission-resolver.test.ts:103:33
+apps/server test:     at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+apps/server test:     at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+apps/server test:     at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+apps/server test:     at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+apps/server test:     at processTicksAndRejections (node:internal/process/task_queues:103:5)
+apps/server test:     at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+apps/server test:     at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+apps/server test:     at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+apps/server test:     at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+apps/server test: stderr | test/permission-resolver.test.ts > database-backed permission resolution > denies when the on-demand resolution cannot read the database
+apps/server test: [RBAC] Could not resolve permissions from the database; refusing every request until it recovers Error: connection refused
+apps/server test:     at /home/yaji/projects/subscription_and_collection_ledger_system/apps/server/test/permission-resolver.test.ts:123:33
+apps/server test:     at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+apps/server test:     at file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+apps/server test:     at runWithTimeout (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+apps/server test:     at runTest (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+apps/server test:     at processTicksAndRejections (node:internal/process/task_queues:103:5)
+apps/server test:     at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+apps/server test:     at runSuite (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+apps/server test:     at runFiles (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+apps/server test:     at startTests (file:///home/yaji/projects/subscription_and_collection_ledger_system/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+apps/server test:  ✓ test/permission-resolver.test.ts (10 tests) 6ms
+apps/server test:  ✓ test/deployment-artifacts.test.ts (14 tests) 8ms
+apps/server test: {"level":40,"time":1790521860041,"pid":378839,"hostname":"LEGION","reqId":"req-7","code":"VALIDATION_ERROR","msg":"Provide at least one field to update"}
+apps/server test:  ✓ test/plans.routes.test.ts (7 tests) 95ms
+apps/server test:  ✓ test/overdue-accounts.test.ts (11 tests) 5ms
+apps/server test:  ✓ test/permissions.test.ts (17 tests) 5ms
+apps/server test: {"level":40,"time":1790521861680,"pid":378909,"hostname":"LEGION","reqId":"req-e","code":"UNAUTHORIZED","msg":"Invalid username or password"}
+apps/server test: {"level":40,"time":1790521861684,"pid":378909,"hostname":"LEGION","reqId":"req-f","code":"VALIDATION_ERROR","msg":"Invalid enum value. Expected 'draft' | 'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'void' | 'credited' | 'posted', received ''; DROP TABLE invoices; --'"}
+apps/server test: {"level":40,"time":1790521861685,"pid":378909,"hostname":"LEGION","reqId":"req-g","code":"VALIDATION_ERROR","msg":"Invalid date"}
+apps/server test:  ✓ test/sql-injection.postgres.test.ts (5 tests) 361ms
+apps/server test:  ✓ test/invoice-calculations.test.ts (11 tests) 4ms
+apps/server test:  ✓ test/demo-plan.test.ts (9 tests) 9ms
+apps/server test:  ✓ test/payment-allocation.test.ts (9 tests) 9ms
+apps/server test:  ✓ test/ledger-integrity.test.ts (9 tests) 50ms
+apps/server test:  ✓ test/ar-aging.test.ts (5 tests) 5ms
+apps/server test:  ✓ test/permissions-catalogue.test.ts (7 tests) 4ms
+apps/server test:  ✓ test/xlsx-writer.test.ts (7 tests) 4ms
+apps/server test:  ✓ test/rbac-migration.test.ts (7 tests) 8ms
+apps/server test:  ✓ test/seed.test.ts (4 tests) 8ms
+apps/server test:  ✓ test/ledger-immutability.test.ts (5 tests) 9ms
+apps/server test:  ✓ test/collections-immutability.test.ts (5 tests) 8ms
+apps/server test:  ✓ test/gcash-screenshot.test.ts (7 tests) 4ms
+apps/server test:  ✓ test/date.test.ts (9 tests) 4ms
+apps/server test:  ✓ test/login-lockout.postgres.test.ts (3 tests) 26ms
+apps/server test:  ✓ test/cors-origins.test.ts (5 tests) 56ms
+apps/server test:  ✓ test/account-number.test.ts (8 tests) 4ms
+apps/server test:  ✓ test/client-config.test.ts (9 tests) 3ms
+apps/server test:  ✓ test/receipt-number.test.ts (6 tests) 2ms
+apps/server test:  ✓ test/collector-batch-number.test.ts (5 tests) 2ms
+apps/server test:  ✓ test/invoice-number.test.ts (5 tests) 2ms
+apps/server test:  ✓ test/password.test.ts (4 tests) 13ms
+apps/server test:  Test Files  65 passed (65)
+apps/server test:       Tests  738 passed (738)
+apps/server test:    Start at  23:10:15
+apps/server test:    Duration  51.20s (transform 1.99s, setup 718ms, collect 25.59s, tests 16.10s, environment 8ms, prepare 2.59s)
+apps/server test: Done
+
+================================================================================
+$ pnpm typecheck
+================================================================================
+
+> bcis-system@0.1.0 typecheck /home/yaji/projects/subscription_and_collection_ledger_system
+> pnpm -r --if-present typecheck
+
+Scope: 3 of 4 workspace projects
+packages/shared typecheck$ tsc --noEmit -p tsconfig.json
+packages/shared typecheck: Done
+apps/client typecheck$ tsc --noEmit -p tsconfig.json
+apps/server typecheck$ tsc --noEmit -p tsconfig.json
+apps/client typecheck: Done
+apps/server typecheck: Done
+
+================================================================================
+$ pnpm lint
+================================================================================
+
+> bcis-system@0.1.0 lint /home/yaji/projects/subscription_and_collection_ledger_system
+> eslint .
+
