@@ -17,6 +17,10 @@ build/
 .prettiercache
 coverage/
 
+# Playwright end-to-end output (S10-1) — traces and reports are regenerated, not committed
+apps/client/test-results/
+playwright-report/
+
 # Logs
 *.log
 npm-debug.log*
