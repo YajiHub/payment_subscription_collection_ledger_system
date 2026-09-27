@@ -77,6 +77,13 @@ const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
     links: [
       { label: "Post Payment", to: "/payments/new", permissions: ["payments:post"] },
       { label: "Payment Ledger", to: "/payments", permissions: ["payments:read"] },
+      // S7-6: the verifier's worklist. It opens for whoever may confirm a claim;
+      // the reject control inside is offered only to the reject permission.
+      {
+        label: "GCash Verification",
+        to: "/payments/gcash",
+        permissions: ["payments:verify_gcash"],
+      },
     ],
   },
   {
@@ -206,7 +213,13 @@ export function AppNavigation(): ReactNode {
   return (
     <nav
       aria-label="Main navigation"
-      className="flex flex-wrap items-start justify-end gap-x-6 gap-y-3 print:hidden"
+      /*
+       * Left-aligned wrapping on purpose. The menu used to pack each wrapped line to
+       * the right (`justify-end`), which left a ragged hole under the first line once
+       * the sections outgrew one row. Starting each line at the left keeps the sections
+       * in a readable block however many there are.
+       */
+      className="flex flex-wrap items-start justify-start gap-x-6 gap-y-3 print:hidden"
     >
       {visibleSections.map((section) => (
         <div key={section.label} className="space-y-1.5">

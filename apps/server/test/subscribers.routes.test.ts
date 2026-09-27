@@ -354,9 +354,64 @@ describe("subscriber management routes", () => {
     const body = response.json().data;
     expect(body.subscriber.accountNumber).toBe("SUB-20250124-00001");
     expect(body.serviceAccounts).toHaveLength(1);
-    // Phase 6 computes every balance from the ledger.
+    // The balance comes from the account's latest ledger entry.
     expect(body.serviceAccounts[0].balanceCentavos).toBe(125000);
     expect(body.totalOutstandingCentavos).toBe(125000);
+  });
+
+  it("returns a real ledger balance on the subscriber profile, never null", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([subscriberRow()]); // subscriber
+    fakeDatabase.queueSelectRows([{ account: serviceAccountRow(), plan: planRow() }]); // accounts
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 649500 }]); // ledger balance for the account
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/subscribers/${SUBSCRIBER_ID}`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const account = response.json().data.serviceAccounts[0];
+    expect(account.balanceCentavos).not.toBeNull();
+    expect(account.balanceCentavos).toBe(649500);
+  });
+
+  it("reports the same figure as the outstanding invoice total for the account", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([subscriberRow()]); // subscriber
+    fakeDatabase.queueSelectRows([{ account: serviceAccountRow(), plan: planRow() }]); // accounts
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 649500 }]); // profile ledger balance
+
+    const profileResponse = await server.inject({
+      method: "GET",
+      url: `/api/subscribers/${SUBSCRIBER_ID}`,
+      headers: authorizationHeader(token),
+    });
+    const profileBalance = profileResponse.json().data.serviceAccounts[0].balanceCentavos as number;
+
+    // The same account's payment summary: the invoices still owed add up to the
+    // ledger balance, so a profile and a receipt counter cannot quote two figures.
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      { remainingBalanceCentavos: 400000 },
+      { remainingBalanceCentavos: 249500 },
+    ]); // outstanding invoices
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 649500 }]); // ledger balance for credit check
+
+    const summaryResponse = await server.inject({
+      method: "GET",
+      url: `/api/service-accounts/${SERVICE_ACCOUNT_ID}/payment-summary`,
+      headers: authorizationHeader(token),
+    });
+    const outstandingTotal = summaryResponse.json().data.outstandingTotalCentavos as number;
+
+    expect(profileBalance).toBe(649500);
+    expect(outstandingTotal).toBe(profileBalance);
   });
 });
 
@@ -482,6 +537,7 @@ describe("service account suspension and reconnection", () => {
       serviceAccountRow({ status: "active", suspensionDate: null, terminationDate: null }),
     ]);
     // Reconnecting now also raises the reconnection fee invoice (Phase 4).
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance for the reconnected account
     fakeDatabase.queueInsertRows([], [{ id: INVOICE_ID }]); // history row, then invoice returning
     fakeDatabase.queueSelectRows([
       { id: SERVICE_ACCOUNT_ID, planName: "Fiber 25Mbps", reconnectionFeeCentavos: 50000 },

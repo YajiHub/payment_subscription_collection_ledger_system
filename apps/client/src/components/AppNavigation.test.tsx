@@ -33,6 +33,8 @@ const ADMIN_LINK_ORDER = [
   "Subscription Plans",
   "Post Payment",
   "Payment Ledger",
+  // S7-6: the GCash verification queue under Payments.
+  "GCash Verification",
   "Collector Batches",
   "AR Aging Analysis",
   "Overdue Accounts",
@@ -108,6 +110,7 @@ describe("AppNavigation", () => {
     expect(hrefByLabel.get("Service Accounts")).toBe("/services/accounts");
     expect(hrefByLabel.get("Suspension & Reconnection")).toBe("/services/suspension");
     expect(hrefByLabel.get("Collector Batches")).toBe("/collector-batches");
+    expect(hrefByLabel.get("GCash Verification")).toBe("/payments/gcash");
   });
 
   it("withholds the screens a role may not open", () => {
@@ -127,6 +130,15 @@ describe("AppNavigation", () => {
     expect(labels).not.toContain("Dashboard");
     expect(labels).toContain("Collector Batches");
     expect(labels).toContain("Service Accounts");
+    // The Collector holds no GCash verification permission, so the queue is absent.
+    expect(labels).not.toContain("GCash Verification");
+  });
+
+  it("offers the GCash verification queue to a role that may verify", () => {
+    signInAs("cashier");
+    renderNavigation();
+
+    expect(linkLabels()).toContain("GCash Verification");
   });
 
   it("offers the Administrator a deliberate lock beside the log-out control", () => {

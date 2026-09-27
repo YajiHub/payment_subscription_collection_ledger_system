@@ -107,10 +107,8 @@ function ServiceAccountCard({
           <dt className="text-content-secondary">Terminated</dt>
           <dd>{formatDateOnly(account.terminationDate)}</dd>
           <dt className="text-content-secondary">Current balance</dt>
-          {/* Computed from the ledger — never a stored column. */}
-          <dd className="tabular-nums">
-            {account.balanceCentavos === null ? "—" : formatCentavos(account.balanceCentavos)}
-          </dd>
+          {/* Read from the ledger — never a stored column. Negative is an advance credit. */}
+          <dd className="tabular-nums">{formatCentavos(account.balanceCentavos)}</dd>
         </dl>
 
         {canViewLedger && (

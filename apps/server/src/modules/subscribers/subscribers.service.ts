@@ -20,7 +20,6 @@ import {
   type CreateServiceAccountInput,
   type ServiceAccountSummary,
 } from "../service-accounts/service-accounts.service";
-import { getCurrentBalanceCentavos } from "../ledger/ledger.service";
 import type {
   CreateSubscriberFields,
   ServiceAccountStatus,
@@ -292,7 +291,7 @@ export async function updateSubscriber(
 }
 
 export interface SubscriberStatementAccount extends Omit<ServiceAccountSummary, "balanceCentavos"> {
-  /** The current balance, computed from the ledger (negative = advance credit). */
+  /** The account's current balance, read from its latest ledger entry. */
   balanceCentavos: number;
 }
 
@@ -312,10 +311,11 @@ export async function getSubscriberStatement(subscriberId: string): Promise<Stat
   let totalOutstandingCentavos = 0;
 
   for (const account of subscriber.serviceAccounts) {
-    const balanceCentavos = await getCurrentBalanceCentavos(db, account.id);
-    serviceAccountsWithBalances.push({ ...account, balanceCentavos });
-    if (balanceCentavos > 0) {
-      totalOutstandingCentavos += balanceCentavos;
+    // The account summary already carries the ledger balance, so a statement and
+    // the subscriber profile can never quote two different figures.
+    serviceAccountsWithBalances.push(account);
+    if (account.balanceCentavos > 0) {
+      totalOutstandingCentavos += account.balanceCentavos;
     }
   }
 

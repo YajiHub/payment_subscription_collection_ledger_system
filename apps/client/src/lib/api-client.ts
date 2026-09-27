@@ -305,8 +305,8 @@ export interface ServiceAccount {
   terminationDate: string | null;
   assignedCollectorId: string | null;
   consecutiveOverdueMonths: number;
-  /** The balance computed from the ledger in Phase 6; negative means an advance credit. */
-  balanceCentavos: number | null;
+  /** The account's balance from its latest ledger entry; negative means an advance credit. */
+  balanceCentavos: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -957,6 +957,110 @@ export async function uploadGcashScreenshot(input: {
   const response = await httpClient.post<
     ApiSuccessEnvelope<{ filePath: string; sizeBytes: number }>
   >("/api/payments/gcash/upload-screenshot", input);
+  return unwrap(response.data);
+}
+
+// ─── GCash verification (S3-2, S3-3, S7-6) ────────────────────────────────────
+
+/**
+ * One claim in the verification queue (section 4.3).
+ *
+ * `screenshotFilePath` is the stored proof image, if the recorder attached one.
+ * It is evidence for a human to judge, never automatic proof that the customer
+ * paid — only verify moves money.
+ */
+export interface PendingGcashPayment {
+  paymentId: string;
+  receiptNumber: string;
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  amountCentavos: number;
+  paymentDate: string;
+  recordedAt: string;
+  recordedByName: string;
+  referenceNumber: string;
+  senderGcashNumber: string | null;
+  senderName: string | null;
+  screenshotFilePath: string | null;
+}
+
+/** The GCash detail row as the verify/reject responses return it. */
+export interface GcashPaymentRecord {
+  paymentId: string;
+  gcashReferenceNumber: string;
+  senderGcashNumber: string | null;
+  senderName: string | null;
+  screenshotFilePath: string | null;
+  verifiedAt: string | null;
+  verifiedBy: string | null;
+  rejectedAt: string | null;
+  rejectedBy: string | null;
+  rejectionReason: string | null;
+}
+
+/** The result of confirming a pending GCash payment: now posted and allocated. */
+export interface VerifyGcashPaymentResult {
+  payment: PaymentSummary;
+  gcash: GcashPaymentRecord;
+  allocations: PaymentAllocationSummary[];
+  allocatedCentavos: number;
+  advanceCreditCentavos: number;
+}
+
+/** The result of refusing a pending GCash payment: the invoice is untouched. */
+export interface RejectGcashPaymentResult {
+  payment: PaymentSummary;
+  gcash: GcashPaymentRecord;
+}
+
+/** GET /api/payments/gcash/pending — the verifier's worklist, oldest claim first. */
+export async function listPendingGcashPayments(): Promise<PendingGcashPayment[]> {
+  const response = await httpClient.get<ApiSuccessEnvelope<PendingGcashPayment[]>>(
+    "/api/payments/gcash/pending"
+  );
+  return unwrap(response.data);
+}
+
+/**
+ * GET /api/payments/gcash/screenshot/:paymentId — the proof image as a Blob.
+ *
+ * Fetched through the authenticated client rather than a plain `<img src>`, so the
+ * bearer token travels with the request. Returns null when the payment has no
+ * image, in which case the endpoint answers with the JSON envelope instead.
+ */
+export async function fetchGcashScreenshot(paymentId: string): Promise<Blob | null> {
+  const response = await httpClient.get<Blob>(
+    `/api/payments/gcash/screenshot/${paymentId}`,
+    { responseType: "blob" }
+  );
+  const contentType = String(response.headers["content-type"] ?? "");
+  return contentType.startsWith("image/") ? response.data : null;
+}
+
+/**
+ * POST /api/payments/gcash/:id/verify — confirms a claim so it posts and allocates.
+ */
+export async function verifyGcashPayment(paymentId: string): Promise<VerifyGcashPaymentResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<VerifyGcashPaymentResult>>(
+    `/api/payments/gcash/${paymentId}/verify`
+  );
+  return unwrap(response.data);
+}
+
+/**
+ * POST /api/payments/gcash/:id/reject — refuses a claim with a mandatory reason.
+ * Nothing is posted; the invoice it pointed at is left exactly as it was.
+ */
+export async function rejectGcashPayment(
+  paymentId: string,
+  reason: string
+): Promise<RejectGcashPaymentResult> {
+  const response = await httpClient.post<ApiSuccessEnvelope<RejectGcashPaymentResult>>(
+    `/api/payments/gcash/${paymentId}/reject`,
+    { reason }
+  );
   return unwrap(response.data);
 }
 

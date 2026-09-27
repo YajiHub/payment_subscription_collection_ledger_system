@@ -24,6 +24,7 @@ import {
 import { users } from "../../db/schema/users";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { formatDateOnly } from "../../shared/date";
+import { getCurrentBalanceCentavos } from "../ledger/ledger.service";
 import { planColumns, requireAssignablePlan } from "../plans/plans.service";
 import {
   formatDateSegment,
@@ -63,10 +64,13 @@ export interface ServiceAccountSummary extends ServiceAccountRow {
   serviceType: ServiceType;
   monthlyRateCentavos: number;
   /**
-   * The outstanding balance is owned by the ledger (Phase 6).
-   * Until then it is reported as null rather than a misleading zero.
+   * The current balance, read from the account's latest ledger entry.
+   *
+   * The ledger is the authority on what is owed: there is no balance column, and
+   * this is the same figure `getSubscriberStatement` reports. A positive value is
+   * what the subscriber owes; a negative value is an advance credit they hold.
    */
-  balanceCentavos: null;
+  balanceCentavos: number;
 }
 
 export interface ServiceAccountDetail extends ServiceAccountSummary {
@@ -106,17 +110,24 @@ const statusHistoryColumns = {
   changedAt: serviceStatusHistory.changedAt,
 };
 
-/** Flattens a stored row plus its plan into the shape the API returns. */
+/**
+ * Flattens a stored row plus its plan into the shape the API returns.
+ *
+ * The balance is passed in rather than looked up here: this function stays pure so
+ * a caller inside a status-change transaction reads the balance from the same
+ * transaction, and the brand-new-account path can pass a known zero.
+ */
 export function toServiceAccountSummary(
   account: ServiceAccountRow,
-  plan: PlanSnapshot
+  plan: PlanSnapshot,
+  balanceCentavos: number
 ): ServiceAccountSummary {
   return {
     ...account,
     planName: plan.name,
     serviceType: plan.serviceType,
     monthlyRateCentavos: plan.monthlyRateCentavos,
-    balanceCentavos: null,
+    balanceCentavos,
   };
 }
 
@@ -238,7 +249,9 @@ export async function insertServiceAccount(
     throw new NotFoundError("Service account could not be created");
   }
 
-  return toServiceAccountSummary(inserted, plan);
+  // A brand-new account has no ledger entries yet, so its balance is zero by
+  // construction — no lookup needed.
+  return toServiceAccountSummary(inserted, plan, 0);
 }
 
 /** Adds a service account to an existing subscriber. */
@@ -278,7 +291,8 @@ export async function loadServiceAccountsForSubscribers(
     .where(inArray(serviceAccounts.subscriberId, [...subscriberIds]));
 
   for (const row of rows) {
-    const summary = toServiceAccountSummary(row.account, row.plan);
+    const balanceCentavos = await getCurrentBalanceCentavos(db, row.account.id);
+    const summary = toServiceAccountSummary(row.account, row.plan, balanceCentavos);
     const existing = grouped.get(row.account.subscriberId);
 
     if (existing === undefined) {
@@ -303,7 +317,9 @@ export async function getServiceAccountById(
     .where(eq(serviceStatusHistory.serviceAccountId, serviceAccountId))
     .orderBy(desc(serviceStatusHistory.changedAt));
 
-  return { ...toServiceAccountSummary(account, plan), statusHistory };
+  const balanceCentavos = await getCurrentBalanceCentavos(db, serviceAccountId);
+
+  return { ...toServiceAccountSummary(account, plan, balanceCentavos), statusHistory };
 }
 
 /** One entry in the status audit trail. */
@@ -404,7 +420,9 @@ export async function suspendServiceAccount(
       createdBy: changedBy,
     });
 
-    return toServiceAccountSummary(updated, plan);
+    const balanceCentavos = await getCurrentBalanceCentavos(tx, serviceAccountId);
+
+    return toServiceAccountSummary(updated, plan, balanceCentavos);
   });
 }
 
@@ -474,8 +492,10 @@ export async function reconnectServiceAccount(
       changedBy,
     });
 
+    const balanceCentavos = await getCurrentBalanceCentavos(tx, serviceAccountId);
+
     return {
-      serviceAccount: toServiceAccountSummary(updated, plan),
+      serviceAccount: toServiceAccountSummary(updated, plan, balanceCentavos),
       reconnectionFeeEntry: {
         serviceAccountId,
         planId: plan.id,
@@ -568,7 +588,9 @@ export async function terminateServiceAccount(
       changedBy,
     });
 
-    return toServiceAccountSummary(updated, plan);
+    const balanceCentavos = await getCurrentBalanceCentavos(tx, serviceAccountId);
+
+    return toServiceAccountSummary(updated, plan, balanceCentavos);
   });
 }
 
@@ -612,8 +634,10 @@ export async function changeServiceAccountPlan(
     throw new NotFoundError("Service account not found");
   }
 
+  const balanceCentavos = await getCurrentBalanceCentavos(db, serviceAccountId);
+
   return {
-    serviceAccount: toServiceAccountSummary(updated, newPlan),
+    serviceAccount: toServiceAccountSummary(updated, newPlan, balanceCentavos),
     previousPlanId: currentPlan.id,
     previousMonthlyRateCentavos: currentPlan.monthlyRateCentavos,
     newMonthlyRateCentavos: newPlan.monthlyRateCentavos,
@@ -642,5 +666,7 @@ export async function assignCollector(
     throw new NotFoundError("Service account not found");
   }
 
-  return toServiceAccountSummary(updated, plan);
+  const balanceCentavos = await getCurrentBalanceCentavos(db, serviceAccountId);
+
+  return toServiceAccountSummary(updated, plan, balanceCentavos);
 }

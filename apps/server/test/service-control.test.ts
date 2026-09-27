@@ -218,6 +218,7 @@ describe("suspension threshold routes", () => {
     fakeDatabase.queueSelectRows([
       { account: accountRow({ status: "suspended", suspensionDate: "2025-01-10" }), plan: planRow() },
     ]);
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance for the reconnected account
     fakeDatabase.queueUpdateRows([accountRow({ status: "active" })]);
     fakeDatabase.queueInsertRows([], [{ id: INVOICE_ID }]); // history row, then invoice returning
     fakeDatabase.queueSelectRows([

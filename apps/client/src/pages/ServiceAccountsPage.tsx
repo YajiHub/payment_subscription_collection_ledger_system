@@ -142,9 +142,8 @@ export function ServiceAccountsPage(): ReactNode {
         header: "Balance",
         align: "right",
         cellClassName: "tabular-nums",
-        sortValue: (row) => row.account.balanceCentavos ?? 0,
-        cell: (row) =>
-          row.account.balanceCentavos === null ? "—" : formatCentavos(row.account.balanceCentavos),
+        sortValue: (row) => row.account.balanceCentavos,
+        cell: (row) => formatCentavos(row.account.balanceCentavos),
       },
       {
         id: "actions",

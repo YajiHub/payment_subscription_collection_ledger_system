@@ -11,6 +11,7 @@ import { CollectorBatchDetailPage } from "./pages/CollectorBatchDetailPage";
 import { CollectorBatchListPage } from "./pages/CollectorBatchListPage";
 import { CollectorBatchRouteSheetPage } from "./pages/CollectorBatchRouteSheetPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { GcashVerificationPage } from "./pages/GcashVerificationPage";
 import { HomePage } from "./pages/HomePage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 import { InvoiceListPage } from "./pages/InvoiceListPage";
@@ -176,6 +177,14 @@ export function App(): ReactNode {
             element={
               <ProtectedRoute requiredPermission="payments:read">
                 <PaymentHistoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/payments/gcash"
+            element={
+              <ProtectedRoute requiredPermission="payments:verify_gcash">
+                <GcashVerificationPage />
               </ProtectedRoute>
             }
           />
