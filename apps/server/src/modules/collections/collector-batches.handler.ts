@@ -183,6 +183,7 @@ export async function postBatchSubmitted(
       actualRemittanceCentavos: 0,
       varianceCentavos: 0,
     },
+    result.previousStatus,
     requestActor(request)
   );
   return sendSuccess(reply, result);
@@ -219,6 +220,7 @@ export async function postBatchRemitted(
       actualRemittanceCentavos: result.actualRemittanceCentavos,
       varianceCentavos: result.varianceCentavos,
     },
+    result.previousStatus,
     requestActor(request)
   );
   return sendSuccess(reply, result);
@@ -294,7 +296,12 @@ export async function postBatchReconciled(
   const body = parseOrThrow(reconcileBatchSchema, request.body ?? {});
 
   const result = await reconcileBatch(id, body.varianceNotes, callerAsActor(request));
-  await audit.collectorBatchReconciled(result, body.varianceNotes, requestActor(request));
+  await audit.collectorBatchReconciled(
+    result,
+    result.previousStatus,
+    body.varianceNotes,
+    requestActor(request)
+  );
   return sendSuccess(reply, result);
 }
 
@@ -312,7 +319,7 @@ export async function postBatchClosed(
   const body = parseOrThrow(closeBatchSchema, request.body ?? {});
 
   const result = await closeBatch(id, callerAsActor(request));
-  await audit.collectorBatchClosed(result, requestActor(request));
+  await audit.collectorBatchClosed(result, result.previousStatus, requestActor(request));
   if (body.notes !== undefined && body.notes.trim().length > 0) {
     await logAuditEntry({
       action: "collector_batch.closed",

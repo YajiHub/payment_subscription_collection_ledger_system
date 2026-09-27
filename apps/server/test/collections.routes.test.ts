@@ -557,6 +557,9 @@ describe("collector batch routes", () => {
       entityType: "payment",
       entityId: paymentId,
       performedBy: CASHIER_ID,
+      // The payment really was posted; the trail must show posted → reversed.
+      previousState: { id: paymentId, status: "posted" },
+      newState: { id: paymentId, status: "reversed" },
     });
     expect(String(auditRow?.description)).toContain(reason);
   });
@@ -581,9 +584,13 @@ describe("collector batch routes", () => {
 
     expect(submitted.statusCode).toBe(200);
     expect(submitted.json().data.status).toBe("submitted");
+    // The batch was in_progress, not open: the audit must name the real prior status.
     expect(
       auditWrites().find((row) => row.action === "collector_batch.submitted")
-    ).toBeDefined();
+    ).toMatchObject({
+      previousState: { status: "in_progress" },
+      newState: { status: "submitted" },
+    });
 
     // Step 2: the cash handed in is a DISTINCT step that writes a remittance row.
     fakeDatabase.queueSelectRows([]); // authenticate
@@ -615,7 +622,11 @@ describe("collector batch routes", () => {
     });
     expect(
       auditWrites().find((row) => row.action === "collector_batch.remitted")
-    ).toBeDefined();
+    ).toMatchObject({
+      // Remittance follows submission: submitted → remitted, never open → submitted.
+      previousState: { status: "submitted" },
+      newState: { status: "remitted" },
+    });
   });
 
   it("stores a shortage as a negative variance at remittance, never absorbing it", async () => {
@@ -764,6 +775,13 @@ describe("collector batch routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data.ledgerReconciles).toBe(true);
     expect(response.json().data.ledgerCreditTotalCentavos).toBe(50000);
+    // Reconciliation follows remittance, so the trail must read remitted → reconciled.
+    expect(
+      auditWrites().find((row) => row.action === "collector_batch.reconciled")
+    ).toMatchObject({
+      previousState: { status: "remitted" },
+      newState: { status: "reconciled" },
+    });
   });
 
   it("rejects reconciling the same batch twice", async () => {
@@ -863,7 +881,10 @@ describe("collector batch routes", () => {
     expect(closed.json().data.closedAt).toBeTruthy();
     expect(
       auditWrites().find((row) => row.action === "collector_batch.closed")
-    ).toBeDefined();
+    ).toMatchObject({
+      previousState: { status: "reconciled" },
+      newState: { status: "closed" },
+    });
   });
 
   it("refuses to close a batch that was not reconciled first", async () => {

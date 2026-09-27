@@ -19,11 +19,18 @@ vi.mock("../src/db/connection", async () => {
 });
 
 import { buildServer } from "../src/index.ts";
+import { auditLogs } from "../src/db/schema/audit";
 import { fakeDatabase } from "./support/fake-database";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 
 const ADMIN_ID = randomUUID();
 const PLAN_ID = randomUUID();
+
+function auditWrites(): Array<Record<string, unknown>> {
+  return fakeDatabase.insertedRows
+    .filter((row) => row.table === auditLogs)
+    .map((row) => row.values as Record<string, unknown>);
+}
 
 function planRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -156,6 +163,7 @@ describe("plan routes", () => {
     const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([planRow()]); // the plan as it was, for the audit prior
     fakeDatabase.queueUpdateRows([planRow({ isActive: false })]);
 
     const response = await server.inject({
@@ -167,6 +175,12 @@ describe("plan routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data.isActive).toBe(false);
     expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ isActive: false });
+
+    // The trail records the flag the plan really held, not a hardcoded `true`.
+    expect(auditWrites().find((row) => row.action === "plan.retired")).toMatchObject({
+      previousState: { id: PLAN_ID, isActive: true },
+      newState: { id: PLAN_ID, isActive: false },
+    });
   });
 
   it("refuses to change a plan's monthly rate through the update endpoint", async () => {

@@ -13,7 +13,9 @@ import {
   AUDIT_NO_ENTITY_ID,
   type AuditAction,
   type AuditEntityType,
+  type CollectorBatchStatus,
   type InvoiceStatus,
+  type PaymentStatus,
 } from "@bcis/shared";
 import type { FastifyRequest } from "fastify";
 
@@ -137,6 +139,10 @@ export const audit = {
   paymentReversed(
     paymentId: string,
     receiptNumber: string | null,
+    // The status the payment actually held, passed in because the row handed to
+    // this helper has already been moved to `reversed`. A literal here would
+    // misreport what the reversal changed.
+    previousStatus: PaymentStatus,
     reason: string,
     actor: AuditActor
   ): Promise<void> {
@@ -144,7 +150,7 @@ export const audit = {
       action: "payment.reversed",
       entityType: "payment",
       entityId: paymentId,
-      previousState: { id: paymentId, receiptNumber, status: "posted" },
+      previousState: { id: paymentId, receiptNumber, status: previousStatus },
       newState: { id: paymentId, receiptNumber, status: "reversed" },
       description: `Payment ${receiptNumber ?? paymentId} reversed. Reason: ${reason}`,
       ...actorFields(actor),
@@ -287,13 +293,15 @@ export const audit = {
   gcashPaymentVerified(
     paymentId: string,
     gcashReferenceNumber: string,
+    // The status the payment actually held is passed in rather than assumed.
+    previousStatus: PaymentStatus,
     actor: AuditActor
   ): Promise<void> {
     return logAuditEntry({
       action: "payment.gcash_verified",
       entityType: "payment",
       entityId: paymentId,
-      previousState: { id: paymentId, gcashReferenceNumber, status: "pending_verification" },
+      previousState: { id: paymentId, gcashReferenceNumber, status: previousStatus },
       newState: { id: paymentId, gcashReferenceNumber, status: "posted" },
       description: `GCash payment ${gcashReferenceNumber} verified`,
       ...actorFields(actor),
@@ -303,6 +311,7 @@ export const audit = {
   gcashPaymentRejected(
     paymentId: string,
     gcashReferenceNumber: string,
+    previousStatus: PaymentStatus,
     reason: string,
     actor: AuditActor
   ): Promise<void> {
@@ -310,7 +319,7 @@ export const audit = {
       action: "payment.gcash_rejected",
       entityType: "payment",
       entityId: paymentId,
-      previousState: { id: paymentId, gcashReferenceNumber, status: "pending_verification" },
+      previousState: { id: paymentId, gcashReferenceNumber, status: previousStatus },
       newState: { id: paymentId, gcashReferenceNumber, status: "rejected" },
       description: `GCash payment ${gcashReferenceNumber} rejected. Reason: ${reason}`,
       ...actorFields(actor),
@@ -361,12 +370,18 @@ export const audit = {
     });
   },
 
-  planRetired(document: AuditedDocument, actor: AuditActor): Promise<void> {
+  planRetired(
+    document: AuditedDocument,
+    // The active flag the plan actually held, passed in because `retirePlan`
+    // records no prior state and a plan may be retired more than once.
+    previousIsActive: boolean,
+    actor: AuditActor
+  ): Promise<void> {
     return logAuditEntry({
       action: "plan.retired",
       entityType: "plan",
       entityId: document.id,
-      previousState: { id: document.id, name: document.name, isActive: true },
+      previousState: { id: document.id, name: document.name, isActive: previousIsActive },
       newState: { id: document.id, name: document.name, isActive: false },
       description: `Plan ${String(document.name)} retired`,
       ...actorFields(actor),
@@ -391,13 +406,16 @@ export const audit = {
 
   collectorBatchSubmitted(
     document: { batchId: string; expectedRemittanceCentavos: number; actualRemittanceCentavos: number; varianceCentavos: number },
+    // The status the batch actually held: submitting is allowed from `open` (nothing
+    // collected) or `in_progress`, so only the caller knows which.
+    previousStatus: CollectorBatchStatus,
     actor: AuditActor
   ): Promise<void> {
     return logAuditEntry({
       action: "collector_batch.submitted",
       entityType: "collector_batch",
       entityId: document.batchId,
-      previousState: { status: "open", expectedRemittanceCentavos: document.expectedRemittanceCentavos },
+      previousState: { status: previousStatus, expectedRemittanceCentavos: document.expectedRemittanceCentavos },
       newState: { status: "submitted", actualRemittanceCentavos: document.actualRemittanceCentavos, varianceCentavos: document.varianceCentavos },
       description: `Collector batch submitted with ${document.actualRemittanceCentavos} centavos declared against ${document.expectedRemittanceCentavos} expected (variance ${document.varianceCentavos})`,
       ...actorFields(actor),
@@ -406,14 +424,18 @@ export const audit = {
 
   collectorBatchRemitted(
     document: { batchId: string; expectedRemittanceCentavos: number; actualRemittanceCentavos: number; varianceCentavos: number },
+    // Remittance happens AFTER submission: the batch really moves from `submitted`
+    // (first instalment) or `remitted` (a later instalment or a correction) to
+    // `remitted`, never from `open` to `submitted`.
+    previousStatus: CollectorBatchStatus,
     actor: AuditActor
   ): Promise<void> {
     return logAuditEntry({
       action: "collector_batch.remitted",
       entityType: "collector_batch",
       entityId: document.batchId,
-      previousState: { status: "open", expectedRemittanceCentavos: document.expectedRemittanceCentavos },
-      newState: { status: "submitted", actualRemittanceCentavos: document.actualRemittanceCentavos, varianceCentavos: document.varianceCentavos },
+      previousState: { status: previousStatus, expectedRemittanceCentavos: document.expectedRemittanceCentavos },
+      newState: { status: "remitted", actualRemittanceCentavos: document.actualRemittanceCentavos, varianceCentavos: document.varianceCentavos },
       description: `Collector batch remitted ${document.actualRemittanceCentavos} centavos against ${document.expectedRemittanceCentavos} expected (variance ${document.varianceCentavos})`,
       ...actorFields(actor),
     });
@@ -421,6 +443,8 @@ export const audit = {
 
   collectorBatchReconciled(
     document: { batchId: string; expectedRemittanceCentavos: number; actualRemittanceCentavos: number; varianceCentavos: number },
+    // Reconciliation follows remittance, so the real prior status is `remitted`.
+    previousStatus: CollectorBatchStatus,
     varianceNotes: string | undefined,
     actor: AuditActor
   ): Promise<void> {
@@ -428,7 +452,7 @@ export const audit = {
       action: "collector_batch.reconciled",
       entityType: "collector_batch",
       entityId: document.batchId,
-      previousState: { status: "submitted", varianceCentavos: document.varianceCentavos },
+      previousState: { status: previousStatus, varianceCentavos: document.varianceCentavos },
       newState: { status: "reconciled" },
       description: `Collector batch reconciled (variance ${document.varianceCentavos})${
         varianceNotes !== undefined && varianceNotes.trim().length > 0
@@ -441,13 +465,14 @@ export const audit = {
 
   collectorBatchClosed(
     document: { batchId: string; batchNumber?: string },
+    previousStatus: CollectorBatchStatus,
     actor: AuditActor
   ): Promise<void> {
     return logAuditEntry({
       action: "collector_batch.closed",
       entityType: "collector_batch",
       entityId: document.batchId,
-      previousState: { status: "reconciled" },
+      previousState: { status: previousStatus },
       newState: { status: "closed" },
       description: `Collector batch ${document.batchNumber ?? document.batchId} closed`,
       ...actorFields(actor),
@@ -463,6 +488,8 @@ export const audit = {
       action: "collector_batch.cancelled",
       entityType: "collector_batch",
       entityId: document.id,
+      // `cancelBatch` refuses any batch that is not `open`, so the real prior status
+      // is `open` by construction; the new status is read off the cancelled row.
       previousState: { id: document.id, batchNumber: document.batchNumber, status: "open" },
       newState: { id: document.id, batchNumber: document.batchNumber, status: "cancelled" },
       description: `Collector batch ${String(document.batchNumber)} cancelled${

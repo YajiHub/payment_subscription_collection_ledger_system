@@ -123,7 +123,12 @@ export async function verifyGcashPaymentWithinTransaction(
   await recordPaymentPosted(executor, postedPayment, input.verifiedByUserId);
 
   const actor = input.actor ?? { userId: input.verifiedByUserId };
-  await audit.gcashPaymentVerified(pendingPayment.id, gcashDetails.gcashReferenceNumber, actor);
+  await audit.gcashPaymentVerified(
+    pendingPayment.id,
+    gcashDetails.gcashReferenceNumber,
+    pendingPayment.status,
+    actor
+  );
 
   return {
     payment: postedPayment,
@@ -193,6 +198,7 @@ export async function rejectGcashPaymentWithinTransaction(
   await audit.gcashPaymentRejected(
     pendingPayment.id,
     gcashDetails.gcashReferenceNumber,
+    pendingPayment.status,
     reason,
     input.actor ?? { userId: input.rejectedByUserId }
   );

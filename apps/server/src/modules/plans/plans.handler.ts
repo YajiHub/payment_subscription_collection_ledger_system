@@ -66,7 +66,11 @@ export async function putPlanRetired(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(planIdParamsSchema, request.params);
+  // Snapshot the active flag before retiring so the audit trail records what the
+  // retire actually changed: a plan may be retired more than once, and a hardcoded
+  // `isActive: true` would misreport the later retirements.
+  const previous = await getPlanById(id);
   const plan = await retirePlan(id);
-  await audit.planRetired({ ...plan }, requestActor(request));
+  await audit.planRetired({ ...plan }, previous.isActive, requestActor(request));
   return sendSuccess(reply, plan);
 }

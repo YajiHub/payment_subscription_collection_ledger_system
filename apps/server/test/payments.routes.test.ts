@@ -27,6 +27,7 @@ vi.mock("../src/db/connection", async () => {
 });
 
 import { buildServer } from "../src/index.ts";
+import { auditLogs } from "../src/db/schema/audit";
 import { invoices } from "../src/db/schema/billing";
 import { ledgerEntries } from "../src/db/schema/ledger";
 import {
@@ -114,6 +115,10 @@ function postedSummaryRow(overrides: Record<string, unknown> = {}) {
 /** Every insert recorded against a specific table. */
 function insertedInto(table: unknown): RecordedInsert[] {
   return fakeDatabase.insertedRows.filter((row) => row.table === table);
+}
+
+function auditWrites(): Array<Record<string, unknown>> {
+  return insertedInto(auditLogs).map((row) => row.values as Record<string, unknown>);
 }
 
 /** The ledger entries written, flattened from one or more insert calls. */
@@ -516,6 +521,14 @@ describe("payment routes", () => {
         paymentId: PAYMENT_ID,
       })
     );
+
+    // The trail records the status the payment really held, not a guess.
+    expect(auditWrites().find((row) => row.action === "payment.reversed")).toMatchObject({
+      entityType: "payment",
+      entityId: PAYMENT_ID,
+      previousState: { id: PAYMENT_ID, status: "posted" },
+      newState: { id: PAYMENT_ID, status: "reversed" },
+    });
   });
 
   it("refuses to reverse an already reversed payment", async () => {

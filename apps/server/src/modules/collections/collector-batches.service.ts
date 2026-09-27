@@ -706,6 +706,8 @@ export async function voidCollection(
 export interface SubmitBatchResult {
   batchId: string;
   status: CollectorBatchStatus;
+  /** The status the batch held before this transition: `open` or `in_progress`. */
+  previousStatus: CollectorBatchStatus;
   submittedAt: Date;
   assignmentCount: number;
   expectedRemittanceCentavos: number;
@@ -746,6 +748,7 @@ export async function submitBatch(batchId: string, actor: BatchActor): Promise<S
     return {
       batchId,
       status: "submitted" as const,
+      previousStatus: batch.status,
       submittedAt,
       assignmentCount: assignments.length,
       expectedRemittanceCentavos: updated.expectedRemittanceCentavos,
@@ -757,6 +760,8 @@ export interface RemitBatchResult {
   batchId: string;
   remittanceId: string;
   status: CollectorBatchStatus;
+  /** The status the batch held before this remittance: `submitted` or `remitted`. */
+  previousStatus: CollectorBatchStatus;
   expectedRemittanceCentavos: number;
   actualRemittanceCentavos: number;
   varianceCentavos: number;
@@ -865,6 +870,7 @@ export async function recordBatchRemittance(
       batchId,
       remittanceId: inserted.id,
       status: "remitted" as const,
+      previousStatus: batch.status,
       expectedRemittanceCentavos: batch.expectedRemittanceCentavos,
       actualRemittanceCentavos,
       varianceCentavos,
@@ -930,6 +936,8 @@ export async function listBatchRemittances(
 
 export interface ReconcileBatchResult {
   batchId: string;
+  /** The status the batch held before this reconciliation: `remitted`. */
+  previousStatus: CollectorBatchStatus;
   varianceCentavos: number;
   expectedRemittanceCentavos: number;
   actualRemittanceCentavos: number;
@@ -991,6 +999,8 @@ export async function reconcileBatch(
 
     return {
       batchId,
+      status: "reconciled" as const,
+      previousStatus: batch.status,
       varianceCentavos,
       expectedRemittanceCentavos: batch.expectedRemittanceCentavos,
       actualRemittanceCentavos: batch.actualRemittanceCentavos ?? 0,
@@ -1004,6 +1014,8 @@ export interface CloseBatchResult {
   batchId: string;
   batchNumber: string;
   status: CollectorBatchStatus;
+  /** The status the batch held before this close: `reconciled`. */
+  previousStatus: CollectorBatchStatus;
   closedAt: Date;
   varianceCentavos: number;
   reconciledAt: Date | null;
@@ -1038,6 +1050,7 @@ export async function closeBatch(batchId: string, actor: BatchActor): Promise<Cl
       batchId,
       batchNumber: updated.batchNumber,
       status: "closed" as const,
+      previousStatus: batch.status,
       closedAt,
       varianceCentavos: updated.varianceCentavos ?? 0,
       reconciledAt: updated.reconciledAt,

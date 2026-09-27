@@ -126,6 +126,7 @@ export async function reversePaymentWithinTransaction(
   await audit.paymentReversed(
     paymentId,
     payment.receiptNumber,
+    payment.status,
     reason,
     actor ?? { userId: reversedByUserId }
   );
