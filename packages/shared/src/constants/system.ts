@@ -21,9 +21,23 @@ export const SYSTEM_SETTING_KEYS = {
   // authorization resolves from role_permissions; when it is missing or any other
   // value, the compiled ROLE_PERMISSIONS matrix is used instead.
   rbacPermissionsInDatabase: "rbac_permissions_in_database",
+  // S5-4 session lock: how long a workstation may sit untouched before the
+  // client covers the screen and demands the signed-in user's password again.
+  sessionIdleTimeoutMinutes: "session_idle_timeout_minutes",
 } as const;
 
 export type SystemSettingKey = (typeof SYSTEM_SETTING_KEYS)[keyof typeof SYSTEM_SETTING_KEYS];
+
+/**
+ * The idle-lock period every client falls back to.
+ *
+ * Fifteen minutes is short enough that a cashier who walks away from an open
+ * terminal leaves it locked behind them, and long enough that an operator reading
+ * a long invoice does not have to retype a password mid-transaction. It is the
+ * value `session_idle_timeout_minutes` is seeded with, so an administrator can
+ * shorten or lengthen it from the System Settings screen without a rebuild.
+ */
+export const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 15;
 
 export interface SystemSettingDefault {
   key: SystemSettingKey;
@@ -84,6 +98,12 @@ export const DEFAULT_SYSTEM_SETTINGS: readonly SystemSettingDefault[] = [
     value: "15",
     description:
       "Minutes a locked account must wait before it can log in again (env LOGIN_LOCKOUT_COOLDOWN_MINUTES)",
+  },
+  {
+    key: SYSTEM_SETTING_KEYS.sessionIdleTimeoutMinutes,
+    value: String(DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES),
+    description:
+      "Minutes of inactivity before the client locks the workstation and asks for the password again",
   },
 ];
 

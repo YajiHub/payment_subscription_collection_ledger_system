@@ -49,12 +49,40 @@ export function formatDateOnly(value: string | null): string {
   return `${day}/${month}/${year}`;
 }
 
+/** Renders a byte count as a human-readable size: 1536 → "1.5 KB". */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const units = ["KB", "MB", "GB", "TB"] as const;
+  let value = bytes / 1024;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const unit = units[unitIndex] ?? "KB";
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${unit}`;
+}
+
+/** Renders an ISO timestamp for display, or an em dash when it is absent. */
+export function formatTimestamp(value: string | null): string {
+  if (value === null) {
+    return "—";
+  }
+  return new Date(value).toLocaleString("en-PH");
+}
+
 /** The subscriber's name as it should appear on screen and on documents. */
 export function formatSubscriberName(subscriber: {
   firstName: string;
   middleName: string | null;
   lastName: string;
 }): string {
-  const middleInitial = subscriber.middleName === null ? "" : ` ${subscriber.middleName.charAt(0)}.`;
+  const middleInitial =
+    subscriber.middleName === null ? "" : ` ${subscriber.middleName.charAt(0)}.`;
   return `${subscriber.lastName}, ${subscriber.firstName}${middleInitial}`;
 }

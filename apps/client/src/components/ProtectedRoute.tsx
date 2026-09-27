@@ -10,7 +10,12 @@ import { useAuthStore } from "../stores/auth.store";
 
 interface ProtectedRouteProps {
   children: ReactNode;
-  requiredPermission?: Permission;
+  /**
+   * The permission this screen needs. An array means "any of these", for a screen
+   * reached by two different jobs — a restore is administrative, viewing the backup
+   * history is a read, and someone may hold one without the other.
+   */
+  requiredPermission?: Permission | readonly Permission[];
 }
 
 export function ProtectedRoute({ children, requiredPermission }: ProtectedRouteProps): ReactNode {
@@ -22,7 +27,10 @@ export function ProtectedRoute({ children, requiredPermission }: ProtectedRouteP
   }
 
   if (requiredPermission !== undefined && user !== null) {
-    if (!roleHasPermission(user.role, requiredPermission)) {
+    const requiredPermissions: readonly Permission[] =
+      typeof requiredPermission === "string" ? [requiredPermission] : requiredPermission;
+
+    if (!requiredPermissions.some((permission) => roleHasPermission(user.role, permission))) {
       return <Navigate to="/unauthorized" replace />;
     }
   }

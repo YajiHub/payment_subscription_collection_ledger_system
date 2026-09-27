@@ -60,11 +60,12 @@ httpClient.interceptors.request.use((requestConfig) => {
 });
 
 // A 401 means the session is no longer valid — clear it so the UI redirects to login.
+// A locked workstation stays locked: see `endSession` in the auth store.
 httpClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      useAuthStore.getState().logout();
+      useAuthStore.getState().endSession();
     }
     return Promise.reject(error);
   }
@@ -133,7 +134,7 @@ export interface AuthenticatedUserProfile {
 
 export interface LoginResult {
   token: string;
-  user: { id: string; fullName: string; role: UserRole };
+  user: { id: string; fullName: string; role: UserRole; username?: string };
 }
 
 /** POST /api/auth/login — exchanges credentials for a token. */
@@ -148,6 +149,40 @@ export async function login(username: string, password: string): Promise<LoginRe
 /** POST /api/auth/logout — revokes the current token on the server. */
 export async function logout(): Promise<void> {
   await httpClient.post("/api/auth/logout");
+}
+
+/**
+ * POST /api/auth/login, reused as the unlock step of the session lock (S5-4).
+ *
+ * Locking revoked the token, so the workstation has no credential left to present:
+ * coming back from a lock is a fresh sign-in, and the server verifies it on the
+ * same path, with the same per-account lockout and per-IP rate limit, that a
+ * morning sign-in takes. Nothing the renderer holds can stand in for the password.
+ *
+ * The user returned carries the username that was authenticated, so the client can
+ * show whose account is locked and ask only for that account's password.
+ */
+export async function unlockSession(username: string, password: string): Promise<LoginResult> {
+  const result = await login(username, password);
+  return { token: result.token, user: { ...result.user, username } };
+}
+
+/**
+ * Locks the workstation (S5-4) by revoking the token through the logout route.
+ *
+ * Locking and logging out end the session the same way on the server, and that is
+ * the point: the lock must leave no usable credential behind. The difference is
+ * entirely on the client — a lock remembers who left and returns the screen only
+ * once the server has accepted that account's password again.
+ *
+ * The token is passed explicitly rather than read from the store: the caller clears
+ * the session the instant the operator locks, before this request leaves, so that an
+ * unreachable or slow server can never leave the screen open.
+ */
+export async function lockSession(token: string): Promise<void> {
+  await httpClient.post("/api/auth/logout", undefined, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 /** GET /api/auth/me — the profile of the currently authenticated user. */
@@ -2369,4 +2404,72 @@ export async function updateSystemSettings(
     { settings }
   );
   return unwrap(response.data).items;
+}
+
+// ─── Backup and restore (S5-3) ────────────────────────────────────────────────
+//
+// The server half is complete and authorized: `backup:create` covers listing,
+// producing and re-verifying an archive, `backup:restore` covers overwriting the
+// database. These helpers are the only way the screens can reach it.
+
+/** One row of `backup_history` as the API returns it. */
+export interface BackupRecord {
+  id: string;
+  filename: string;
+  sizeBytes: number;
+  checksum: string;
+  checksumAlgorithm: string;
+  /** The id of the user who ran it, or null for a scheduled backup. */
+  createdBy: string | null;
+  createdAt: string;
+  /** Null until the archive has passed an integrity check. */
+  verifiedAt: string | null;
+  /** Null until a restore of this archive has been rehearsed or performed. */
+  restoreTestedAt: string | null;
+  notes: string | null;
+}
+
+/** GET /api/backups — the recorded backup history, newest first. */
+export async function listBackups(): Promise<BackupRecord[]> {
+  const response =
+    await httpClient.get<ApiSuccessEnvelope<{ items: BackupRecord[] }>>("/api/backups");
+  return unwrap(response.data).items;
+}
+
+/** POST /api/backups — creates a backup, verifies the archive and records it. */
+export async function createBackup(): Promise<BackupRecord> {
+  const response = await httpClient.post<ApiSuccessEnvelope<BackupRecord>>("/api/backups");
+  return unwrap(response.data);
+}
+
+/** POST /api/backups/:id/verify — re-checks a recorded archive's integrity. */
+export async function verifyBackup(backupId: string): Promise<BackupRecord> {
+  const response = await httpClient.post<ApiSuccessEnvelope<BackupRecord>>(
+    `/api/backups/${backupId}/verify`
+  );
+  return unwrap(response.data);
+}
+
+/**
+ * The acknowledgement a restore requires.
+ *
+ * Typing the parameter as `{ confirm: true }` — rather than defaulting it inside
+ * this helper — means the server's own confirmation rule is mirrored in the
+ * renderer's type system: a caller cannot restore anything without saying out loud
+ * that the live database is about to be overwritten.
+ */
+export interface RestoreConfirmation {
+  confirm: true;
+}
+
+/** POST /api/backups/:id/restore — overwrites the database from a verified archive. */
+export async function restoreBackup(
+  backupId: string,
+  confirmation: RestoreConfirmation
+): Promise<BackupRecord> {
+  const response = await httpClient.post<ApiSuccessEnvelope<BackupRecord>>(
+    `/api/backups/${backupId}/restore`,
+    confirmation
+  );
+  return unwrap(response.data);
 }

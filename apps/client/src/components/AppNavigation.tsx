@@ -3,13 +3,20 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { roleHasPermission, type Permission } from "@bcis/shared";
 import { logout as requestServerLogout } from "../lib/api-client";
+import { lockWorkstation } from "../lib/session-lock";
 import { useAuthStore } from "../stores/auth.store";
 
-/** One screen inside a section. `permission` is the permission its route requires. */
+/**
+ * One screen inside a section.
+ *
+ * `permissions` is the set the screen accepts — an entry with two names is reached
+ * by either job, the way the backup screen is reached by whoever may produce an
+ * archive or by whoever may restore one.
+ */
 interface NavigationLink {
   label: string;
   to: string;
-  permission: Permission;
+  permissions: readonly Permission[];
 }
 
 /**
@@ -21,7 +28,7 @@ interface NavigationLink {
  */
 interface NavigationSection {
   label: string;
-  landing?: { to: string; permission: Permission };
+  landing?: { to: string; permissions: readonly Permission[] };
   links: NavigationLink[];
 }
 
@@ -42,28 +49,34 @@ interface NavigationSection {
 const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
   {
     label: "Dashboard",
-    landing: { to: "/dashboard", permission: "reports:management_view" },
+    landing: { to: "/dashboard", permissions: ["reports:management_view"] },
     links: [],
   },
   {
     label: "Subscribers",
-    landing: { to: "/subscribers", permission: "subscribers:read" },
-    links: [{ label: "Add Subscriber", to: "/subscribers/new", permission: "subscribers:create" }],
+    landing: { to: "/subscribers", permissions: ["subscribers:read"] },
+    links: [
+      {
+        label: "Add Subscriber",
+        to: "/subscribers/new",
+        permissions: ["subscribers:create"],
+      },
+    ],
   },
   {
     label: "Billing",
     landing: undefined,
     links: [
-      { label: "Billing Runs", to: "/billing", permission: "invoices:read" },
-      { label: "Invoices", to: "/invoices", permission: "invoices:read" },
-      { label: "Subscription Plans", to: "/plans", permission: "plans:read" },
+      { label: "Billing Runs", to: "/billing", permissions: ["invoices:read"] },
+      { label: "Invoices", to: "/invoices", permissions: ["invoices:read"] },
+      { label: "Subscription Plans", to: "/plans", permissions: ["plans:read"] },
     ],
   },
   {
     label: "Payments",
     links: [
-      { label: "Post Payment", to: "/payments/new", permission: "payments:post" },
-      { label: "Payment Ledger", to: "/payments", permission: "payments:read" },
+      { label: "Post Payment", to: "/payments/new", permissions: ["payments:post"] },
+      { label: "Payment Ledger", to: "/payments", permissions: ["payments:read"] },
     ],
   },
   {
@@ -72,15 +85,23 @@ const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
       {
         label: "Collector Batches",
         to: "/collector-batches",
-        permission: "collector_batches:read",
+        permissions: ["collector_batches:read"],
       },
     ],
   },
   {
     label: "Receivables",
     links: [
-      { label: "AR Aging Analysis", to: "/receivables/aging", permission: "reports:view" },
-      { label: "Overdue Accounts", to: "/receivables/overdue", permission: "reports:view" },
+      {
+        label: "AR Aging Analysis",
+        to: "/receivables/aging",
+        permissions: ["reports:view"],
+      },
+      {
+        label: "Overdue Accounts",
+        to: "/receivables/overdue",
+        permissions: ["reports:view"],
+      },
     ],
   },
   {
@@ -90,24 +111,35 @@ const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
       // subscriber directory and the overdue list. The Service Accounts screen
       // lists every account and links to its ledger; the suspension screen keeps
       // the threshold preview and the run apart.
-      { label: "Service Accounts", to: "/services/accounts", permission: "subscribers:read" },
+      {
+        label: "Service Accounts",
+        to: "/services/accounts",
+        permissions: ["subscribers:read"],
+      },
       {
         label: "Suspension & Reconnection",
         to: "/services/suspension",
-        permission: "subscribers:read",
+        permissions: ["subscribers:read"],
       },
     ],
   },
   {
     label: "Reports",
-    links: [{ label: "Reports Center", to: "/reports", permission: "reports:view" }],
+    links: [{ label: "Reports Center", to: "/reports", permissions: ["reports:view"] }],
   },
   {
     label: "Administration",
     links: [
-      { label: "User Management", to: "/users", permission: "users:read" },
-      { label: "Audit Trail", to: "/audit-logs", permission: "audit:read" },
-      { label: "System Settings", to: "/settings", permission: "system:settings" },
+      { label: "User Management", to: "/users", permissions: ["users:read"] },
+      { label: "Audit Trail", to: "/audit-logs", permissions: ["audit:read"] },
+      { label: "System Settings", to: "/settings", permissions: ["system:settings"] },
+      // S5-3: the backup and restore screen. Either permission opens it; each
+      // control inside is offered only to the permission that may use it.
+      {
+        label: "Backup & Restore",
+        to: "/administration/backups",
+        permissions: ["backup:create", "backup:restore"],
+      },
     ],
   },
 ];
@@ -143,19 +175,33 @@ export function AppNavigation(): ReactNode {
     navigate("/login", { replace: true });
   }
 
-  function mayUse(permission: Permission): boolean {
-    return user !== null && roleHasPermission(user.role, permission);
+  /**
+   * S5-4: lock deliberately, before walking away from the counter.
+   *
+   * There is no navigation here on purpose: the lock gate replaces the screen, and
+   * the route the operator left is the one they come back to once the password is
+   * verified again.
+   */
+  function handleLock(): void {
+    lockWorkstation();
+  }
+
+  function mayUse(permissions: readonly Permission[]): boolean {
+    return (
+      user !== null && permissions.some((permission) => roleHasPermission(user.role, permission))
+    );
   }
 
   // A section disappears when neither its own screen nor any of its links is
   // allowed, so a role never sees a heading it cannot act on.
   const visibleSections = NAVIGATION_SECTIONS.map((section) => ({
     ...section,
-    landing: section.landing !== undefined && mayUse(section.landing.permission) ? section.landing : undefined,
-    links: section.links.filter((link) => mayUse(link.permission)),
-  })).filter(
-    (section) => section.landing !== undefined || section.links.length > 0,
-  );
+    landing:
+      section.landing !== undefined && mayUse(section.landing.permissions)
+        ? section.landing
+        : undefined,
+    links: section.links.filter((link) => mayUse(link.permissions)),
+  })).filter((section) => section.landing !== undefined || section.links.length > 0);
 
   return (
     <nav
@@ -187,6 +233,14 @@ export function AppNavigation(): ReactNode {
           )}
         </div>
       ))}
+
+      <button
+        type="button"
+        onClick={handleLock}
+        className="text-sm font-medium text-navy underline underline-offset-4"
+      >
+        Lock
+      </button>
 
       <button
         type="button"

@@ -42,6 +42,8 @@ const ADMIN_LINK_ORDER = [
   "User Management",
   "Audit Trail",
   "System Settings",
+  // S5-3: the backup and restore screen lives in Administration.
+  "Backup & Restore",
 ] as const;
 
 function signInAs(role: UserRole | null): void {
@@ -119,11 +121,19 @@ describe("AppNavigation", () => {
     expect(labels).not.toContain("User Management");
     expect(labels).not.toContain("Audit Trail");
     expect(labels).not.toContain("System Settings");
+    expect(labels).not.toContain("Backup & Restore");
     expect(labels).not.toContain("Subscription Plans");
     expect(labels).not.toContain("Post Payment");
     expect(labels).not.toContain("Dashboard");
     expect(labels).toContain("Collector Batches");
     expect(labels).toContain("Service Accounts");
+  });
+
+  it("offers the Administrator a deliberate lock beside the log-out control", () => {
+    renderNavigation();
+
+    expect(screen.getByRole("button", { name: "Lock" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
   });
 
   it("offers nothing but logout when nobody is signed in", () => {

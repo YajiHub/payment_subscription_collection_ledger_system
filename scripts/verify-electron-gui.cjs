@@ -57,6 +57,9 @@ const ADMIN_REQUIRED_LINKS = [
   "User Management",
   "Audit Trail",
   "System Settings",
+  // Section 4.4 / S5-3: the backup and restore screen holds real controls, so the
+  // Administrator must be offered it and a lower-privileged role must not.
+  "Backup & Restore",
 ];
 
 /**
@@ -81,6 +84,7 @@ const ADMIN_MENU_ORDER = [
   "User Management",
   "Audit Trail",
   "System Settings",
+  "Backup & Restore",
 ];
 
 /** The section headings every menu offers, in order. */
