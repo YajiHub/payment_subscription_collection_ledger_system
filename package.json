@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "pnpm --filter server db:seed",
+    "db:seed:demo": "pnpm --filter server db:seed:demo",
     "db:studio": "drizzle-kit studio",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",

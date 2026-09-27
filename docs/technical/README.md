@@ -796,6 +796,50 @@ The API answers two health endpoints:
 | `GET /health`   | The process is alive                                                |
 | `GET /health/db`| PostgreSQL answered — or `503` when it did not, without crashing     |
 
+### Demo dataset (activity section 8)
+
+The production bootstrap above stays minimal on purpose: it seeds the settings and
+one Administrator, nothing else. A separate, explicitly-invoked script builds a
+full **synthetic demo dataset** for the section 11.1 walkthrough:
+
+```bash
+pnpm db:seed:demo                 # into a fresh/demo-only database
+pnpm db:seed:demo --seed=42       # a different, still deterministic dataset
+pnpm db:seed:demo --confirm       # also when the database already holds non-demo rows
+```
+
+What it produces (all of it deterministic from the seed):
+
+- 7 demo users covering Owner/Administrator, Cashier, Collection Supervisor,
+  Accounting/Auditor, Read-only Viewer and Technician — all with the shared
+  password `DemoPassword1!` and usernames `demo.owner`, `demo.cashier`, …;
+- 7 plans (3 Internet + 2 Cable TV + 2 Combo), 3 collection areas, 2 collectors;
+- 50 subscribers and 60+ service accounts spread across all three service types;
+- five months of billing, with payments mixing Cash, GCash (verified, pending and
+  rejected), partial, exact and advance credit;
+- 10+ overdue accounts spanning the aging buckets, one approved payment reversal,
+  two suspension/reconnection scenarios and two collector batches (one CLOSED,
+  one REMITTED).
+
+Every amount is created by **driving the real domain services** — monthly billing,
+payment posting, GCash verification/rejection, reversal, suspension/reconnection
+and the batch lifecycle — never by raw `INSERT`s, so the ledger, the invoice states,
+the receipt numbers and the AR aging are consistent by construction.
+
+Everything is obviously synthetic (names end in "(DEMO)", phones use the
+reserved-looking `0900` prefix, addresses say "Demo Street", GCash references start
+`DEMOGCASH-`). The script **refuses to run** against a database that already holds
+a demo dataset, and against any database that holds subscribers which are not demo
+data unless `--confirm` is passed — so a real office database cannot be polluted by
+accident. It is the same guard the PostgreSQL suite tests.
+
+The demo generator spans three files: `apps/server/src/db/demo/demo-plan.ts` builds a
+pure, deterministic plan from a seed; `apps/server/src/db/demo/demo-dataset.ts`
+applies it through the services; `apps/server/src/db/seed-demo.ts` is the entry
+script. Verification lives in `test/demo-plan.test.ts` (determinism and structural
+minimums, no database) and `test/demo-dataset.postgres.test.ts` (the section 8
+counts, ledger/aging reconciliation and two-run determinism, against PostgreSQL).
+
 ---
 
 ## 10. Running Tests
