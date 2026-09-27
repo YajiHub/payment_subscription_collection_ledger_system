@@ -16,6 +16,8 @@ import {
   INVOICE_STATUS_LABELS,
   REPORT_TYPE_LABELS,
   PAYMENT_METHOD_LABELS,
+  SERVICE_ACCOUNT_STATUS_LABELS,
+  SERVICE_TYPE_LABELS,
   type AgingBucket,
 } from "@bcis/shared";
 import type { ReportTable } from "../../shared/reports/report-table";
@@ -25,6 +27,22 @@ import type { CollectorRemittanceReport } from "./collector-remittance.service";
 import type { DailyCollectionReport } from "./daily-collection.service";
 import type { MonthlyBillingReport } from "./monthly-billing.service";
 import type { OutstandingByCollectorReport } from "./outstanding-by-collector.service";
+import type {
+  AnnualCollectionReport,
+  CollectionRangeSummary,
+  WeeklyCollectionReport,
+} from "./collection-summary.service";
+import type { RevenueDimension, RevenueReport } from "./revenue.service";
+import type {
+  CollectorAssignmentReport,
+  CollectorPerformanceReport,
+} from "./collector-reports.service";
+import type {
+  PaymentAdjustmentReport,
+  VoidedReceiptReport,
+} from "./payment-adjustment.service";
+import type { AuditLogReport, UserActivityReport } from "./audit-reports.service";
+import type { SubscriberMasterListReport } from "./subscriber-master-list.service";
 
 // The bucket labels shared with the screen use an en dash ("1–30 Days"), which the
 // PDF standard fonts cannot encode. The printable headers spell the ranges with a
@@ -303,5 +321,397 @@ export function subscriberStatementReportTable(statement: StatementOfAccount): R
       ["Totals", "", "", statement.totalDebitsCentavos, statement.totalCreditsCentavos, ""],
       ["CLOSING BALANCE", "", "", "", "", statement.closingBalanceCentavos],
     ],
+  };
+}
+
+// ─── The reports added by S6-1 and S6-5 ──────────────────────────────────────
+
+/**
+ * Shared shape for the weekly and annual collection summaries.
+ *
+ * Both print one line per period — a day for a week, a month for a year — and end
+ * with the week's or year's totals, so the two reports differ only in their heading.
+ */
+function collectionSummaryTable(
+  title: string,
+  subtitle: string,
+  report: CollectionRangeSummary,
+  periodColumnHeader: string
+): ReportTable {
+  return {
+    title,
+    subtitle,
+    orientation: "portrait",
+    columns: [
+      { header: periodColumnHeader, format: "text" },
+      { header: "Payments", format: "count" },
+      { header: "Cash", format: "money" },
+      { header: "GCash", format: "money" },
+      { header: "Total", format: "money" },
+    ],
+    rows: report.periods.map((period) => [
+      period.periodLabel,
+      period.totals.paymentCount,
+      period.totals.cashTotalCentavos,
+      period.totals.gcashTotalCentavos,
+      period.totals.grandTotalCentavos,
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        report.totals.paymentCount,
+        report.totals.cashTotalCentavos,
+        report.totals.gcashTotalCentavos,
+        report.totals.grandTotalCentavos,
+      ],
+    ],
+  };
+}
+
+/** R7 — Weekly Collection Summary. */
+export function weeklyCollectionReportTable(report: WeeklyCollectionReport): ReportTable {
+  return collectionSummaryTable(
+    REPORT_TYPE_LABELS.weekly_collection.toUpperCase(),
+    `Week of ${report.weekStartDate} (${report.fromDate} to ${report.toDate})`,
+    report,
+    "Date"
+  );
+}
+
+/** R8 — Annual Collection Summary. */
+export function annualCollectionReportTable(report: AnnualCollectionReport): ReportTable {
+  return collectionSummaryTable(
+    REPORT_TYPE_LABELS.annual_collection.toUpperCase(),
+    `Calendar year ${report.year}`,
+    report,
+    "Month"
+  );
+}
+
+/** The heading over a revenue report's group column, named after its dimension. */
+function revenueGroupHeader(dimension: RevenueDimension): string {
+  switch (dimension) {
+    case "plan":
+      return "Plan";
+    case "service_type":
+      return "Service Type";
+    case "area":
+      return "Area";
+  }
+}
+
+/** R9 / R10 / R11 — Revenue grouped by plan, service type, or area. */
+export function revenueReportTable(report: RevenueReport): ReportTable {
+  const label = REPORT_TYPE_LABELS[
+    report.dimension === "plan"
+      ? "revenue_by_plan"
+      : report.dimension === "service_type"
+        ? "revenue_by_service_type"
+        : "revenue_by_area"
+  ];
+
+  return {
+    title: label.toUpperCase(),
+    subtitle: `${report.fromDate} to ${report.toDate}`,
+    orientation: "landscape",
+    columns: [
+      { header: revenueGroupHeader(report.dimension), format: "text" },
+      { header: "Invoices", format: "count" },
+      { header: "Billed", format: "money" },
+      { header: "Collected", format: "money" },
+      { header: "Outstanding", format: "money" },
+    ],
+    rows: report.groups.map((group) => [
+      group.groupLabel,
+      group.invoiceCount,
+      group.billedCentavos,
+      group.collectedCentavos,
+      group.outstandingCentavos,
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        report.totals.invoiceCount,
+        report.totals.billedCentavos,
+        report.totals.collectedCentavos,
+        report.totals.outstandingCentavos,
+      ],
+    ],
+  };
+}
+
+/** R12 — Collector Assignment List. */
+export function collectorAssignmentReportTable(
+  report: CollectorAssignmentReport
+): ReportTable {
+  return {
+    title: REPORT_TYPE_LABELS.collector_assignment.toUpperCase(),
+    subtitle: `${report.accountCount} account(s) across ${report.collectorCount} collector(s) and ${report.areaCount} area(s)`,
+    orientation: "landscape",
+    columns: [
+      { header: "Collector", format: "text" },
+      { header: "Account #", format: "text" },
+      { header: "Subscriber", format: "text" },
+      { header: "Plan", format: "text" },
+      { header: "Service Type", format: "text" },
+      { header: "Area", format: "text" },
+      { header: "Status", format: "text" },
+    ],
+    rows: report.lines.map((line) => [
+      line.collectorName,
+      line.serviceAccountNumber,
+      line.subscriberName,
+      line.planName,
+      SERVICE_TYPE_LABELS[line.serviceType],
+      line.areaName,
+      SERVICE_ACCOUNT_STATUS_LABELS[line.accountStatus],
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        `${report.accountCount} account(s)`,
+        "",
+        "",
+        "",
+        `${report.areaCount} area(s)`,
+        "",
+      ],
+    ],
+  };
+}
+
+/** R13 — Collector Performance. */
+export function collectorPerformanceReportTable(
+  report: CollectorPerformanceReport
+): ReportTable {
+  return {
+    title: REPORT_TYPE_LABELS.collector_performance.toUpperCase(),
+    subtitle: `${report.fromDate} to ${report.toDate}`,
+    orientation: "landscape",
+    columns: [
+      { header: "Collector", format: "text" },
+      { header: "Assigned Accounts", format: "count" },
+      { header: "Payments", format: "count" },
+      { header: "Collected", format: "money" },
+      { header: "Cash", format: "money" },
+      { header: "GCash", format: "money" },
+      { header: "Batches", format: "count" },
+      { header: "Expected Remittance", format: "money" },
+      { header: "Actual Remittance", format: "money" },
+      { header: "Variance", format: "money" },
+    ],
+    rows: report.groups.map((group) => [
+      group.collectorName,
+      group.assignedAccountCount,
+      group.paymentCount,
+      group.collectedCentavos,
+      group.cashCentavos,
+      group.gcashCentavos,
+      group.batchCount,
+      group.expectedRemittanceCentavos,
+      group.actualRemittanceCentavos,
+      group.varianceCentavos,
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        report.totals.assignedAccountCount,
+        report.totals.paymentCount,
+        report.totals.collectedCentavos,
+        report.totals.cashCentavos,
+        report.totals.gcashCentavos,
+        report.totals.batchCount,
+        report.totals.expectedRemittanceCentavos,
+        report.totals.actualRemittanceCentavos,
+        report.totals.varianceCentavos,
+      ],
+    ],
+  };
+}
+
+/** R14 — Payment Adjustment / Reversal Report. */
+export function paymentAdjustmentReportTable(report: PaymentAdjustmentReport): ReportTable {
+  return {
+    title: REPORT_TYPE_LABELS.payment_adjustments.toUpperCase(),
+    subtitle: `${report.fromDate} to ${report.toDate} — ${report.totals.reversalCount} reversal(s)`,
+    orientation: "landscape",
+    columns: [
+      { header: "Receipt #", format: "text" },
+      { header: "Reversal #", format: "text" },
+      { header: "Payment Date", format: "text" },
+      { header: "Reversed", format: "text" },
+      { header: "Subscriber", format: "text" },
+      { header: "Account #", format: "text" },
+      { header: "Method", format: "text" },
+      { header: "Amount", format: "money" },
+      { header: "Reason", format: "text" },
+      { header: "Reversed By", format: "text" },
+    ],
+    rows: report.lines.map((line) => [
+      line.receiptNumber,
+      line.reversalReceiptNumber,
+      line.paymentDate,
+      line.reversedAt.toISOString().slice(0, 10),
+      line.subscriberName,
+      line.serviceAccountNumber,
+      PAYMENT_METHOD_LABELS[line.paymentMethod],
+      line.amountCentavos,
+      line.reason,
+      line.reversedByName,
+    ]),
+    totalsRows: [
+      ["Cash reversed", "", "", "", "", "", "", report.totals.cashReversedCentavos, "", ""],
+      ["Non-cash reversed", "", "", "", "", "", "", report.totals.nonCashReversedCentavos, "", ""],
+      ["TOTAL", "", "", "", "", "", "", report.totals.totalReversedCentavos, "", ""],
+    ],
+  };
+}
+
+/** R15 — Voided Receipt Report. */
+export function voidedReceiptReportTable(report: VoidedReceiptReport): ReportTable {
+  return {
+    title: REPORT_TYPE_LABELS.voided_receipts.toUpperCase(),
+    subtitle: `${report.fromDate} to ${report.toDate} — ${report.totals.receiptCount} voided receipt(s)`,
+    orientation: "landscape",
+    columns: [
+      { header: "Receipt #", format: "text" },
+      { header: "Payment Date", format: "text" },
+      { header: "Voided", format: "text" },
+      { header: "Subscriber", format: "text" },
+      { header: "Account #", format: "text" },
+      { header: "Method", format: "text" },
+      { header: "Amount", format: "money" },
+      { header: "Reversal #", format: "text" },
+      { header: "Reason", format: "text" },
+    ],
+    rows: report.lines.map((line) => [
+      line.receiptNumber,
+      line.paymentDate,
+      line.reversedAt.toISOString().slice(0, 10),
+      line.subscriberName,
+      line.serviceAccountNumber,
+      PAYMENT_METHOD_LABELS[line.paymentMethod],
+      line.amountCentavos,
+      line.reversalReceiptNumber,
+      line.reason,
+    ]),
+    totalsRows: [
+      ["Cash voided", "", "", "", "", "", report.totals.cashVoidedCentavos, "", ""],
+      ["GCash voided", "", "", "", "", "", report.totals.gcashVoidedCentavos, "", ""],
+      ["TOTAL", "", "", "", "", "", report.totals.totalVoidedCentavos, "", ""],
+    ],
+  };
+}
+
+/** R16 — User Activity Report. */
+export function userActivityReportTable(report: UserActivityReport): ReportTable {
+  return {
+    title: REPORT_TYPE_LABELS.user_activity.toUpperCase(),
+    subtitle: `${report.fromDate} to ${report.toDate} — ${report.totals.entryCount} audited action(s) by ${report.totals.userCount} user(s)`,
+    orientation: "portrait",
+    columns: [
+      { header: "User", format: "text" },
+      { header: "Action", format: "text" },
+      { header: "Count", format: "count" },
+      { header: "Last Performed", format: "text" },
+    ],
+    rows: report.groups.map((group) => [
+      group.username,
+      group.action,
+      group.actionCount,
+      group.lastPerformedAt.toISOString().slice(0, 19).replace("T", " "),
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        `${report.totals.distinctActionCount} distinct action(s)`,
+        report.totals.entryCount,
+        "",
+      ],
+    ],
+  };
+}
+
+/** R17 — Subscriber Master List. */
+export function subscriberMasterListReportTable(
+  report: SubscriberMasterListReport
+): ReportTable {
+  return {
+    title: REPORT_TYPE_LABELS.subscriber_master_list.toUpperCase(),
+    subtitle: `${report.subscriberCount} subscriber(s), ${report.accountCount} service account(s)`,
+    orientation: "landscape",
+    columns: [
+      { header: "Subscriber", format: "text" },
+      { header: "Account No", format: "text" },
+      { header: "Phone", format: "text" },
+      { header: "Email", format: "text" },
+      { header: "Service Address", format: "text" },
+      { header: "Area", format: "text" },
+      { header: "Service Account", format: "text" },
+      { header: "Plan", format: "text" },
+      { header: "Service Type", format: "text" },
+      { header: "Status", format: "text" },
+      { header: "Collector", format: "text" },
+    ],
+    rows: report.rows.map((row) => [
+      row.subscriberName,
+      row.subscriberAccountNumber,
+      row.primaryPhone,
+      row.emailAddress ?? "",
+      row.serviceAddress,
+      row.areaName ?? "",
+      row.serviceAccountNumber ?? "",
+      row.planName ?? "",
+      row.serviceType === null ? "" : SERVICE_TYPE_LABELS[row.serviceType],
+      row.accountStatus === null ? "" : SERVICE_ACCOUNT_STATUS_LABELS[row.accountStatus],
+      row.collectorName ?? "",
+    ]),
+    totalsRows: [
+      [
+        "TOTAL",
+        `${report.subscriberCount} subscriber(s)`,
+        "",
+        "",
+        "",
+        "",
+        `${report.accountCount} account(s)`,
+        "",
+        "",
+        "",
+        "",
+      ],
+    ],
+  };
+}
+
+/** R18 / S6-5 — Audit Trail Report. */
+export function auditLogReportTable(report: AuditLogReport): ReportTable {
+  const truncation = report.isTruncated
+    ? ` — first ${report.rowLimit.toLocaleString("en-US")} of ${report.totalRows.toLocaleString("en-US")} rows`
+    : "";
+
+  return {
+    title: REPORT_TYPE_LABELS.audit_log.toUpperCase(),
+    subtitle: `${report.fromDate} to ${report.toDate} — ${report.totalRows} entr(ies)${truncation}`,
+    orientation: "landscape",
+    columns: [
+      { header: "Performed At", format: "text" },
+      { header: "User", format: "text" },
+      { header: "Action", format: "text" },
+      { header: "Entity", format: "text" },
+      { header: "Entity Id", format: "text" },
+      { header: "Description", format: "text" },
+      { header: "Client IP", format: "text" },
+    ],
+    rows: report.rows.map((row) => [
+      row.performedAt.toISOString().slice(0, 19).replace("T", " "),
+      row.performedByUsername ?? "",
+      row.action,
+      row.entityType,
+      row.entityId,
+      row.description,
+      row.clientIpAddress ?? "",
+    ]),
+    totalsRows: [["TOTAL", `${report.rowLimit.toLocaleString("en-US")} row cap`, "", "", "", `${report.totalRows} entr(ies)`, ""]],
   };
 }

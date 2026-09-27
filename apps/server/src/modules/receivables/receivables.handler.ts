@@ -12,6 +12,7 @@ import {
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
 import { formatDateOnly } from "../../shared/date";
+import type { ReportFilters } from "../reports/report-filters";
 import { suspendServiceAccount } from "../service-accounts/service-accounts.service";
 import { computeArAging } from "./ar-aging.service";
 import {
@@ -39,8 +40,23 @@ export async function getArAging(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const query = parseOrThrow(arAgingQuerySchema, request.query);
-  const report = await computeArAging(resolveAsOfDate(query.asOfDate));
+  const report = await computeArAging(resolveAsOfDate(query.asOfDate), undefined, reportFiltersOf(query));
   return sendSuccess(reply, report);
+}
+
+/** The shared report filters, carried from a receivables query to the service. */
+function reportFiltersOf(query: {
+  collectorId?: string;
+  areaId?: string;
+  planId?: string;
+  serviceType?: "internet" | "cable_tv" | "bundle";
+}): ReportFilters {
+  return {
+    collectorId: query.collectorId,
+    areaId: query.areaId,
+    planId: query.planId,
+    serviceType: query.serviceType,
+  };
 }
 
 /** GET /api/receivables/ar-aging/export — the AR aging report as an .xlsx file. */
@@ -49,7 +65,11 @@ export async function getArAgingExport(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const query = parseOrThrow(arAgingExportQuerySchema, request.query);
-  const report = await computeArAging(resolveAsOfDate(query.asOfDate));
+  const report = await computeArAging(
+    resolveAsOfDate(query.asOfDate),
+    undefined,
+    reportFiltersOf(query)
+  );
   const workbook = buildArAgingWorkbook(report);
 
   return reply
@@ -68,6 +88,8 @@ export async function getOverdueAccounts(
     {
       noPaymentInDays: query.noPaymentInDays,
       minConsecutiveOverdueMonths: query.minConsecutiveOverdueMonths,
+      minOverdueDays: query.minOverdueDays,
+      ...reportFiltersOf(query),
     },
     resolveAsOfDate(undefined)
   );
@@ -91,6 +113,8 @@ export async function getOverdueSummary(
     {
       noPaymentInDays: query.noPaymentInDays,
       minConsecutiveOverdueMonths: query.minConsecutiveOverdueMonths,
+      minOverdueDays: query.minOverdueDays,
+      ...reportFiltersOf(query),
     },
     resolveAsOfDate(undefined)
   );

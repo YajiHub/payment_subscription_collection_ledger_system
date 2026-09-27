@@ -11,6 +11,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    // Installs the compiled permission source for the whole run (see the file for
+    // why). The database-resolved path opts back into "auto" itself.
+    setupFiles: ["./test/support/setup-permission-mode.ts"],
     // The DB-backed suites share one bcis_test database and assert whole-database
     // invariants (e.g. AR aging grand total = sum of all outstanding invoices).
     // Running files in parallel lets one suite mutate balances between another

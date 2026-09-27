@@ -18,8 +18,9 @@
 //     than they collected (overage); negative means less (shortage). It is stored,
 //     never silently zeroed.
 
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
+  check,
   date,
   index,
   integer,
@@ -36,12 +37,32 @@ import { serviceAccounts } from "./subscribers";
 import { users } from "./users";
 
 // ─── Collector Batch Status ───────────────────────────────────────────────────
-// Mirrors COLLECTOR_BATCH_STATUSES in the shared package.
+// Mirrors COLLECTOR_BATCH_STATUSES in the shared package (S4-1).
+//
+// The six-state lifecycle is OPEN → IN_PROGRESS → SUBMITTED → REMITTED →
+// RECONCILED → CLOSED, plus CANCELLED from an open run. The three states that
+// were missing (`in_progress`, `remitted`, `closed`) separate what used to be
+// fused into `submitted`/`reconciled`:
+//
+//   open        → created, the collector has not started recording
+//   in_progress → the collector is in the field recording collections
+//   submitted   → the collector returned and declared the run finished
+//   remitted    → the cash handed in has been recorded (one or more remittances)
+//   reconciled  → the office confirmed the amounts against the ledger
+//   closed      → the batch is finally signed off, after reconciliation
+//   cancelled   → abandoned before any collection was recorded
+//
+// Migration mapping (0025): an old `submitted` row already carried the declared
+// cash, so it maps to `remitted`; `open`, `reconciled` and `cancelled` keep their
+// meaning unchanged.
 export const collectorBatchStatusEnum = pgEnum("collector_batch_status", [
-  "open", // Created, the collector is in the field
-  "submitted", // The collector returned and declared the cash handed in
-  "reconciled", // The office confirmed the amounts and closed the batch
-  "cancelled", // Abandoned before any collection was recorded
+  "open",
+  "in_progress",
+  "submitted",
+  "remitted",
+  "reconciled",
+  "closed",
+  "cancelled",
 ]);
 
 // ─── Collection Result ────────────────────────────────────────────────────────
@@ -95,12 +116,14 @@ export const collectorBatches = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
     reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
 
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id),
     reconciledBy: uuid("reconciled_by").references(() => users.id),
+    closedBy: uuid("closed_by").references(() => users.id),
     cancelledBy: uuid("cancelled_by").references(() => users.id),
 
     // Why an open batch was abandoned.
@@ -161,6 +184,61 @@ export const batchAssignments = pgTable(
   ]
 );
 
+// ─── Collector Remittances ────────────────────────────────────────────────────
+// S1-6: the cash a collector hands in, as its own record.
+//
+// A batch used to carry one `actual_remittance_centavos` column, so a partial
+// hand-in or a corrected one had nowhere to go. A remittance is now a row: a
+// batch may have several (paid in instalments) and the report lists them all.
+// Nothing is deleted to correct a remittance — an offsetting row is added beside
+// it, exactly like a payment reversal.
+//
+// Invariant, enforced by the CHECK below: amount = cash + gcash.
+// `collector_batches.actualRemittanceCentavos` stays as the batch-level total
+// that the reconciliation step compares against expected.
+export const collectorRemittances = pgTable(
+  "collector_remittances",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => collectorBatches.id),
+
+    // Total handed in, in centavos.
+    amountCentavos: integer("amount_centavos").notNull(),
+
+    // The method split, in centavos. Field collections are cash or GCash only
+    // (see collected_method), so two methods are enough to describe the split.
+    cashAmountCentavos: integer("cash_amount_centavos").notNull().default(0),
+    gcashAmountCentavos: integer("gcash_amount_centavos").notNull().default(0),
+
+    // Who handed the money in and when. This is the actor of the row, so there is
+    // no separate `created_by`. `remitted_at` defaults to now but is settable, so
+    // an office clerk can record a remittance that arrived earlier in the day.
+    remittedBy: uuid("remitted_by")
+      .notNull()
+      .references(() => users.id),
+    remittedAt: timestamp("remitted_at", { withTimezone: true }).notNull().defaultNow(),
+
+    // Why this remittance was recorded or corrected.
+    notes: text("notes"),
+  },
+  (table) => [
+    index("collector_remittances_batch_idx").on(table.batchId),
+    index("collector_remittances_remitted_by_idx").on(table.remittedBy),
+    check(
+      "collector_remittances_split_check",
+      sql`${table.amountCentavos} = ${table.cashAmountCentavos} + ${table.gcashAmountCentavos}`
+    ),
+    // A correction is an offsetting row beside the one it fixes, so a remittance
+    // amount is non-zero but may be negative. Nothing is edited or deleted, exactly
+    // like a payment reversal. The signed total of a batch's remittances is what
+    // the batch-level `actualRemittanceCentavos` stores.
+    check("collector_remittances_amount_check", sql`${table.amountCentavos} <> 0`),
+  ]
+);
+
 // ─── Relations ───────────────────────────────────────────────────────────────
 export const collectorBatchesRelations = relations(collectorBatches, ({ one, many }) => ({
   collector: one(users, {
@@ -168,6 +246,18 @@ export const collectorBatchesRelations = relations(collectorBatches, ({ one, man
     references: [users.id],
   }),
   assignments: many(batchAssignments),
+  remittances: many(collectorRemittances),
+}));
+
+export const collectorRemittancesRelations = relations(collectorRemittances, ({ one }) => ({
+  batch: one(collectorBatches, {
+    fields: [collectorRemittances.batchId],
+    references: [collectorBatches.id],
+  }),
+  remittedByUser: one(users, {
+    fields: [collectorRemittances.remittedBy],
+    references: [users.id],
+  }),
 }));
 
 export const batchAssignmentsRelations = relations(batchAssignments, ({ one }) => ({
@@ -192,3 +282,5 @@ export type NewBatchAssignment = typeof batchAssignments.$inferInsert;
 export type CollectorBatchStatus = (typeof collectorBatchStatusEnum.enumValues)[number];
 export type CollectionResult = (typeof collectionResultEnum.enumValues)[number];
 export type CollectedMethod = (typeof collectedMethodEnum.enumValues)[number];
+export type CollectorRemittance = typeof collectorRemittances.$inferSelect;
+export type NewCollectorRemittance = typeof collectorRemittances.$inferInsert;

@@ -1,15 +1,39 @@
 // A small, dependency-free .xlsx writer.
 //
 // An .xlsx workbook is a ZIP archive of XML parts. Rather than pull in a
-// spreadsheet library for one report, this module writes the six parts an Excel
+// spreadsheet library for one report, this module writes the parts an Excel
 // reader needs and stores them UNCOMPRESSED, which removes any need for a
 // compression dependency. Reports are small, so the larger file size costs nothing.
 //
-// It writes one worksheet: inline strings and numbers, no styling. That is all the
-// AR aging export needs.
+// It writes one worksheet: inline strings, plain numbers, and MONEY numbers. A
+// money cell carries an INTEGER NUMBER OF CENTAVOS and is written as a decimal peso
+// amount with a "PHP #,##0.00" number format (S6-4). The centavos are split into
+// pesos and a two-digit remainder with integer arithmetic, so the text Excel reads
+// is produced without ever putting money through a floating-point value.
+
+/** One money cell: an integer number of centavos, formatted as pesos by Excel. */
+export interface XlsxMoneyCell {
+  readonly centavos: number;
+}
+
+/** A cell: a string, a plain number, or money. */
+export type XlsxCell = string | number | XlsxMoneyCell;
 
 /** One row of a worksheet: strings become inline text, numbers become numeric cells. */
-export type XlsxRow = readonly (string | number)[];
+export type XlsxRow = readonly XlsxCell[];
+
+/** Wraps an integer centavo amount so the writer renders it as formatted pesos. */
+export function moneyCell(centavos: number): XlsxMoneyCell {
+  return { centavos };
+}
+
+/** True when a cell carries an integer centavo amount rather than plain text or a count. */
+function isMoneyCell(value: XlsxCell): value is XlsxMoneyCell {
+  return typeof value === "object";
+}
+
+/** The style index of the money cell format in `styles.xml`. */
+const MONEY_STYLE_INDEX = 1;
 
 const encoder = new TextEncoder();
 
@@ -143,8 +167,35 @@ export function columnLetter(zeroBasedIndex: number): string {
   return letters;
 }
 
-/** One cell's XML: a number cell, or an inline-string cell. */
-function cellXml(value: string | number, reference: string): string {
+/**
+ * An integer centavo amount, as the decimal pounds-and-centavos text Excel parses.
+ *
+ * 123456 → "1234.56"; -5000 → "-50.00". Integer arithmetic only.
+ */
+export function centavosToDecimalText(centavos: number): string {
+  const isNegative = centavos < 0;
+  const absoluteCentavos = Math.abs(centavos);
+  const pesos = Math.trunc(absoluteCentavos / 100);
+  const centavoRemainder = absoluteCentavos % 100;
+
+  return `${isNegative ? "-" : ""}${pesos}.${String(centavoRemainder).padStart(2, "0")}`;
+}
+
+/**
+ * One cell's XML: money, a number, an inline string, or an empty cell.
+ *
+ * A report row can legitimately carry a missing value — an optional column, a field
+ * a renamed status no longer maps — and a missing value must render as an empty
+ * cell. It must never take the whole export down with it, which is what an
+ * unguarded `undefined` would do.
+ */
+function cellXml(value: XlsxCell, reference: string): string {
+  if (value === null || value === undefined) {
+    return `<c r="${reference}" t="inlineStr"><is><t/></is></c>`;
+  }
+  if (isMoneyCell(value)) {
+    return `<c r="${reference}" s="${MONEY_STYLE_INDEX}"><v>${centavosToDecimalText(value.centavos)}</v></c>`;
+  }
   if (typeof value === "number") {
     return `<c r="${reference}"><v>${value}</v></c>`;
   }
@@ -173,12 +224,24 @@ function sanitizeSheetName(sheetName: string): string {
   return cleaned.length === 0 ? "Sheet1" : cleaned.slice(0, 31);
 }
 
+/**
+ * The styles part.
+ *
+ * One custom number format (id 164) renders a money cell as `PHP 1,234.56`. A
+ * workbook that references a style must ship the part, so this is written even
+ * when no cell uses it.
+ */
+function buildStylesXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;PHP&quot; #,##0.00"/></numFmts><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+}
+
 /** Builds a complete single-sheet .xlsx workbook from rows. */
 export function buildXlsxWorkbook(sheetName: string, rows: readonly XlsxRow[]): Uint8Array {
   const safeSheetName = sanitizeSheetName(sheetName);
 
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`;
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
 
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
@@ -187,13 +250,14 @@ export function buildXlsxWorkbook(sheetName: string, rows: readonly XlsxRow[]): 
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${escapeXml(safeSheetName)}" sheetId="1" r:id="rId1"/></sheets></workbook>`;
 
   const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`;
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
 
   return buildStoredZip([
     { name: "[Content_Types].xml", bytes: toBytes(contentTypes) },
     { name: "_rels/.rels", bytes: toBytes(rootRels) },
     { name: "xl/workbook.xml", bytes: toBytes(workbook) },
     { name: "xl/_rels/workbook.xml.rels", bytes: toBytes(workbookRels) },
+    { name: "xl/styles.xml", bytes: toBytes(buildStylesXml()) },
     { name: "xl/worksheets/sheet1.xml", bytes: toBytes(buildSheetXml(rows)) },
   ]);
 }

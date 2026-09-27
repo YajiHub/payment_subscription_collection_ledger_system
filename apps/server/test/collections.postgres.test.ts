@@ -28,6 +28,7 @@ import { buildServer } from "../src/index.ts";
 import { closeDatabaseConnection, pool } from "../src/db/connection";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 import { deleteAuditLogsForUsers } from "./support/audit-cleanup";
+import { deleteLedgerEntriesForServiceAccounts } from "./support/ledger-cleanup";
 
 /** A valid bcrypt hash. The value is never checked in this test — only its shape. */
 const DUMMY_PASSWORD_HASH = "$2b$12$OMlJdIjzDLp3Jfn.9NR3qOBmwx5aLVRkyrFhSH6e5J1g.kCBMSeJe";
@@ -91,15 +92,18 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
   });
 
   afterAll(async () => {
+    // S4-2: a batch can now own `collector_remittances` rows, so they must go before
+    // the batch they belong to or the delete is blocked by the foreign key.
+    await pool.query("DELETE FROM collector_remittances WHERE batch_id = ANY($1::uuid[])", [
+      created.batchIds,
+    ]);
     await pool.query("DELETE FROM batch_assignments WHERE batch_id = ANY($1::uuid[])", [
       created.batchIds,
     ]);
     await pool.query("DELETE FROM collector_batches WHERE id = ANY($1::uuid[])", [
       created.batchIds,
     ]);
-    await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
-      created.serviceAccountIds,
-    ]);
+    await deleteLedgerEntriesForServiceAccounts(created.serviceAccountIds);
     await pool.query(
       "DELETE FROM payment_reversals WHERE original_payment_id IN (SELECT id FROM payments WHERE service_account_id = ANY($1::uuid[]))",
       [created.serviceAccountIds]
@@ -202,7 +206,7 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
 
   async function batchRow(batchId: string) {
     const result = await pool.query(
-      `SELECT status, expected_remittance_centavos, actual_remittance_centavos, variance_centavos
+      `SELECT status, expected_remittance_centavos, actual_remittance_centavos, variance_centavos, closed_at
          FROM collector_batches WHERE id = $1`,
       [batchId]
     );
@@ -211,6 +215,7 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
       expected_remittance_centavos: number;
       actual_remittance_centavos: number | null;
       variance_centavos: number | null;
+      closed_at: Date | null;
     };
   }
 
@@ -284,25 +289,49 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     });
     expect(reRecord.statusCode).toBe(409);
 
-    // ── Submit short, then reconcile with notes ───────────────────────────────
-    const submitShort = await server.inject({
+    // ── Declare the run finished, then remit short, then reconcile with notes ──
+    const submitBatch = await server.inject({
       method: "POST",
       url: `/api/collector-batches/${batch.id}/submit`,
       headers: authorizationHeader(collectorToken),
-      payload: { actualRemittanceCentavos: 46000 },
+      payload: {},
     });
-    expect(submitShort.statusCode).toBe(200);
-    expect(submitShort.json().data.varianceCentavos).toBe(-4000);
-    expect((await batchRow(batch.id)).variance_centavos).toBe(-4000);
+    expect(submitBatch.statusCode).toBe(200);
+    expect(submitBatch.json().data.status).toBe("submitted");
+    expect((await batchRow(batch.id)).status).toBe("submitted");
+
+    // Submitting carries no cash: the remittance is a distinct step below.
+    expect((await batchRow(batch.id)).actual_remittance_centavos).toBeNull();
 
     // Re-submitting is a conflict, not a second transition.
     const submitAgain = await server.inject({
       method: "POST",
       url: `/api/collector-batches/${batch.id}/submit`,
       headers: authorizationHeader(collectorToken),
-      payload: { actualRemittanceCentavos: 50000 },
+      payload: {},
     });
     expect(submitAgain.statusCode).toBe(409);
+
+    // S4-2: the cash hand-in is its own endpoint, writing a `collector_remittances` row.
+    const remitShort = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${batch.id}/remit`,
+      headers: authorizationHeader(collectorToken),
+      payload: { amountCentavos: 46000 },
+    });
+    expect(remitShort.statusCode).toBe(200);
+    expect(remitShort.json().data.varianceCentavos).toBe(-4000);
+    expect(remitShort.json().data.remittanceCount).toBe(1);
+    expect((await batchRow(batch.id)).variance_centavos).toBe(-4000);
+
+    // The remittance history is readable and shows the single hand-in.
+    const remittances = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${batch.id}/remittances`,
+      headers: authorizationHeader(adminToken),
+    });
+    expect(remittances.statusCode).toBe(200);
+    expect(remittances.json().data.items).toHaveLength(1);
 
     // Reconcile without notes is refused while the variance stands.
     const reconcileNoNotes = await server.inject({
@@ -332,9 +361,24 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     });
     expect(reconcileAgain.statusCode).toBe(409);
 
+    // Reconciliation does NOT close the batch: closing is a separate action (S4-1).
+    const afterReconcile = await batchRow(batch.id);
+    expect(afterReconcile.status).toBe("reconciled");
+    expect(afterReconcile.closed_at).toBeNull();
+
+    const close = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${batch.id}/close`,
+      headers: authorizationHeader(adminToken),
+      payload: {},
+    });
+    expect(close.statusCode).toBe(200);
+    expect(close.json().data.status).toBe("closed");
+
     const finalRow = await batchRow(batch.id);
-    expect(finalRow.status).toBe("reconciled");
+    expect(finalRow.status).toBe("closed");
     expect(finalRow.variance_centavos).toBe(-4000); // stored, never zeroed
+    expect(finalRow.closed_at).not.toBeNull();
 
     // ── The surviving collection reached the ledger as a credit ───────────────
     const accountALedger = await ledgerRows(accountA);
@@ -450,7 +494,7 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     const sumResult = await pool.query(
       `SELECT coalesce(sum(remaining_balance_centavos), 0)::int AS total
          FROM invoices
-        WHERE status IN ('posted', 'partially_paid', 'overdue') AND remaining_balance_centavos > 0
+        WHERE status IN ('unpaid', 'partially_paid', 'overdue') AND remaining_balance_centavos > 0
           AND service_account_id = ANY($1::uuid[])`,
       [created.serviceAccountIds]
     );
@@ -476,9 +520,46 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     const fullSum = await pool.query(
       `SELECT coalesce(sum(remaining_balance_centavos), 0)::int AS total
          FROM invoices
-        WHERE status IN ('posted', 'partially_paid', 'overdue') AND remaining_balance_centavos > 0`
+        WHERE status IN ('unpaid', 'partially_paid', 'overdue') AND remaining_balance_centavos > 0`
     );
     expect(totals.grandTotal).toBe(Number(fullSum.rows[0]?.total ?? 0));
+  });
+
+  it("keeps the aging reconciliation true WITH the plan and service-type filters applied", async () => {
+    const adminToken = signTestToken({ role: "admin", sub: adminId }).token;
+
+    const filtered = await server.inject({
+      method: "GET",
+      url: `/api/receivables/ar-aging?asOfDate=2025-03-01&planId=${planId}&serviceType=internet`,
+      headers: authorizationHeader(adminToken),
+    });
+    expect(filtered.statusCode).toBe(200);
+
+    const filteredTotals = filtered.json().data.totals as { grandTotal: number };
+    const filteredEntries = filtered.json().data.entries as Array<{
+      serviceAccountId: string;
+      totalOutstandingCentavos: number;
+    }>;
+
+    // The filtered report must still reconcile to the outstanding balances of the
+    // accounts it selected: a client/area/plan filter narrows the book, it never
+    // changes the arithmetic. Re-sum the SAME population with raw SQL.
+    const expected = await pool.query(
+      `SELECT coalesce(sum(i.remaining_balance_centavos), 0)::int AS total
+         FROM invoices i
+         JOIN service_accounts sa ON sa.id = i.service_account_id
+         JOIN subscription_plans p ON p.id = sa.plan_id
+        WHERE sa.plan_id = $1 AND p.service_type = 'internet'
+          AND i.status IN ('unpaid', 'partially_paid', 'overdue')
+          AND i.remaining_balance_centavos > 0`,
+      [planId]
+    );
+
+    expect(filteredTotals.grandTotal).toBe(Number(expected.rows[0]?.total ?? 0));
+    expect(
+      filteredEntries.reduce((sum, entry) => sum + entry.totalOutstandingCentavos, 0)
+    ).toBe(filteredTotals.grandTotal);
+    expect(Number(expected.rows[0]?.total ?? 0)).toBeGreaterThan(0);
   });
 
   it("lists overdue accounts and exports AR aging as an XLSX file", async () => {

@@ -11,6 +11,7 @@
 import { z } from "zod";
 
 import { COLLECTED_METHODS, COLLECTION_RESULTS, COLLECTOR_BATCH_STATUSES } from "../constants/collections";
+import { reportFilterFields } from "./report.types";
 
 /** A calendar day in the office's local timezone, e.g. "2025-01-24". */
 const dateOnlySchema = z
@@ -105,17 +106,62 @@ export const voidCollectionSchema = z.object({
 });
 export type VoidCollectionInput = z.infer<typeof voidCollectionSchema>;
 
-/** POST /api/collector-batches/:id/submit — declare the cash actually handed in. */
-export const submitBatchRemittanceSchema = z.object({
-  actualRemittanceCentavos: centavosSchema,
+/** POST /api/collector-batches/:id/submit — declare the field run finished. */
+export const submitBatchSchema = z.object({
+  notes: z.string().max(500).optional(),
 });
-export type SubmitBatchRemittanceInput = z.infer<typeof submitBatchRemittanceSchema>;
+export type SubmitBatchInput = z.infer<typeof submitBatchSchema>;
 
-/** POST /api/collector-batches/:id/reconcile — close the batch (notes if variance). */
+/**
+ * POST /api/collector-batches/:id/remit — record the cash handed in (S4-2).
+ *
+ * A batch may be remitted more than once. With neither split half supplied the
+ * whole amount is cash; with one half supplied the other is the remainder. A
+ * negative amount is a correction to an earlier remittance, so the service allows
+ * it only when the running total stays non-negative.
+ */
+export const recordBatchRemittanceSchema = z
+  .object({
+    amountCentavos: z.number().int("Amounts must be whole centavos"),
+    cashAmountCentavos: z.number().int("Amounts must be whole centavos").optional(),
+    gcashAmountCentavos: z.number().int("Amounts must be whole centavos").optional(),
+    notes: z.string().max(500).optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.amountCentavos === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amountCentavos"],
+        message: "A non-zero remittance amount is required",
+      });
+      return;
+    }
+
+    if (
+      value.cashAmountCentavos !== undefined &&
+      value.gcashAmountCentavos !== undefined &&
+      value.cashAmountCentavos + value.gcashAmountCentavos !== value.amountCentavos
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cashAmountCentavos"],
+        message: "The cash and GCash split must add up to the remittance amount",
+      });
+    }
+  });
+export type RecordBatchRemittanceInput = z.infer<typeof recordBatchRemittanceSchema>;
+
+/** POST /api/collector-batches/:id/reconcile — reconcile a remitted batch. */
 export const reconcileBatchSchema = z.object({
   varianceNotes: z.string().max(1000).optional(),
 });
 export type ReconcileBatchInput = z.infer<typeof reconcileBatchSchema>;
+
+/** POST /api/collector-batches/:id/close — the separate final sign-off (S4-1). */
+export const closeBatchSchema = z.object({
+  notes: z.string().max(500).optional(),
+});
+export type CloseBatchInput = z.infer<typeof closeBatchSchema>;
 
 /** POST /api/collector-batches/:id/cancel — abandon a batch with no collections. */
 export const cancelBatchSchema = z.object({
@@ -134,9 +180,15 @@ export const listCollectorBatchesQuerySchema = z.object({
 });
 export type ListCollectorBatchesQuery = z.infer<typeof listCollectorBatchesQuerySchema>;
 
-/** GET /api/receivables/ar-aging — the report's "as of" date. */
+/**
+ * GET /api/receivables/ar-aging — the report's "as of" date and its filters (S6-2).
+ *
+ * The same collector/area/plan/service-type filters every report accepts, so the
+ * aging report can be narrowed instead of always returning the whole book.
+ */
 export const arAgingQuerySchema = z.object({
   asOfDate: dateOnlySchema.optional(),
+  ...reportFilterFields,
 });
 export type ArAgingQuery = z.infer<typeof arAgingQuerySchema>;
 
@@ -144,6 +196,7 @@ export type ArAgingQuery = z.infer<typeof arAgingQuerySchema>;
 export const arAgingExportQuerySchema = z.object({
   asOfDate: dateOnlySchema.optional(),
   format: z.enum(["xlsx"]).default("xlsx"),
+  ...reportFilterFields,
 });
 export type ArAgingExportQuery = z.infer<typeof arAgingExportQuerySchema>;
 
@@ -153,6 +206,11 @@ export const overdueAccountsQuerySchema = z.object({
   noPaymentInDays: z.coerce.number().int().min(0).optional(),
   // Only accounts overdue for at least this many consecutive months.
   minConsecutiveOverdueMonths: z.coerce.number().int().min(0).optional(),
+  // Only accounts whose oldest overdue invoice is at least this many days past due.
+  minOverdueDays: z.coerce.number().int().min(0).optional(),
+  // The shared account filters, so the overdue list can be narrowed to a
+  // collector, area, plan, or service type like every other report.
+  ...reportFilterFields,
 });
 export type OverdueAccountsQuery = z.infer<typeof overdueAccountsQuerySchema>;
 

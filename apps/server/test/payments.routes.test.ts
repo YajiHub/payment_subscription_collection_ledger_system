@@ -304,24 +304,25 @@ describe("payment routes", () => {
     expect(insertedInto(gcashPayments)).toHaveLength(0);
   });
 
-  it("posts a GCash payment with its reference and screenshot details", async () => {
+  it("records a GCash payment as PENDING_VERIFICATION without moving any balance", async () => {
     const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
-    const invoice = outstandingInvoice({ remainingBalanceCentavos: 50000 });
 
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([accountRow()]);
     fakeDatabase.queueSelectRows([]); // reference unused
-    fakeDatabase.queueSelectRows([invoice]);
-    fakeDatabase.queueSelectRows([]); // receipt numbers
+    fakeDatabase.queueSelectRows([]); // existing receipt numbers
     fakeDatabase.queueInsertRows([
-      postedPaymentRow({ paymentMethod: "gcash", amountCentavos: 50000, allocatedCentavos: 50000 }),
-    ]);
-    fakeDatabase.queueInsertRows([]); // allocations
+      postedPaymentRow({
+        paymentMethod: "gcash",
+        status: "pending_verification",
+        amountCentavos: 50000,
+        allocatedCentavos: 0,
+        advanceCreditCentavos: 0,
+      }),
+    ]); // the payment row
     fakeDatabase.queueInsertRows([
       { id: randomUUID(), paymentId: PAYMENT_ID, gcashReferenceNumber: "GCASH-OK-001" },
     ]); // gcash details
-    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]);
-    fakeDatabase.queueInsertRows([]); // ledger
 
     const response = await server.inject({
       method: "POST",
@@ -336,6 +337,8 @@ describe("payment routes", () => {
     });
 
     expect(response.statusCode).toBe(201);
+
+    // The claim is recorded with its proof…
     const gcash = insertedInto(gcashPayments);
     expect(gcash).toHaveLength(1);
     expect(gcash[0]?.values).toMatchObject({
@@ -343,6 +346,41 @@ describe("payment routes", () => {
       gcashReferenceNumber: "GCASH-OK-001",
       senderName: "Maria Santos",
     });
+
+    // …and nothing else moved: no invoice balance, no allocation, no ledger entry.
+    expect(insertedInto(payments)[0]?.values).toMatchObject({
+      status: "pending_verification",
+      allocatedCentavos: 0,
+      advanceCreditCentavos: 0,
+    });
+    expect(insertedInto(paymentAllocations)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows.filter((row) => row.table === invoices)).toHaveLength(0);
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+  });
+
+  it("blocks a duplicate GCash reference however it is formatted (S12-7)", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([accountRow()]);
+    fakeDatabase.queueSelectRows([{ id: randomUUID() }]); // the normalized reference exists
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/payments",
+      headers: authorizationHeader(token),
+      payload: {
+        ...CASH_BODY,
+        paymentMethod: "gcash",
+        amountCentavos: 50000,
+        gcash: { referenceNumber: "  gcash-ok-001  " },
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("CONFLICT");
+    expect(insertedInto(payments)).toHaveLength(0);
+    expect(insertedInto(gcashPayments)).toHaveLength(0);
   });
 
   it("issues receipt numbers in OR-YYYY-XXXXXX format, one past the highest existing", async () => {
@@ -457,7 +495,7 @@ describe("payment routes", () => {
     expect(invoiceUpdate?.values).toMatchObject({
       paidAmountCentavos: 0,
       remainingBalanceCentavos: 99900,
-      status: "posted",
+      status: "unpaid",
     });
 
     // A reversal record with a reason and an RV number.
@@ -496,6 +534,116 @@ describe("payment routes", () => {
     expect(response.statusCode).toBe(409);
     expect(response.json().error.code).toBe("CONFLICT");
     expect(insertedInto(paymentReversals)).toHaveLength(0);
+  });
+
+  it("refuses to reverse a GCash payment that no verifier has confirmed yet (S3-6)", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      postedPaymentRow({
+        paymentMethod: "gcash",
+        status: "pending_verification",
+        allocatedCentavos: 0,
+        advanceCreditCentavos: 0,
+      }),
+    ]); // the claim is still awaiting a verifier
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/payments/${PAYMENT_ID}/reverse`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Trying to reverse an unverified claim" },
+    });
+
+    // A pending GCash payment posted nothing, so a reversal has no credit to cancel.
+    // The refusal names the workflow step that does apply, rather than inventing a
+    // debit or leaving the row in a half-reversed state.
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("CONFLICT");
+    expect(response.json().error.message).toContain("Reject it instead");
+    expect(insertedInto(paymentReversals)).toHaveLength(0);
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows.filter((row) => row.table === payments)).toHaveLength(0);
+  });
+
+  it("refuses to reverse a GCash payment a verifier rejected (S3-6)", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      postedPaymentRow({
+        paymentMethod: "gcash",
+        status: "rejected",
+        allocatedCentavos: 0,
+        advanceCreditCentavos: 0,
+      }),
+    ]);
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/payments/${PAYMENT_ID}/reverse`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Trying to reverse a rejected claim" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("CONFLICT");
+    expect(insertedInto(paymentReversals)).toHaveLength(0);
+  });
+
+  it("reverses a verified GCash payment: it stops reading as verified-and-posted (S3-6)", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+    const invoiceId = randomUUID();
+    const verifiedPayment = postedPaymentRow({
+      paymentMethod: "gcash",
+      status: "posted",
+      amountCentavos: 50000,
+      allocatedCentavos: 50000,
+      advanceCreditCentavos: 0,
+    });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([verifiedPayment]); // payment FOR UPDATE
+    fakeDatabase.queueSelectRows([{ invoiceId, allocatedAmountCentavos: 50000 }]); // allocations
+    fakeDatabase.queueSelectRows([
+      { id: invoiceId, totalAmountCentavos: 50000, paidAmountCentavos: 50000 },
+    ]); // invoice FOR UPDATE
+    fakeDatabase.queueSelectRows([]); // existing reversal receipts
+    fakeDatabase.queueInsertRows([]); // reversal record
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance
+    fakeDatabase.queueInsertRows([]); // ledger debit
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/payments/${PAYMENT_ID}/reverse`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Transfer was recalled by the sender" },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    // The status is the one authority on whether the money counts, so a reversed
+    // payment cannot still read as verified-and-posted: `gcashVerificationStatus`
+    // reports `reversed` for it (asserted directly in the GCash suite).
+    expect(fakeDatabase.updatedRows.find((row) => row.table === payments)?.values).toMatchObject({
+      status: "reversed",
+      reversedBy: ADMIN_ID,
+    });
+
+    // The verification detail row is left alone on purpose: who confirmed the
+    // transfer and when is provenance the audit trail must keep.
+    expect(fakeDatabase.updatedRows.filter((row) => row.table === gcashPayments)).toHaveLength(0);
+
+    // The invoice is restored and the debit cancels the credit exactly.
+    expect(fakeDatabase.updatedRows.find((row) => row.table === invoices)?.values).toMatchObject({
+      paidAmountCentavos: 0,
+      remainingBalanceCentavos: 50000,
+      status: "unpaid",
+    });
+    expect(ledgerWrites()).toContainEqual(
+      expect.objectContaining({ entryType: "payment_reversal", amountCentavos: 50000 })
+    );
   });
 
   it("refuses to reverse a payment for a Cashier", async () => {

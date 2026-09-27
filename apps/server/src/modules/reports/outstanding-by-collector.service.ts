@@ -19,16 +19,14 @@
 
 import { eq } from "drizzle-orm";
 
-import { classifyInvoiceAge } from "@bcis/shared";
+import { OUTSTANDING_INVOICE_STATUSES, classifyInvoiceAge } from "@bcis/shared";
 import { db, type DbExecutor } from "../../db/connection";
 import { invoices } from "../../db/schema/billing";
 import { serviceAccounts, subscribers, subscriptionPlans } from "../../db/schema/subscribers";
 import { users } from "../../db/schema/users";
 import { and, gt, inArray } from "drizzle-orm";
 import type { OutstandingInvoiceAgingRow } from "../receivables/ar-aging.service";
-
-/** The statuses of an invoice that still owes money. */
-const OUTSTANDING_INVOICE_STATUSES = ["posted", "partially_paid", "overdue"] as const;
+import { accountFilterConditions, type ReportFilters } from "./report-filters";
 
 /** A collector that has no accounts assigned to them. */
 export const UNASSIGNED_COLLECTOR_NAME = "Unassigned";
@@ -160,9 +158,16 @@ export function buildOutstandingByCollector(
   return { asOfDate: asOfDate.toISOString().slice(0, 10), groups, totals };
 }
 
-/** Every outstanding invoice, with the account's assigned collector. */
+/**
+ * Every outstanding invoice, with the account's assigned collector (S6-2).
+ *
+ * A collector, area, plan, or service-type filter becomes a condition in the SQL
+ * `where` clause, so a filtered report queries fewer invoices rather than filtering
+ * an already-loaded set.
+ */
 export async function loadOutstandingInvoicesWithCollector(
-  executor: DbExecutor = db
+  executor: DbExecutor = db,
+  filters: ReportFilters = {}
 ): Promise<OutstandingInvoiceWithCollectorRow[]> {
   return executor
     .select({
@@ -186,7 +191,8 @@ export async function loadOutstandingInvoicesWithCollector(
     .where(
       and(
         inArray(invoices.status, [...OUTSTANDING_INVOICE_STATUSES]),
-        gt(invoices.remainingBalanceCentavos, 0)
+        gt(invoices.remainingBalanceCentavos, 0),
+        ...accountFilterConditions(filters)
       )
     );
 }

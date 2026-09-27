@@ -64,6 +64,118 @@
       "when": 1790237226770,
       "tag": "0008_smooth_magus",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790504787346,
+      "tag": "0009_role_based_access_control",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790504913164,
+      "tag": "0010_invoice_period_and_due_date_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790504985303,
+      "tag": "0011_ledger_entries_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790505036907,
+      "tag": "0012_trigram_search_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790505081240,
+      "tag": "0013_collection_areas",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790505116011,
+      "tag": "0014_subscriber_addresses",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790505164200,
+      "tag": "0015_service_account_billing_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790505240162,
+      "tag": "0016_collector_remittances",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790505286639,
+      "tag": "0017_service_control_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790505310312,
+      "tag": "0018_backup_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790505400000,
+      "tag": "0019_gcash_allocation_and_backup_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790509350228,
+      "tag": "0020_invoice_status_unpaid_and_credited",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790509350229,
+      "tag": "0021_invoice_installation_fee_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790509350230,
+      "tag": "0022_ledger_entries_reject_truncate",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790512786780,
+      "tag": "0023_payment_methods_and_gcash_verification",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790515239964,
+      "tag": "0024_collector_batch_lifecycle",
+      "breakpoints": true
     }
   ]
 }

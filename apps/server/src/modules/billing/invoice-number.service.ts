@@ -5,8 +5,13 @@
 // The billing period is embedded in the number so a printed document says at a
 // glance which month it covers, and the padded six-digit sequence keeps numbers
 // the same length so they sort correctly as text.
+//
+// Allocation is atomic. Before computing the next sequence the transaction takes a
+// Postgres advisory lock keyed by the period prefix, so two concurrent billing runs
+// cannot read the same maximum and hand out one number twice. The unique constraint
+// on the invoice number is the second line of defence.
 
-import { like } from "drizzle-orm";
+import { like, sql } from "drizzle-orm";
 
 import type { DbExecutor } from "../../db/connection";
 import { invoices } from "../../db/schema/billing";
@@ -56,15 +61,36 @@ export function nextInvoiceSequenceNumber(
 }
 
 /**
+ * Takes a transaction-scoped advisory lock for one billing period.
+ *
+ * The lock is released automatically when the transaction ends, and it only blocks
+ * other invoice allocations for the same period — allocation for a different month
+ * proceeds in parallel. This is the same pattern as receipt-number.service.ts.
+ */
+async function lockInvoiceSequence(
+  executor: DbExecutor,
+  year: number,
+  month: number
+): Promise<void> {
+  const prefix = invoiceNumberPrefix(year, month);
+  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${prefix}))`);
+}
+
+/**
  * Allocates the next invoice number for a billing period by reading the numbers
- * that already exist. Called inside the same transaction that inserts the invoice,
- * so a number can never be handed out twice.
+ * that already exist.
+ *
+ * Must be called inside the same transaction that inserts the invoice: the advisory
+ * lock it takes is only held for that transaction, so the read and the insert have
+ * to commit or roll back together for the number to be handed out exactly once.
  */
 export async function allocateNextInvoiceNumber(
   executor: DbExecutor,
   year: number,
   month: number
 ): Promise<string> {
+  await lockInvoiceSequence(executor, year, month);
+
   const prefix = invoiceNumberPrefix(year, month);
 
   const existingNumbers = await executor

@@ -10,7 +10,7 @@
 // the write, and it stops two concurrent runs from charging the same fee twice.
 
 import { and, eq, gt, inArray, lt } from "drizzle-orm";
-import type { InvoiceStatus } from "@bcis/shared";
+import { OUTSTANDING_INVOICE_STATUSES, type InvoiceStatus } from "@bcis/shared";
 
 import { db, type DbExecutor } from "../../db/connection";
 import { invoiceLineItems, invoices } from "../../db/schema/billing";
@@ -33,7 +33,7 @@ interface OverdueInvoice {
 }
 
 /** Only these statuses still represent a live debt that a late fee may attach to. */
-const CHARGEABLE_STATUSES: readonly InvoiceStatus[] = ["posted", "partially_paid", "overdue"];
+const CHARGEABLE_STATUSES: readonly InvoiceStatus[] = OUTSTANDING_INVOICE_STATUSES;
 
 /** Posted invoices that are past due and still have an unpaid balance. */
 async function findOverdueInvoices(today: Date): Promise<OverdueInvoice[]> {
@@ -52,7 +52,7 @@ async function findOverdueInvoices(today: Date): Promise<OverdueInvoice[]> {
     .from(invoices)
     .where(
       and(
-        inArray(invoices.status, ["posted", "partially_paid", "overdue"]),
+        inArray(invoices.status, [...OUTSTANDING_INVOICE_STATUSES]),
         lt(invoices.dueDate, formatDateOnly(today)),
         gt(invoices.remainingBalanceCentavos, 0)
       )

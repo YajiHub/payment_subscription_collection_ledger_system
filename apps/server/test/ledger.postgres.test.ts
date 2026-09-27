@@ -20,6 +20,7 @@ import { buildServer } from "../src/index.ts";
 import { closeDatabaseConnection, pool } from "../src/db/connection";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 import { deleteAuditLogsForUsers } from "./support/audit-cleanup";
+import { deleteLedgerEntriesForServiceAccounts } from "./support/ledger-cleanup";
 
 /** A valid bcrypt hash. The value is never checked in this test — only its shape. */
 const DUMMY_PASSWORD_HASH = "$2b$12$OMlJdIjzDLp3Jfn.9NR3qOBmwx5aLVRkyrFhSH6e5J1g.kCBMSeJe";
@@ -78,9 +79,7 @@ describe.skipIf(!databaseIsReachable)("Phase 6 against real PostgreSQL", () => {
   });
 
   afterAll(async () => {
-    await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
-      created.serviceAccountIds,
-    ]);
+    await deleteLedgerEntriesForServiceAccounts(created.serviceAccountIds);
     await pool.query(
       "DELETE FROM payment_reversals WHERE original_payment_id IN (SELECT id FROM payments WHERE service_account_id = ANY($1::uuid[]))",
       [created.serviceAccountIds]
@@ -308,7 +307,7 @@ describe.skipIf(!databaseIsReachable)("Phase 6 against real PostgreSQL", () => {
     expect(verifyResponse.json().data).toMatchObject({ isValid: true, entryCount: 2 });
   });
 
-  it("detects a deleted middle entry as a sequence gap", async () => {
+  it("detects a missing sequence number as a sequence gap", async () => {
     const { token } = signTestToken({ role: "admin", sub: adminId });
     const headers = authorizationHeader(token);
     const serviceAccountId = await createServiceAccount("CorruptGap");
@@ -318,11 +317,15 @@ describe.skipIf(!databaseIsReachable)("Phase 6 against real PostgreSQL", () => {
     await server.inject({ method: "POST", url: `/api/invoices/${firstInvoiceId}/post`, headers });
     await server.inject({ method: "POST", url: `/api/invoices/${secondInvoiceId}/post`, headers });
 
-    // Deliberately corrupt the ledger (the test plays the attacker): remove the
-    // first entry and leave the second in place.
+    // Since migration 0011 a DELETE is refused by the ledger_entries trigger, so
+    // the only corruption that can still reach the table is an out-of-band
+    // INSERT. This one skips sequence 3, which is what a lost write looks like.
     await pool.query(
-      "DELETE FROM ledger_entries WHERE service_account_id = $1 AND sequence_number = 1",
-      [serviceAccountId]
+      `INSERT INTO ledger_entries
+         (service_account_id, entry_type, amount_centavos, sequence_number,
+          running_balance_centavos, description, created_by)
+       VALUES ($1, 'manual_debit', 1000, 4, 51000, 'corruption probe', $2)`,
+      [serviceAccountId, adminId]
     );
 
     const verifyResponse = await server.inject({
@@ -333,7 +336,7 @@ describe.skipIf(!databaseIsReachable)("Phase 6 against real PostgreSQL", () => {
     expect(verifyResponse.json().data).toMatchObject({
       isValid: false,
       failure: "sequence_gap",
-      missingSequenceNumber: 1,
+      missingSequenceNumber: 3,
     });
   });
 
@@ -345,10 +348,15 @@ describe.skipIf(!databaseIsReachable)("Phase 6 against real PostgreSQL", () => {
 
     await server.inject({ method: "POST", url: `/api/invoices/${invoiceId}/post`, headers });
 
-    // Tamper with the cached running balance so it no longer matches the arithmetic.
+    // Since migration 0011 an UPDATE is refused by the ledger_entries trigger, so
+    // a wrong cached balance can only arrive with an out-of-band INSERT. This one
+    // claims 100901 where the arithmetic says 99900 + 1000.
     await pool.query(
-      "UPDATE ledger_entries SET running_balance_centavos = running_balance_centavos + 1 WHERE service_account_id = $1",
-      [serviceAccountId]
+      `INSERT INTO ledger_entries
+         (service_account_id, entry_type, amount_centavos, sequence_number,
+          running_balance_centavos, description, created_by)
+       VALUES ($1, 'manual_debit', 1000, 2, 100901, 'corruption probe', $2)`,
+      [serviceAccountId, adminId]
     );
 
     const verifyResponse = await server.inject({
@@ -361,5 +369,24 @@ describe.skipIf(!databaseIsReachable)("Phase 6 against real PostgreSQL", () => {
       failure: "broken_running_balance",
       discrepancyCentavos: -1,
     });
+  });
+
+  it("refuses a TRUNCATE of the ledger_entries table", async () => {
+    // Migration 0022 extends the append-only guard to TRUNCATE: the migration
+    // 0011 trigger is FOR EACH ROW and PostgreSQL only allows STATEMENT-level
+    // TRUNCATE triggers, so without it a single TRUNCATE could erase every
+    // balance in the system. The statement runs inside a transaction that is
+    // rolled back either way, so a regression cannot wipe this shared test
+    // database — it would fail the assertion instead.
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await expect(client.query("TRUNCATE ledger_entries")).rejects.toThrow(
+        /ledger_entries is append-only: TRUNCATE is not permitted/
+      );
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
   });
 });

@@ -13,6 +13,7 @@ import {
   AUDIT_NO_ENTITY_ID,
   type AuditAction,
   type AuditEntityType,
+  type InvoiceStatus,
 } from "@bcis/shared";
 import type { FastifyRequest } from "fastify";
 
@@ -101,12 +102,21 @@ export const audit = {
     });
   },
 
-  invoiceVoided(document: AuditedDocument, reason: string, actor: AuditActor): Promise<void> {
+  invoiceVoided(
+    document: AuditedDocument,
+    previousStatus: InvoiceStatus,
+    reason: string,
+    actor: AuditActor
+  ): Promise<void> {
     return logAuditEntry({
       action: "invoice.voided",
       entityType: "invoice",
       entityId: document.id,
-      previousState: { ...document, status: "posted" },
+      // The status the invoice actually held is passed in, because the document
+      // handed to this helper has already been voided. A literal here would
+      // misreport what the void changed (and `posted` stopped existing when
+      // migration 0020 renamed it to `unpaid`).
+      previousState: { ...document, status: previousStatus },
       newState: { ...document, status: "void" },
       description: `Invoice ${String(document.invoiceNumber)} voided. Reason: ${reason}`,
       ...actorFields(actor),
@@ -270,6 +280,247 @@ export const audit = {
       performedBy: null,
       performedByUsername: username,
       clientIpAddress,
+    });
+  },
+
+  // ─── GCash verification (S3-2, S5-6) ──────────────────────────────────────
+  gcashPaymentVerified(
+    paymentId: string,
+    gcashReferenceNumber: string,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "payment.gcash_verified",
+      entityType: "payment",
+      entityId: paymentId,
+      previousState: { id: paymentId, gcashReferenceNumber, status: "pending_verification" },
+      newState: { id: paymentId, gcashReferenceNumber, status: "posted" },
+      description: `GCash payment ${gcashReferenceNumber} verified`,
+      ...actorFields(actor),
+    });
+  },
+
+  gcashPaymentRejected(
+    paymentId: string,
+    gcashReferenceNumber: string,
+    reason: string,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "payment.gcash_rejected",
+      entityType: "payment",
+      entityId: paymentId,
+      previousState: { id: paymentId, gcashReferenceNumber, status: "pending_verification" },
+      newState: { id: paymentId, gcashReferenceNumber, status: "rejected" },
+      description: `GCash payment ${gcashReferenceNumber} rejected. Reason: ${reason}`,
+      ...actorFields(actor),
+    });
+  },
+
+  // ─── Manual ledger entry (S5-6) ──────────────────────────────────────────
+  manualLedgerEntryPosted(
+    document: { entryId: string; serviceAccountId: string; entryType: string; amountCentavos: number },
+    reason: string,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "ledger.manual_entry_posted",
+      entityType: "ledger_entry",
+      entityId: document.entryId,
+      newState: document,
+      description: `Manual ${document.entryType} entry of ${document.amountCentavos} centavos posted. Reason: ${reason}`,
+      ...actorFields(actor),
+    });
+  },
+
+  // ─── Plans (S5-6) ────────────────────────────────────────────────────────
+  planCreated(document: AuditedDocument, actor: AuditActor): Promise<void> {
+    return logAuditEntry({
+      action: "plan.created",
+      entityType: "plan",
+      entityId: document.id,
+      newState: document,
+      description: `Plan ${String(document.name)} created`,
+      ...actorFields(actor),
+    });
+  },
+
+  planUpdated(
+    document: AuditedDocument,
+    previousState: unknown,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "plan.updated",
+      entityType: "plan",
+      entityId: document.id,
+      previousState: previousState ?? null,
+      newState: document,
+      description: `Plan ${String(document.name)} updated`,
+      ...actorFields(actor),
+    });
+  },
+
+  planRetired(document: AuditedDocument, actor: AuditActor): Promise<void> {
+    return logAuditEntry({
+      action: "plan.retired",
+      entityType: "plan",
+      entityId: document.id,
+      previousState: { id: document.id, name: document.name, isActive: true },
+      newState: { id: document.id, name: document.name, isActive: false },
+      description: `Plan ${String(document.name)} retired`,
+      ...actorFields(actor),
+    });
+  },
+
+  // ─── Collector batches (S5-6) ────────────────────────────────────────────
+  collectorBatchCreated(
+    document: AuditedDocument,
+    assignmentCount: number,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "collector_batch.created",
+      entityType: "collector_batch",
+      entityId: document.id,
+      newState: document,
+      description: `Collector batch ${String(document.batchNumber)} created with ${assignmentCount} account(s)`,
+      ...actorFields(actor),
+    });
+  },
+
+  collectorBatchSubmitted(
+    document: { batchId: string; expectedRemittanceCentavos: number; actualRemittanceCentavos: number; varianceCentavos: number },
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "collector_batch.submitted",
+      entityType: "collector_batch",
+      entityId: document.batchId,
+      previousState: { status: "open", expectedRemittanceCentavos: document.expectedRemittanceCentavos },
+      newState: { status: "submitted", actualRemittanceCentavos: document.actualRemittanceCentavos, varianceCentavos: document.varianceCentavos },
+      description: `Collector batch submitted with ${document.actualRemittanceCentavos} centavos declared against ${document.expectedRemittanceCentavos} expected (variance ${document.varianceCentavos})`,
+      ...actorFields(actor),
+    });
+  },
+
+  collectorBatchRemitted(
+    document: { batchId: string; expectedRemittanceCentavos: number; actualRemittanceCentavos: number; varianceCentavos: number },
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "collector_batch.remitted",
+      entityType: "collector_batch",
+      entityId: document.batchId,
+      previousState: { status: "open", expectedRemittanceCentavos: document.expectedRemittanceCentavos },
+      newState: { status: "submitted", actualRemittanceCentavos: document.actualRemittanceCentavos, varianceCentavos: document.varianceCentavos },
+      description: `Collector batch remitted ${document.actualRemittanceCentavos} centavos against ${document.expectedRemittanceCentavos} expected (variance ${document.varianceCentavos})`,
+      ...actorFields(actor),
+    });
+  },
+
+  collectorBatchReconciled(
+    document: { batchId: string; expectedRemittanceCentavos: number; actualRemittanceCentavos: number; varianceCentavos: number },
+    varianceNotes: string | undefined,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "collector_batch.reconciled",
+      entityType: "collector_batch",
+      entityId: document.batchId,
+      previousState: { status: "submitted", varianceCentavos: document.varianceCentavos },
+      newState: { status: "reconciled" },
+      description: `Collector batch reconciled (variance ${document.varianceCentavos})${
+        varianceNotes !== undefined && varianceNotes.trim().length > 0
+          ? `. Notes: ${varianceNotes.trim()}`
+          : ""
+      }`,
+      ...actorFields(actor),
+    });
+  },
+
+  collectorBatchClosed(
+    document: { batchId: string; batchNumber?: string },
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "collector_batch.closed",
+      entityType: "collector_batch",
+      entityId: document.batchId,
+      previousState: { status: "reconciled" },
+      newState: { status: "closed" },
+      description: `Collector batch ${document.batchNumber ?? document.batchId} closed`,
+      ...actorFields(actor),
+    });
+  },
+
+  collectorBatchCancelled(
+    document: AuditedDocument,
+    reason: string | undefined,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "collector_batch.cancelled",
+      entityType: "collector_batch",
+      entityId: document.id,
+      previousState: { id: document.id, batchNumber: document.batchNumber, status: "open" },
+      newState: { id: document.id, batchNumber: document.batchNumber, status: "cancelled" },
+      description: `Collector batch ${String(document.batchNumber)} cancelled${
+        reason !== undefined && reason.trim().length > 0 ? `. Reason: ${reason.trim()}` : ""
+      }`,
+      ...actorFields(actor),
+    });
+  },
+
+  // ─── System settings (S5-6) ──────────────────────────────────────────────
+  systemSettingUpdated(
+    key: string,
+    previousValue: string | null,
+    newValue: string,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "system_setting.updated",
+      entityType: "system_setting",
+      entityId: AUDIT_NO_ENTITY_ID,
+      previousState: { key, value: previousValue },
+      newState: { key, value: newValue },
+      description: `System setting ${key} changed from ${previousValue ?? "(unset)"} to ${newValue}`,
+      ...actorFields(actor),
+    });
+  },
+
+  // ─── Backups (S5-3) ──────────────────────────────────────────────────────
+  backupCreated(document: AuditedDocument, actor: AuditActor): Promise<void> {
+    return logAuditEntry({
+      action: "backup.created",
+      entityType: "backup",
+      entityId: document.id,
+      newState: document,
+      description: `Backup ${String(document.filename)} created and verified (${String(document.sizeBytes)} bytes)`,
+      ...actorFields(actor),
+    });
+  },
+
+  backupVerified(document: AuditedDocument, actor: AuditActor): Promise<void> {
+    return logAuditEntry({
+      action: "backup.verified",
+      entityType: "backup",
+      entityId: document.id,
+      newState: document,
+      description: `Backup ${String(document.filename)} verified`,
+      ...actorFields(actor),
+    });
+  },
+
+  backupRestored(document: AuditedDocument, actor: AuditActor): Promise<void> {
+    return logAuditEntry({
+      action: "backup.restored",
+      entityType: "backup",
+      entityId: document.id,
+      newState: document,
+      description: `Database restored from backup ${String(document.filename)}`,
+      ...actorFields(actor),
     });
   },
 };

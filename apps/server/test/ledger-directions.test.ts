@@ -60,6 +60,15 @@ function queuePreviousEntry(balanceCentavos: number, sequenceNumber: number): vo
   fakeDatabase.queueSelectRows([{ balanceCentavos, sequenceNumber }]);
 }
 
+/**
+ * Queues what the ledger already debited for the invoice being voided.
+ *
+ * The void credits exactly that much, so this read comes before the balance read.
+ */
+function queueInvoiceDebits(debitedCentavos: number): void {
+  fakeDatabase.queueSelectRows([{ debitedCentavos }]);
+}
+
 describe("ledger write path — direction and running balance", () => {
   beforeEach(() => {
     fakeDatabase.reset();
@@ -150,6 +159,7 @@ describe("ledger write path — direction and running balance", () => {
   });
 
   it("voids an invoice as a CREDIT that removes the debt", async () => {
+    queueInvoiceDebits(99900);
     queuePreviousEntry(199900, 5);
     fakeDatabase.queueInsertRows([{ id: randomUUID() }]);
 
@@ -173,6 +183,30 @@ describe("ledger write path — direction and running balance", () => {
       amountCentavos: 99900,
       runningBalanceCentavos: 100000,
     });
+  });
+
+  it("voids an invoice that debited nothing without writing any ledger row", async () => {
+    // A draft that was never posted and never paid down by an advance credit has no
+    // debt to remove, so the void must not credit the account for anything.
+    fakeDatabase.queueSelectRows([{ debitedCentavos: 0 }]);
+
+    const entryId = await recordInvoiceVoided(
+      fakeDatabase.db as never,
+      {
+        id: randomUUID(),
+        invoiceNumber: "INV-2025-01-000002",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+      "Duplicate draft",
+      USER_ID
+    );
+
+    expect(entryId).toBe("");
+    expect(ledgerWrites()).toHaveLength(0);
   });
 
   it("reverses a payment as a DEBIT that restores the debt", async () => {
@@ -283,6 +317,7 @@ describe("ledger write path — direction and running balance", () => {
   });
 
   it("never updates or deletes a ledger row — every change is an insert", async () => {
+    queueInvoiceDebits(99900);
     queuePreviousEntry(99900, 1);
     fakeDatabase.queueInsertRows([{ id: randomUUID() }]);
     await recordInvoiceVoided(

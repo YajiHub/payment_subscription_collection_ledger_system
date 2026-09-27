@@ -11,11 +11,13 @@ import { and, eq, gt, inArray, lt } from "drizzle-orm";
 
 import { db, type DbExecutor } from "../../db/connection";
 import { invoices } from "../../db/schema/billing";
+import { collectionAreas } from "../../db/schema/areas";
 import { payments } from "../../db/schema/payments";
 import { serviceAccounts, subscribers, subscriptionPlans } from "../../db/schema/subscribers";
 import { users } from "../../db/schema/users";
+import { OUTSTANDING_INVOICE_STATUSES } from "@bcis/shared";
+import { accountFilterConditions, type ReportFilters } from "../reports/report-filters";
 
-const OUTSTANDING_INVOICE_STATUSES = ["posted", "partially_paid", "overdue"] as const;
 const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 
 /** One overdue invoice as the query returns it. */
@@ -25,6 +27,7 @@ export interface OverdueInvoiceRow {
   billingPeriodYear: number | null;
   billingPeriodMonth: number | null;
   dueDate: string;
+  invoiceNumber: string;
   serviceAccountNumber: string;
   subscriberId: string;
   subscriberFirstName: string;
@@ -33,6 +36,7 @@ export interface OverdueInvoiceRow {
   storedConsecutiveOverdueMonths: number;
   collectorId: string | null;
   collectorName: string | null;
+  areaName: string | null;
 }
 
 /** The most recent payment date for one service account, or null when never paid. */
@@ -53,13 +57,32 @@ export interface OverdueAccount {
   collectorId: string | null;
   collectorName: string | null;
   lastPaymentDate: string | null;
+  /** S4-5: the collection area the account sits in. */
+  areaName: string | null;
+  /** S4-5: the invoice number of the oldest unpaid invoice. */
+  oldestUnpaidInvoiceNumber: string | null;
+  /** S4-5: the due date of that oldest invoice. */
+  oldestUnpaidDueDate: string | null;
 }
 
-export interface ListOverdueAccountsFilters {
+/**
+ * The overdue list's filters (S6-2).
+ *
+ * The account filters are the same ones every report uses, so the overdue list can
+ * be narrowed to one collector, area, plan, or service type — the audit found the
+ * list offered no such filter at all.
+ */
+export interface ListOverdueAccountsFilters
+  extends Pick<ReportFilters, "collectorId" | "areaId" | "planId" | "serviceType"> {
   /** Only accounts whose last payment is older than this many days (or has never paid). */
   noPaymentInDays?: number;
   /** Only accounts overdue for at least this many consecutive months. */
   minConsecutiveOverdueMonths?: number;
+  /**
+   * Only accounts whose OLDEST unpaid invoice is at least this many days past due.
+   * This is the delinquency-age filter; a half-open boundary at exactly N days.
+   */
+  minOverdueDays?: number;
 }
 
 /**
@@ -132,9 +155,23 @@ export function summarizeOverdueAccounts(
       collectorId: invoice.collectorId,
       collectorName: invoice.collectorName,
       lastPaymentDate: lastPaymentByAccount.get(invoice.serviceAccountId) ?? null,
+      areaName: invoice.areaName,
+      oldestUnpaidInvoiceNumber: invoice.invoiceNumber,
+      oldestUnpaidDueDate: invoice.dueDate,
     };
 
     running.totalOverdueCentavos += invoice.remainingBalanceCentavos;
+
+    // S4-5: keep the OLDEST unpaid invoice, which is the one a collector asks about
+    // first and the one the delinquency-age filter is measured against.
+    if (
+      running.oldestUnpaidDueDate === null ||
+      invoice.dueDate < running.oldestUnpaidDueDate
+    ) {
+      running.oldestUnpaidInvoiceNumber = invoice.invoiceNumber;
+      running.oldestUnpaidDueDate = invoice.dueDate;
+    }
+
     accounts.set(invoice.serviceAccountId, running);
 
     if (invoice.billingPeriodYear !== null && invoice.billingPeriodMonth !== null) {
@@ -171,6 +208,18 @@ export function summarizeOverdueAccounts(
       return false;
     }
 
+    if (filters.minOverdueDays !== undefined) {
+      // Measured from the OLDEST unpaid invoice, so an account with one very old
+      // debt qualifies however many newer invoices it also has. An account with no
+      // recorded due date cannot be shown to qualify.
+      if (account.oldestUnpaidDueDate === null) {
+        return false;
+      }
+      if (daysSince(account.oldestUnpaidDueDate, asOfDate) < filters.minOverdueDays) {
+        return false;
+      }
+    }
+
     if (filters.noPaymentInDays !== undefined) {
       if (account.lastPaymentDate === null) {
         return true; // never paid — always qualifies
@@ -197,6 +246,7 @@ export async function listOverdueAccounts(
       billingPeriodYear: invoices.billingPeriodYear,
       billingPeriodMonth: invoices.billingPeriodMonth,
       dueDate: invoices.dueDate,
+      invoiceNumber: invoices.invoiceNumber,
       serviceAccountNumber: serviceAccounts.serviceAccountNumber,
       subscriberId: subscribers.id,
       subscriberFirstName: subscribers.firstName,
@@ -205,17 +255,20 @@ export async function listOverdueAccounts(
       storedConsecutiveOverdueMonths: serviceAccounts.consecutiveOverdueMonths,
       collectorId: serviceAccounts.assignedCollectorId,
       collectorName: users.fullName,
+      areaName: collectionAreas.name,
     })
     .from(invoices)
     .innerJoin(serviceAccounts, eq(invoices.serviceAccountId, serviceAccounts.id))
     .innerJoin(subscribers, eq(serviceAccounts.subscriberId, subscribers.id))
     .innerJoin(subscriptionPlans, eq(serviceAccounts.planId, subscriptionPlans.id))
     .leftJoin(users, eq(serviceAccounts.assignedCollectorId, users.id))
+    .leftJoin(collectionAreas, eq(serviceAccounts.areaId, collectionAreas.id))
     .where(
       and(
         inArray(invoices.status, [...OUTSTANDING_INVOICE_STATUSES]),
         gt(invoices.remainingBalanceCentavos, 0),
-        lt(invoices.dueDate, asOfDateOnly)
+        lt(invoices.dueDate, asOfDateOnly),
+        ...accountFilterConditions(filters)
       )
     );
 

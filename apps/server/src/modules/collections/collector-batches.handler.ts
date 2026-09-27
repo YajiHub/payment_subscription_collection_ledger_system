@@ -8,25 +8,37 @@ import { z } from "zod";
 import {
   addBatchAssignmentsSchema,
   cancelBatchSchema,
+  closeBatchSchema,
   createCollectorBatchSchema,
   listCollectorBatchesQuerySchema,
+  recordBatchRemittanceSchema,
   reconcileBatchSchema,
   recordCollectionSchema,
-  submitBatchRemittanceSchema,
+  submitBatchSchema,
   voidCollectionSchema,
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
+import { audit, logAuditEntry, requestActor } from "../../shared/audit/audit-logger";
 import { parseOrThrow } from "../../shared/validate";
+import { generateReportPdf } from "../../shared/pdf/report-generator";
+import { generateReportXlsx } from "../../shared/xlsx/report-generator";
+import {
+  buildRouteSheetTable,
+  loadBatchRouteSheet,
+} from "./collector-batch-route-sheet.service";
 import {
   addBatchAssignments,
   cancelBatch,
+  closeBatch,
   createCollectorBatch,
   getCollectorBatchDetail,
   listAssignableCollectors,
+  listBatchRemittances,
   listCollectorBatches,
   reconcileBatch,
+  recordBatchRemittance,
   recordCollection,
-  submitBatchRemittance,
+  submitBatch,
   voidCollection,
   type BatchActor,
 } from "./collector-batches.service";
@@ -86,6 +98,7 @@ export async function postCollectorBatch(
 ): Promise<FastifyReply> {
   const body = parseOrThrow(createCollectorBatchSchema, request.body);
   const batch = await createCollectorBatch(body, callerAsActor(request));
+  await audit.collectorBatchCreated({ ...batch }, batch.assignmentCount, requestActor(request));
   return sendSuccess(reply, batch, 201);
 }
 
@@ -154,27 +167,162 @@ export async function putCollectionVoided(
   return sendSuccess(reply, result);
 }
 
-/** POST /api/collector-batches/:id/submit — declares the cash handed in. */
+/** POST /api/collector-batches/:id/submit — declares the field run finished. */
 export async function postBatchSubmitted(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
-  const body = parseOrThrow(submitBatchRemittanceSchema, request.body);
+  parseOrThrow(submitBatchSchema, request.body ?? {});
 
-  const result = await submitBatchRemittance(id, body.actualRemittanceCentavos, callerAsActor(request));
+  const result = await submitBatch(id, callerAsActor(request));
+  await audit.collectorBatchSubmitted(
+    {
+      batchId: result.batchId,
+      expectedRemittanceCentavos: result.expectedRemittanceCentavos,
+      actualRemittanceCentavos: 0,
+      varianceCentavos: 0,
+    },
+    requestActor(request)
+  );
   return sendSuccess(reply, result);
 }
 
-/** POST /api/collector-batches/:id/reconcile — closes a submitted batch. */
+/**
+ * POST /api/collector-batches/:id/remit — records the cash handed in (S4-2).
+ *
+ * Writes a `collector_remittances` row and keeps the batch total and variance
+ * consistent with the sum of those rows. A batch may be remitted more than once.
+ */
+export async function postBatchRemitted(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const { id } = parseOrThrow(batchIdParamsSchema, request.params);
+  const body = parseOrThrow(recordBatchRemittanceSchema, request.body);
+
+  const result = await recordBatchRemittance(
+    id,
+    {
+      amountCentavos: body.amountCentavos,
+      cashAmountCentavos: body.cashAmountCentavos,
+      gcashAmountCentavos: body.gcashAmountCentavos,
+      notes: body.notes,
+    },
+    callerAsActor(request)
+  );
+
+  await audit.collectorBatchRemitted(
+    {
+      batchId: result.batchId,
+      expectedRemittanceCentavos: result.expectedRemittanceCentavos,
+      actualRemittanceCentavos: result.actualRemittanceCentavos,
+      varianceCentavos: result.varianceCentavos,
+    },
+    requestActor(request)
+  );
+  return sendSuccess(reply, result);
+}
+
+/** GET /api/collector-batches/:id/remittances — the batch's remittance history. */
+export async function getBatchRemittances(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const { id } = parseOrThrow(batchIdParamsSchema, request.params);
+  const items = await listBatchRemittances(id, callerAsActor(request));
+  return sendSuccess(reply, { items });
+}
+
+/** GET /api/collector-batches/:id/route-sheet — the printable route sheet (S4-3). */
+export async function getBatchRouteSheet(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const { id } = parseOrThrow(batchIdParamsSchema, request.params);
+  const sheet = await loadBatchRouteSheet(id, callerAsActor(request));
+  return sendSuccess(reply, sheet);
+}
+
+/** The route-sheet download format. */
+const routeSheetExportQuerySchema = z.object({
+  format: z.enum(["pdf", "xlsx"]).default("pdf"),
+});
+
+/**
+ * GET /api/collector-batches/:id/route-sheet/export — the sheet as a file (S4-3).
+ *
+ * It renders through the SAME report table and PDF/XLSX generators every other
+ * report uses, so a sheet that prints and a sheet that exports show one set of
+ * numbers. Route sheet generation performs no write.
+ */
+export async function getBatchRouteSheetExport(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const { id } = parseOrThrow(batchIdParamsSchema, request.params);
+  const { format } = parseOrThrow(routeSheetExportQuerySchema, request.query ?? {});
+
+  const sheet = await loadBatchRouteSheet(id, callerAsActor(request));
+  const table = buildRouteSheetTable(sheet);
+  const fileName = `route-sheet-${sheet.batchNumber}`;
+
+  if (format === "xlsx") {
+    const workbook = generateReportXlsx(table);
+    return reply
+      .header(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      )
+      .header("Content-Disposition", `attachment; filename="${fileName}.xlsx"`)
+      .send(Buffer.from(workbook));
+  }
+
+  const pdf = await generateReportPdf(table);
+  return reply
+    .header("Content-Type", "application/pdf")
+    .header("Content-Disposition", `attachment; filename="${fileName}.pdf"`)
+    .send(pdf);
+}
+
+/** POST /api/collector-batches/:id/reconcile — reconciles a remitted batch. */
 export async function postBatchReconciled(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
-  const body = parseOrThrow(reconcileBatchSchema, request.body);
+  const body = parseOrThrow(reconcileBatchSchema, request.body ?? {});
 
   const result = await reconcileBatch(id, body.varianceNotes, callerAsActor(request));
+  await audit.collectorBatchReconciled(result, body.varianceNotes, requestActor(request));
+  return sendSuccess(reply, result);
+}
+
+/**
+ * POST /api/collector-batches/:id/close — the supervisor's final sign-off (S4-1).
+ *
+ * A separate authorized action from reconciliation: only a reconciled batch may be
+ * closed, and the state machine refuses any other source state.
+ */
+export async function postBatchClosed(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const { id } = parseOrThrow(batchIdParamsSchema, request.params);
+  const body = parseOrThrow(closeBatchSchema, request.body ?? {});
+
+  const result = await closeBatch(id, callerAsActor(request));
+  await audit.collectorBatchClosed(result, requestActor(request));
+  if (body.notes !== undefined && body.notes.trim().length > 0) {
+    await logAuditEntry({
+      action: "collector_batch.closed",
+      entityType: "collector_batch",
+      entityId: result.batchId,
+      description: `Close note: ${body.notes.trim()}`,
+      performedBy: request.user?.id ?? null,
+      clientIpAddress: request.ip,
+    });
+  }
   return sendSuccess(reply, result);
 }
 
@@ -187,5 +335,6 @@ export async function postBatchCancelled(
   const body = parseOrThrow(cancelBatchSchema, request.body);
 
   const batch = await cancelBatch(id, body.reason, callerAsActor(request));
+  await audit.collectorBatchCancelled({ ...batch }, body.reason, requestActor(request));
   return sendSuccess(reply, batch);
 }

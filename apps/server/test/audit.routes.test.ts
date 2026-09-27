@@ -134,7 +134,8 @@ describe("audit logger", () => {
 
   it("writes the expected fields for a named action", async () => {
     await audit.invoiceVoided(
-      { id: randomUUID(), invoiceNumber: "INV-2025-01-000042", status: "posted" },
+      { id: randomUUID(), invoiceNumber: "INV-2025-01-000042", status: "void" },
+      "unpaid",
       "Entered incorrect amount",
       { userId: ADMIN_ID, username: "admin", clientIpAddress: "10.0.0.5" }
     );
@@ -149,6 +150,26 @@ describe("audit logger", () => {
     });
     expect(String(row?.description)).toContain("INV-2025-01-000042");
     expect(String(row?.description)).toContain("Entered incorrect amount");
+  });
+
+  it("records the invoice's real prior status on a void, whichever status it was", async () => {
+    // `posted` stopped being a status when migration 0020 renamed it to `unpaid`,
+    // so a hardcoded literal would misreport every void. Both the trail's previous
+    // and new state must come from the invoice that was actually voided.
+    for (const previousStatus of ["unpaid", "overdue"] as const) {
+      fakeDatabase.reset();
+
+      await audit.invoiceVoided(
+        { id: randomUUID(), invoiceNumber: "INV-2025-01-000042", status: "void" },
+        previousStatus,
+        "Entered incorrect amount",
+        { userId: ADMIN_ID, username: "admin", clientIpAddress: "10.0.0.5" }
+      );
+
+      const [row] = insertedAuditRows();
+      expect(row?.previousState).toMatchObject({ status: previousStatus });
+      expect(row?.newState).toMatchObject({ status: "void" });
+    }
   });
 
   it("never writes a password hash into a user password-changed entry", async () => {

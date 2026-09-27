@@ -8,6 +8,7 @@ export type ErrorCode =
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "CONFLICT"
+  | "TOO_MANY_REQUESTS"
   | "INTERNAL_ERROR";
 
 /** Base class for every error this system throws deliberately. */
@@ -55,6 +56,17 @@ export class NotFoundError extends AppError {
 export class ConflictError extends AppError {
   constructor(message: string) {
     super(message, 409, "CONFLICT");
+  }
+}
+
+/**
+ * The request is refused because a limit was hit — the per-account login lockout
+ * (S5-5). Distinct from the IP rate-limit plugin so the two controls can be told
+ * apart in the logs.
+ */
+export class TooManyRequestsError extends AppError {
+  constructor(message = "Too many requests") {
+    super(message, 429, "TOO_MANY_REQUESTS");
   }
 }
 

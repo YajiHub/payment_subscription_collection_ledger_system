@@ -44,6 +44,7 @@ import type { StatementOfAccount } from "../src/modules/ledger/statement-of-acco
 import { formatReportCount, formatReportMoney } from "../src/shared/reports/money-format";
 import { generateReportPdf, sanitizePdfText } from "../src/shared/pdf/report-generator";
 import { buildReportRows, generateReportXlsx } from "../src/shared/xlsx/report-generator";
+import { centavosToDecimalText } from "../src/shared/xlsx/xlsx-writer";
 
 /** A payment row as the daily collection query returns it. */
 function paymentRow(overrides: Partial<DailyCollectionPaymentRow> = {}): DailyCollectionPaymentRow {
@@ -818,7 +819,7 @@ describe("generateReportPdf", () => {
 });
 
 describe("generateReportXlsx", () => {
-  it("writes the title, a centavos-labelled header, the rows, and the totals", () => {
+  it("writes the title, a plain money header, the rows, and the totals", () => {
     const table = dailyCollectionReportTable(
       buildDailyCollectionReport([paymentRow({ amountCentavos: 10000 })], "2025-01-24")
     );
@@ -827,17 +828,42 @@ describe("generateReportXlsx", () => {
 
     expect(rows[0]).toEqual([table.title]);
     expect(rows[1]).toEqual(["For 2025-01-24"]);
-    expect(rows[3]).toContain("Amount (centavos)");
+    // S6-4: the unit is in the cell's number format, not in the header.
+    expect(rows[3]).toContain("Amount");
+    expect(rows[3]).not.toContain("Amount (centavos)");
     expect(rows[4]).toEqual([
       "OR-2025-000001",
       "09:15:00",
       "Santos, Maria",
       "SA-20250101-00001",
       "Cash",
-      10000,
+      { centavos: 10000 },
       "Ana Cruz",
     ]);
-    expect(rows.at(-1)).toEqual(["Grand total", "", "", "", "", 10000, ""]);
+    expect(rows.at(-1)).toEqual(["Grand total", "", "", "", "", { centavos: 10000 }, ""]);
+  });
+
+  it("writes money as formatted pesos after integer-only conversion", () => {
+    // The centavos reach the writer untouched; the decimal text is produced from
+    // them with integer arithmetic, never through a floating-point peso amount.
+    expect(centavosToDecimalText(123456)).toBe("1234.56");
+    expect(centavosToDecimalText(5)).toBe("0.05");
+    expect(centavosToDecimalText(-5000)).toBe("-50.00");
+  });
+
+  it("declares the PHP number format the money cells reference", () => {
+    const workbook = generateReportXlsx(
+      dailyCollectionReportTable(
+        buildDailyCollectionReport([paymentRow({ amountCentavos: 10000 })], "2025-01-24")
+      )
+    );
+    const decoded = Buffer.from(workbook).toString("latin1");
+
+    expect(decoded).toContain("xl/styles.xml");
+    expect(decoded).toContain('formatCode="&quot;PHP&quot; #,##0.00"');
+    // The money cell carries the style index and the decimal peso text (row 5 is
+    // the first data row; column F is "Amount").
+    expect(decoded).toContain('<c r="F5" s="1"><v>100.00</v></c>');
   });
 
   it("produces a real ZIP archive", () => {

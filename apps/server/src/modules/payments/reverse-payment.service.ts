@@ -4,6 +4,19 @@
 //
 // Restoring the invoice balances and writing the reversal record happen in one
 // transaction, so a reversed payment is always fully reversed.
+//
+// GCash (S3-6). A payment that a verifier confirmed is reversed exactly like cash:
+// the status change is what reverses the verification state, and every read of
+// "money received" keys off `status = posted`, so a reversed payment cannot still
+// read as verified-and-posted (`gcashVerificationStatus` in payments.service
+// reports it as `reversed`). The verifier's identity and timestamp stay on the
+// gcash_payments row as history — that is provenance, not money, and the audit
+// trail must keep showing who confirmed the transfer.
+//
+// A GCash payment that was never verified has no posted amount to reverse, so
+// reversing it is refused with a message pointing at rejection. That is deliberate:
+// `recordPaymentReversed` writes a debit to cancel a credit, and a pending payment
+// never created one — running it would invent a debit out of nothing.
 
 import { eq } from "drizzle-orm";
 
@@ -79,6 +92,20 @@ export async function reversePaymentWithinTransaction(
     throw new ConflictError("Payment has already been reversed");
   }
 
+  // A GCash payment that no verifier confirmed never posted, so there is no credit
+  // to cancel and no allocation to restore. Its own workflow step is rejection.
+  if (payment.status === "pending_verification") {
+    throw new ConflictError(
+      "This GCash payment is still awaiting verification and has not been posted, so there is nothing to reverse. Reject it instead."
+    );
+  }
+
+  if (payment.status === "rejected") {
+    throw new ConflictError(
+      "This GCash payment was rejected and never posted, so there is nothing to reverse."
+    );
+  }
+
   await restoreInvoiceBalances(executor, paymentId);
 
   const reversedAt = new Date();
@@ -147,7 +174,7 @@ async function restoreInvoiceBalances(executor: DbExecutor, paymentId: string): 
       .set({
         paidAmountCentavos: restoredPaid,
         remainingBalanceCentavos: restoredRemaining,
-        status: restoredRemaining === 0 ? "paid" : "posted",
+        status: restoredRemaining === 0 ? "paid" : "unpaid",
       })
       .where(eq(invoices.id, allocation.invoiceId));
   }

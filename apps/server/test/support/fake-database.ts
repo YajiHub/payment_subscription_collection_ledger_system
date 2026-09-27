@@ -23,12 +23,27 @@ export interface FakeDatabase {
   db: unknown;
   /** Rows returned by the next `select` queries, in call order. */
   queueSelectRows(...resultSets: unknown[][]): void;
+  /** Makes the next `select` reject, simulating the database being unreachable. */
+  failNextSelect(error: Error): void;
   /** Rows returned by the next `insert ... returning()` calls, in call order. */
   queueInsertRows(...resultSets: unknown[][]): void;
   /** Rows returned by the next `update ... returning()` calls, in call order. */
   queueUpdateRows(...resultSets: unknown[][]): void;
   /** Makes the next `insert` reject, simulating a database failure mid-transaction. */
   failNextInsert(error: Error): void;
+  /**
+   * Every argument passed to `.where()` so far, in call order, including
+   * `undefined` for an unfiltered query.
+   *
+   * A query builder is otherwise opaque here, so this is what lets a test prove a
+   * filter really reached the SQL `where` clause (S6-2) rather than being accepted
+   * and silently ignored.
+   */
+  readonly whereConditions: unknown[];
+  /** Every value passed to `.limit()`, so a test can prove a page is bounded. */
+  readonly limitValues: unknown[];
+  /** Every value passed to `.offset()`, so a test can prove the page offset. */
+  readonly offsetValues: unknown[];
   /** Every `insert(...).values(...)` call that committed so far. */
   readonly insertedRows: RecordedInsert[];
   /** Every `update(...).set(...)` call that committed so far. */
@@ -47,24 +62,41 @@ interface RecordBuffers {
 
 function createFakeDatabase(): FakeDatabase {
   const selectQueue: unknown[][] = [];
+  const selectFailures: Error[] = [];
   const insertQueue: unknown[][] = [];
   const updateQueue: unknown[][] = [];
   const insertFailures: Error[] = [];
   const insertedRows: RecordedInsert[] = [];
   const updatedRows: RecordedUpdate[] = [];
+  const whereConditions: unknown[] = [];
+  const limitValues: unknown[] = [];
+  const offsetValues: unknown[] = [];
 
   function makeSelectBuilder() {
     const builder = {
       from: () => builder,
-      where: () => builder,
+      where: (condition?: unknown) => {
+        whereConditions.push(condition);
+        return builder;
+      },
       innerJoin: () => builder,
       leftJoin: () => builder,
       orderBy: () => builder,
-      limit: () => builder,
-      offset: () => builder,
+      limit: (value: unknown) => {
+        limitValues.push(value);
+        return builder;
+      },
+      offset: (value: unknown) => {
+        offsetValues.push(value);
+        return builder;
+      },
       // `SELECT ... FOR UPDATE` is accepted and ignored; the tests do not lock.
       for: () => builder,
       then(onFulfilled: ThenResolve, onRejected?: (reason: unknown) => unknown) {
+        const failure = selectFailures.shift();
+        if (failure !== undefined) {
+          return Promise.reject(failure).then(onFulfilled, onRejected);
+        }
         const rows = selectQueue.shift() ?? [];
         return Promise.resolve(rows).then(onFulfilled, onRejected);
       },
@@ -110,11 +142,25 @@ function createFakeDatabase(): FakeDatabase {
     return builder;
   }
 
+  // `DELETE FROM ... WHERE ...` records nothing and resolves empty: tests only need
+  // the statement to succeed so a transactional replace can proceed.
+  function makeDeleteBuilder() {
+    const builder = {
+      where: () => builder,
+      returning: () => builder,
+      then(onFulfilled: ThenResolve, onRejected?: (reason: unknown) => unknown) {
+        return Promise.resolve([]).then(onFulfilled, onRejected);
+      },
+    };
+    return builder;
+  }
+
   function makeExecutor(records: RecordBuffers) {
     return {
       select: () => makeSelectBuilder(),
       insert: (table: unknown) => makeInsertBuilder(table, records),
       update: (table: unknown) => makeUpdateBuilder(table, records),
+      delete: () => makeDeleteBuilder(),
       // Advisory locks and other raw statements are accepted and ignored. Receipt
       // sequence reads still come through `select` above, so tests stay honest.
       execute: async () => ({ rows: [] }),
@@ -139,18 +185,26 @@ function createFakeDatabase(): FakeDatabase {
   return {
     db,
     queueSelectRows: (...resultSets) => selectQueue.push(...resultSets),
+    failNextSelect: (error) => selectFailures.push(error),
     queueInsertRows: (...resultSets) => insertQueue.push(...resultSets),
     queueUpdateRows: (...resultSets) => updateQueue.push(...resultSets),
     failNextInsert: (error) => insertFailures.push(error),
     insertedRows,
     updatedRows,
+    whereConditions,
+    limitValues,
+    offsetValues,
     reset: () => {
       selectQueue.length = 0;
+      selectFailures.length = 0;
       insertQueue.length = 0;
       updateQueue.length = 0;
       insertFailures.length = 0;
       insertedRows.length = 0;
       updatedRows.length = 0;
+      whereConditions.length = 0;
+      limitValues.length = 0;
+      offsetValues.length = 0;
     },
   };
 }

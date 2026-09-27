@@ -9,7 +9,8 @@
 
 import { z } from "zod";
 
-import { REPORT_EXPORT_FORMATS, REPORT_TYPES } from "../constants/reports";
+import { ALL_REPORT_TYPES, REPORT_EXPORT_FORMATS } from "../constants/reports";
+import { SERVICE_ACCOUNT_STATUSES, SERVICE_TYPES } from "../constants/service-accounts";
 
 /** A calendar day in the office's local timezone, e.g. "2025-01-24". */
 const dateOnlySchema = z
@@ -22,6 +23,32 @@ const monthFilterFields = {
   month: z.coerce.number().int().min(1).max(12),
 };
 
+// ─── The filters every report shares (S6-2) ──────────────────────────────────
+//
+// Every one of these is optional, and every one that is present MUST narrow the
+// SQL result. `fromDate` and `toDate` are BOTH INCLUSIVE calendar days; the report
+// services convert them the way their own date column needs. A filter written into
+// a query string and ignored by the query is the defect the audit flagged, so the
+// services build their `where` clause from these fields directly.
+export const reportFilterFields = {
+  /** First day of the range, inclusive. */
+  fromDate: dateOnlySchema.optional(),
+  /** Last day of the range, inclusive. */
+  toDate: dateOnlySchema.optional(),
+  /** Only rows whose account is assigned to this collector. */
+  collectorId: z.string().uuid("The collector id must be a UUID").optional(),
+  /** Only rows whose account sits in this collection area. */
+  areaId: z.string().uuid("The area id must be a UUID").optional(),
+  /** Only rows whose account is on this subscription plan. */
+  planId: z.string().uuid("The plan id must be a UUID").optional(),
+  /** Only rows whose plan is of this service type. */
+  serviceType: z.enum(SERVICE_TYPES).optional(),
+};
+
+/** The filters a report endpoint accepts: the shared set, and nothing else. */
+export const reportFiltersSchema = z.object(reportFilterFields);
+export type ReportFilterFields = z.infer<typeof reportFiltersSchema>;
+
 /**
  * GET /api/reports/daily-collection — the day to summarise.
  * Defaults to today when omitted, so the end-of-day cash count needs no argument.
@@ -30,6 +57,88 @@ export const dailyCollectionReportQuerySchema = z.object({
   date: dateOnlySchema.optional(),
 });
 export type DailyCollectionReportQuery = z.infer<typeof dailyCollectionReportQuerySchema>;
+
+/**
+ * GET /api/reports/weekly-collection — collections for a week, day by day (R7).
+ *
+ * With neither date supplied the week is the current Monday..Sunday. Supply both to
+ * report on a different week; the range is inclusive at both ends.
+ */
+export const weeklyCollectionReportQuerySchema = reportFiltersSchema;
+export type WeeklyCollectionReportQuery = z.infer<typeof weeklyCollectionReportQuerySchema>;
+
+/**
+ * GET /api/reports/annual-collection — collections for a year, month by month (R8).
+ * Defaults to the current calendar year.
+ */
+export const annualCollectionReportQuerySchema = z.object({
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
+  ...reportFilterFields,
+});
+export type AnnualCollectionReportQuery = z.infer<typeof annualCollectionReportQuerySchema>;
+
+/** GET /api/reports/revenue-by-plan|service-type|area — the billed-revenue range. */
+export const revenueReportQuerySchema = reportFiltersSchema;
+export type RevenueReportQuery = z.infer<typeof revenueReportQuerySchema>;
+
+/** GET /api/reports/collector-assignment — a current snapshot, so no date range. */
+export const collectorAssignmentReportQuerySchema = reportFiltersSchema;
+export type CollectorAssignmentReportQuery = z.infer<typeof collectorAssignmentReportQuerySchema>;
+
+/** GET /api/reports/collector-performance — what each collector collected and remitted. */
+export const collectorPerformanceReportQuerySchema = reportFiltersSchema;
+export type CollectorPerformanceReportQuery = z.infer<
+  typeof collectorPerformanceReportQuerySchema
+>;
+
+/** GET /api/reports/payment-adjustments — reversals inside a date range. */
+export const paymentAdjustmentReportQuerySchema = reportFiltersSchema;
+export type PaymentAdjustmentReportQuery = z.infer<typeof paymentAdjustmentReportQuerySchema>;
+
+/** GET /api/reports/voided-receipts — voided receipts inside a date range. */
+export const voidedReceiptReportQuerySchema = reportFiltersSchema;
+export type VoidedReceiptReportQuery = z.infer<typeof voidedReceiptReportQuerySchema>;
+
+/**
+ * GET /api/reports/user-activity — auditable actions per user inside a date range.
+ * The collector/area/plan/service-type filters do not apply: an audit row is about
+ * a person and an action, not about a subscriber's account.
+ */
+export const userActivityReportQuerySchema = z.object({
+  fromDate: dateOnlySchema.optional(),
+  toDate: dateOnlySchema.optional(),
+  performedBy: z.string().uuid("The user id must be a UUID").optional(),
+  action: z.string().trim().max(100).optional(),
+});
+export type UserActivityReportQuery = z.infer<typeof userActivityReportQuerySchema>;
+
+/**
+ * GET /api/reports/subscriber-master-list — every subscriber and their accounts.
+ * A current snapshot, so it has no date range; the account filters still apply.
+ */
+export const subscriberMasterListReportQuerySchema = z.object({
+  collectorId: z.string().uuid("The collector id must be a UUID").optional(),
+  areaId: z.string().uuid("The area id must be a UUID").optional(),
+  planId: z.string().uuid("The plan id must be a UUID").optional(),
+  serviceType: z.enum(SERVICE_TYPES).optional(),
+  serviceStatus: z.enum(SERVICE_ACCOUNT_STATUSES).optional(),
+});
+export type SubscriberMasterListReportQuery = z.infer<
+  typeof subscriberMasterListReportQuerySchema
+>;
+
+/**
+ * GET /api/reports/audit-log — the audit trail as a report (S6-5).
+ * Needs `audit:read`, exactly as the audit screen does.
+ */
+export const auditLogReportQuerySchema = z.object({
+  fromDate: dateOnlySchema.optional(),
+  toDate: dateOnlySchema.optional(),
+  performedBy: z.string().uuid("The user id must be a UUID").optional(),
+  action: z.string().trim().max(100).optional(),
+  entityType: z.string().trim().max(50).optional(),
+});
+export type AuditLogReportQuery = z.infer<typeof auditLogReportQuerySchema>;
 
 /** GET /api/reports/monthly-billing — the billing period to summarise. */
 export const monthlyBillingReportQuerySchema = z.object(monthFilterFields);
@@ -44,6 +153,7 @@ export type MonthlyBillingReportQuery = z.infer<typeof monthlyBillingReportQuery
 export const arAgingReportQuerySchema = z.object({
   asOf: dateOnlySchema.optional(),
   asOfDate: dateOnlySchema.optional(),
+  ...reportFilterFields,
 });
 export type ArAgingReportQuery = z.infer<typeof arAgingReportQuerySchema>;
 
@@ -63,6 +173,16 @@ const reportExportParamsSchema = z.object({
   serviceAccountId: z.string().uuid("The service account id must be a UUID").optional(),
   fromDate: dateOnlySchema.optional(),
   toDate: dateOnlySchema.optional(),
+  // The shared report filters (S6-2): the export path reads the same fields the
+  // on-screen endpoint does, so a filtered screen and its export agree.
+  collectorId: z.string().uuid("The collector id must be a UUID").optional(),
+  areaId: z.string().uuid("The area id must be a UUID").optional(),
+  planId: z.string().uuid("The plan id must be a UUID").optional(),
+  serviceType: z.enum(SERVICE_TYPES).optional(),
+  serviceStatus: z.enum(SERVICE_ACCOUNT_STATUSES).optional(),
+  performedBy: z.string().uuid("The user id must be a UUID").optional(),
+  action: z.string().trim().max(100).optional(),
+  entityType: z.string().trim().max(50).optional(),
 });
 
 /**
@@ -74,7 +194,7 @@ const reportExportParamsSchema = z.object({
  */
 export const reportExportBodySchema = z
   .object({
-    reportType: z.enum(REPORT_TYPES),
+    reportType: z.enum(ALL_REPORT_TYPES),
     params: reportExportParamsSchema.default({}),
   })
   .superRefine((value, context) => {

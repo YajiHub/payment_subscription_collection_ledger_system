@@ -203,9 +203,15 @@ export function buildDashboardKpis(
     overdueOver30DaysCentavos,
     overdueOver90DaysCentavos,
 
-    openCollectorBatches: snapshot.batches.filter((batch) => batch.status === "open").length,
+    // S4-1/S4-2: a run is "open" from creation until it is declared finished, so
+    // both `open` and the new `in_progress` count; a batch awaiting reconciliation
+    // is one that is `submitted` (declared finished) or `remitted` (cash handed in),
+    // because a pre-lifecycle `submitted` row migrated to `remitted`.
+    openCollectorBatches: snapshot.batches.filter(
+      (batch) => batch.status === "open" || batch.status === "in_progress"
+    ).length,
     submittedBatchesPendingReconciliation: snapshot.batches.filter(
-      (batch) => batch.status === "submitted"
+      (batch) => batch.status === "submitted" || batch.status === "remitted"
     ).length,
 
     lastBillingRunDate:
@@ -218,7 +224,7 @@ export function buildDashboardKpis(
 }
 
 /** The invoice statuses that count as revenue and as an outstanding balance. */
-export const OUTSTANDING_INVOICE_STATUSES = ["posted", "partially_paid", "overdue"] as const;
+export const OUTSTANDING_INVOICE_STATUSES = ["unpaid", "partially_paid", "overdue"] as const;
 
 /**
  * Loads everything the dashboard reads.

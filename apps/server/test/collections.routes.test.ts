@@ -32,10 +32,15 @@ vi.mock("../src/db/connection", async () => {
 
 import { buildServer } from "../src/index.ts";
 import { auditLogs } from "../src/db/schema/audit";
-import { batchAssignments, collectorBatches } from "../src/db/schema/collections";
+import {
+  batchAssignments,
+  collectorBatches,
+  collectorRemittances,
+} from "../src/db/schema/collections";
 import { ledgerEntries } from "../src/db/schema/ledger";
 import { payments } from "../src/db/schema/payments";
 import { serviceStatusHistory } from "../src/db/schema/subscribers";
+import { isAllowedCollectorBatchTransition, COLLECTOR_BATCH_STATUSES } from "@bcis/shared";
 import { fakeDatabase, type RecordedInsert } from "./support/fake-database";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 
@@ -48,6 +53,7 @@ const SERVICE_ACCOUNT_A = randomUUID();
 const SERVICE_ACCOUNT_B = randomUUID();
 const BATCH_ID = randomUUID();
 const BATCH_NUMBER = "CB-20250124-0001";
+const REMITTANCE_ID = randomUUID();
 
 const COLLECTION_DATE = "2025-01-24";
 
@@ -555,41 +561,84 @@ describe("collector batch routes", () => {
     expect(String(auditRow?.description)).toContain(reason);
   });
 
-  it("stores an exact remittance with zero variance", async () => {
+  it("submits an in-progress batch as its own step, then records an exact remittance", async () => {
     const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
 
+    // Step 1: the collector declares the run finished. No cash is recorded here.
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([batchRow({ expectedRemittanceCentavos: 50000 })]);
+    fakeDatabase.queueSelectRows([
+      batchRow({ status: "in_progress", expectedRemittanceCentavos: 50000 }),
+    ]);
+    fakeDatabase.queueSelectRows([]); // assignments
+    fakeDatabase.queueUpdateRows([batchRow({ status: "submitted" })]);
 
-    const response = await server.inject({
+    const submitted = await server.inject({
       method: "POST",
       url: `/api/collector-batches/${BATCH_ID}/submit`,
       headers: authorizationHeader(token),
-      payload: { actualRemittanceCentavos: 50000 },
+      payload: {},
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.json().data.varianceCentavos).toBe(0);
-    expect(response.json().data.hasVariance).toBe(false);
+    expect(submitted.statusCode).toBe(200);
+    expect(submitted.json().data.status).toBe("submitted");
+    expect(
+      auditWrites().find((row) => row.action === "collector_batch.submitted")
+    ).toBeDefined();
+
+    // Step 2: the cash handed in is a DISTINCT step that writes a remittance row.
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      batchRow({ status: "submitted", expectedRemittanceCentavos: 50000 }),
+    ]);
+    fakeDatabase.queueSelectRows([]); // no remittances yet
+    fakeDatabase.queueInsertRows([{ id: REMITTANCE_ID }]);
+
+    const remitted = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${BATCH_ID}/remit`,
+      headers: authorizationHeader(token),
+      payload: { amountCentavos: 50000 },
+    });
+
+    expect(remitted.statusCode).toBe(200);
+    expect(remitted.json().data.varianceCentavos).toBe(0);
+    expect(remitted.json().data.hasVariance).toBe(false);
+    expect(remitted.json().data.remittanceId).toBe(REMITTANCE_ID);
+
+    // S4-2: a real `collector_remittances` row, and the batch total derived from it.
+    expect(insertedInto(collectorRemittances)).toHaveLength(1);
+    expect(updatedValuesFor(collectorBatches)).toContainEqual({
+      status: "remitted",
+      actualRemittanceCentavos: 50000,
+      varianceCentavos: 0,
+      submittedAt: expect.any(Date),
+    });
+    expect(
+      auditWrites().find((row) => row.action === "collector_batch.remitted")
+    ).toBeDefined();
   });
 
-  it("stores a shortage as a negative variance, never absorbing it", async () => {
+  it("stores a shortage as a negative variance at remittance, never absorbing it", async () => {
     const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([batchRow({ expectedRemittanceCentavos: 50000 })]);
+    fakeDatabase.queueSelectRows([
+      batchRow({ status: "submitted", expectedRemittanceCentavos: 50000 }),
+    ]);
+    fakeDatabase.queueSelectRows([]); // no remittances yet
+    fakeDatabase.queueInsertRows([{ id: REMITTANCE_ID }]);
 
     const response = await server.inject({
       method: "POST",
-      url: `/api/collector-batches/${BATCH_ID}/submit`,
+      url: `/api/collector-batches/${BATCH_ID}/remit`,
       headers: authorizationHeader(token),
-      payload: { actualRemittanceCentavos: 45000 },
+      payload: { amountCentavos: 45000 },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().data.varianceCentavos).toBe(-5000);
     expect(updatedValuesFor(collectorBatches)).toContainEqual({
-      status: "submitted",
+      status: "remitted",
       actualRemittanceCentavos: 45000,
       varianceCentavos: -5000,
       submittedAt: expect.any(Date),
@@ -600,33 +649,71 @@ describe("collector batch routes", () => {
     const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([batchRow({ expectedRemittanceCentavos: 50000 })]);
+    fakeDatabase.queueSelectRows([
+      batchRow({ status: "submitted", expectedRemittanceCentavos: 50000 }),
+    ]);
+    fakeDatabase.queueSelectRows([]); // no remittances yet
+    fakeDatabase.queueInsertRows([{ id: REMITTANCE_ID }]);
 
     const response = await server.inject({
       method: "POST",
-      url: `/api/collector-batches/${BATCH_ID}/submit`,
+      url: `/api/collector-batches/${BATCH_ID}/remit`,
       headers: authorizationHeader(token),
-      payload: { actualRemittanceCentavos: 51000 },
+      payload: { amountCentavos: 51000 },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().data.varianceCentavos).toBe(1000);
   });
 
-  it("rejects a second remittance of the same batch", async () => {
+  it("accepts a second remittance and a correcting one, keeping the batch total exact", async () => {
     const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
 
+    // The first instalment is already recorded; this is the second.
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([batchRow({ status: "submitted", actualRemittanceCentavos: 50000 })]);
+    fakeDatabase.queueSelectRows([
+      batchRow({ status: "remitted", expectedRemittanceCentavos: 50000 }),
+    ]);
+    fakeDatabase.queueSelectRows([{ amountCentavos: 40000 }]); // existing remittances
+    fakeDatabase.queueInsertRows([{ id: REMITTANCE_ID }]);
 
-    const response = await server.inject({
+    const second = await server.inject({
       method: "POST",
-      url: `/api/collector-batches/${BATCH_ID}/submit`,
+      url: `/api/collector-batches/${BATCH_ID}/remit`,
       headers: authorizationHeader(token),
-      payload: { actualRemittanceCentavos: 50000 },
+      payload: { amountCentavos: 10000, cashAmountCentavos: 10000 },
     });
 
-    expect(response.statusCode).toBe(409);
+    expect(second.statusCode).toBe(200);
+    expect(second.json().data.actualRemittanceCentavos).toBe(50000);
+    expect(second.json().data.varianceCentavos).toBe(0);
+    expect(second.json().data.remittanceCount).toBe(2);
+    expect(insertedInto(collectorRemittances)).toHaveLength(1);
+    expect(insertedInto(collectorRemittances)[0]?.values).toMatchObject({
+      amountCentavos: 10000,
+      cashAmountCentavos: 10000,
+      gcashAmountCentavos: 0,
+    });
+
+    // A correction is an offsetting row BESIDE the one it fixes, never an edit.
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      batchRow({ status: "remitted", expectedRemittanceCentavos: 50000 }),
+    ]);
+    fakeDatabase.queueSelectRows([{ amountCentavos: 40000 }, { amountCentavos: 10000 }]);
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]);
+
+    const corrected = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${BATCH_ID}/remit`,
+      headers: authorizationHeader(token),
+      payload: { amountCentavos: -1000, gcashAmountCentavos: -1000 },
+    });
+
+    expect(corrected.statusCode).toBe(200);
+    expect(corrected.json().data.actualRemittanceCentavos).toBe(49000);
+    expect(corrected.json().data.varianceCentavos).toBe(-1000);
+    expect(insertedInto(collectorRemittances)).toHaveLength(2);
   });
 
   it("requires variance notes when reconciling a variance", async () => {
@@ -634,7 +721,12 @@ describe("collector batch routes", () => {
 
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([
-      batchRow({ status: "submitted", expectedRemittanceCentavos: 50000, actualRemittanceCentavos: 45000, varianceCentavos: -5000 }),
+      batchRow({
+        status: "remitted",
+        expectedRemittanceCentavos: 50000,
+        actualRemittanceCentavos: 45000,
+        varianceCentavos: -5000,
+      }),
     ]);
 
     const response = await server.inject({
@@ -648,12 +740,17 @@ describe("collector batch routes", () => {
     expect(response.json().error.message).toContain("Variance notes");
   });
 
-  it("reconciles an exact batch and reports that the ledger agrees", async () => {
+  it("reconciles an exact remitted batch and reports that the ledger agrees", async () => {
     const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([
-      batchRow({ status: "submitted", expectedRemittanceCentavos: 50000, actualRemittanceCentavos: 50000, varianceCentavos: 0 }),
+      batchRow({
+        status: "remitted",
+        expectedRemittanceCentavos: 50000,
+        actualRemittanceCentavos: 50000,
+        varianceCentavos: 0,
+      }),
     ]);
     fakeDatabase.queueSelectRows([{ amountCentavos: 50000 }]); // the batch's payments
 
@@ -720,6 +817,319 @@ describe("collector batch routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data.status).toBe("cancelled");
   });
+
+  it("supports the full lifecycle: submit → remit → reconcile → close", async () => {
+    // Step 3: reconcile the remitted batch.
+    const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      batchRow({
+        status: "remitted",
+        expectedRemittanceCentavos: 50000,
+        actualRemittanceCentavos: 50000,
+        varianceCentavos: 0,
+      }),
+    ]);
+    fakeDatabase.queueSelectRows([{ amountCentavos: 50000 }]);
+    fakeDatabase.queueUpdateRows([]); // the reconcile update (no returning)
+
+    const reconciled = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${BATCH_ID}/reconcile`,
+      headers: authorizationHeader(token),
+      payload: {},
+    });
+    expect(reconciled.statusCode).toBe(200);
+
+    // Step 4: close is a SEPARATE call from reconciliation.
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      batchRow({ status: "reconciled", varianceCentavos: 0, reconciledAt: new Date() }),
+    ]);
+    fakeDatabase.queueUpdateRows([
+      batchRow({ status: "closed", varianceCentavos: 0, closedAt: new Date() }),
+    ]);
+
+    const closed = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${BATCH_ID}/close`,
+      headers: authorizationHeader(token),
+      payload: {},
+    });
+
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json().data.status).toBe("closed");
+    expect(closed.json().data.closedAt).toBeTruthy();
+    expect(
+      auditWrites().find((row) => row.action === "collector_batch.closed")
+    ).toBeDefined();
+  });
+
+  it("refuses to close a batch that was not reconciled first", async () => {
+    const { token } = signTestToken({ role: "cashier", sub: CASHIER_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([batchRow({ status: "remitted", varianceCentavos: 0 })]);
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${BATCH_ID}/close`,
+      headers: authorizationHeader(token),
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(409);
+  });
+
+  it("refuses to remit a batch that was never submitted", async () => {
+    const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([batchRow({ status: "open" })]);
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${BATCH_ID}/remit`,
+      headers: authorizationHeader(token),
+      payload: { amountCentavos: 10000 },
+    });
+
+    expect(response.statusCode).toBe(409);
+  });
+
+  it("lists the batch's remittance history", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([batchRow({ status: "remitted" })]); // the batch
+    fakeDatabase.queueSelectRows([
+      {
+        id: REMITTANCE_ID,
+        batchId: BATCH_ID,
+        amountCentavos: 30000,
+        cashAmountCentavos: 30000,
+        gcashAmountCentavos: 0,
+        remittedById: COLLECTOR_A_ID,
+        remittedByName: "Rico Reyes",
+        remittedAt: new Date("2025-01-24T17:00:00Z"),
+        notes: null,
+      },
+    ]);
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${BATCH_ID}/remittances`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.items).toHaveLength(1);
+    expect(response.json().data.items[0]).toMatchObject({
+      amountCentavos: 30000,
+      remittedByName: "Rico Reyes",
+    });
+  });
+
+  it("splits the batch summary by method: expected, cash, non-cash, uncollected", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([{ batch: batchRow(), collectorName: "Rico Reyes" }]);
+    fakeDatabase.queueSelectRows([
+      assignmentDetailRow({
+        serviceAccountId: SERVICE_ACCOUNT_A,
+        outstandingBalanceCentavos: 50000,
+        collectedAmountCentavos: 30000,
+        collectedMethod: "cash",
+        collectionResult: "partial",
+      }),
+      assignmentDetailRow({
+        serviceAccountId: SERVICE_ACCOUNT_B,
+        outstandingBalanceCentavos: 50000,
+        collectedAmountCentavos: 20000,
+        collectedMethod: "gcash",
+        collectionResult: "partial",
+      }),
+    ]);
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${BATCH_ID}`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.methodSummary).toEqual({
+      expectedReceivableCentavos: 100000,
+      cashCollectedCentavos: 30000,
+      gcashCollectedCentavos: 20000,
+      nonCashCollectedCentavos: 20000,
+      collectedTotalCentavos: 50000,
+      uncollectedCentavos: 50000,
+    });
+  });
+
+  it("builds the printable route sheet with address, current bill, arrears, collector and area", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      { batch: batchRow({ status: "in_progress" }), collectorName: "Rico Reyes" },
+    ]);
+    fakeDatabase.queueSelectRows([
+      {
+        serviceAccountId: SERVICE_ACCOUNT_A,
+        serviceAccountNumber: "SA-20250101-00001",
+        subscriberId: randomUUID(),
+        subscriberFirstName: "Maria",
+        subscriberLastName: "Santos",
+        serviceAddress: "12 Mabini St",
+        installationAddressLine: null,
+        barangay: "Poblacion",
+        areaName: "Route 1",
+        collectorName: "Rico Reyes",
+        planName: "Fiber 25Mbps",
+      },
+    ]);
+    fakeDatabase.queueSelectRows([
+      { serviceAccountId: SERVICE_ACCOUNT_A, remainingBalanceCentavos: 20000, dueDate: "2020-01-01" },
+      { serviceAccountId: SERVICE_ACCOUNT_A, remainingBalanceCentavos: 30000, dueDate: "2999-01-01" },
+    ]);
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${BATCH_ID}/route-sheet`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const sheet = response.json().data;
+    expect(sheet.batchNumber).toBe(BATCH_NUMBER);
+    expect(sheet.rows[0]).toMatchObject({
+      serviceAccountNumber: "SA-20250101-00001",
+      subscriberName: "Santos, Maria",
+      address: "12 Mabini St, Poblacion",
+      currentBillCentavos: 30000,
+      arrearsCentavos: 20000,
+      totalDueCentavos: 50000,
+      collectorName: "Rico Reyes",
+      areaName: "Route 1",
+    });
+    expect(sheet.totals).toMatchObject({
+      accountCount: 1,
+      currentBillCentavos: 30000,
+      arrearsCentavos: 20000,
+      totalDueCentavos: 50000,
+    });
+  });
+
+  it("exports the route sheet through the shared report generators as PDF and XLSX", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    // PDF: %PDF magic header.
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      { batch: batchRow({ status: "in_progress" }), collectorName: "Rico Reyes" },
+    ]);
+    fakeDatabase.queueSelectRows([
+      {
+        serviceAccountId: SERVICE_ACCOUNT_A,
+        serviceAccountNumber: "SA-20250101-00001",
+        subscriberId: randomUUID(),
+        subscriberFirstName: "Maria",
+        subscriberLastName: "Santos",
+        serviceAddress: "12 Mabini St",
+        installationAddressLine: null,
+        barangay: "Poblacion",
+        areaName: "Route 1",
+        collectorName: "Rico Reyes",
+        planName: "Fiber 25Mbps",
+      },
+    ]);
+    fakeDatabase.queueSelectRows([
+      { serviceAccountId: SERVICE_ACCOUNT_A, remainingBalanceCentavos: 20000, dueDate: "2020-01-01" },
+    ]);
+
+    const pdf = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${BATCH_ID}/route-sheet/export?format=pdf`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.headers["content-type"]).toContain("application/pdf");
+    expect(pdf.rawPayload.subarray(0, 4).toString("latin1")).toBe("%PDF");
+
+    // XLSX: a ZIP container (PK\x03\x04).
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      { batch: batchRow({ status: "in_progress" }), collectorName: "Rico Reyes" },
+    ]);
+    fakeDatabase.queueSelectRows([
+      {
+        serviceAccountId: SERVICE_ACCOUNT_A,
+        serviceAccountNumber: "SA-20250101-00001",
+        subscriberId: randomUUID(),
+        subscriberFirstName: "Maria",
+        subscriberLastName: "Santos",
+        serviceAddress: "12 Mabini St",
+        installationAddressLine: null,
+        barangay: "Poblacion",
+        areaName: "Route 1",
+        collectorName: "Rico Reyes",
+        planName: "Fiber 25Mbps",
+      },
+    ]);
+    fakeDatabase.queueSelectRows([
+      { serviceAccountId: SERVICE_ACCOUNT_A, remainingBalanceCentavos: 20000, dueDate: "2020-01-01" },
+    ]);
+
+    const xlsx = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${BATCH_ID}/route-sheet/export?format=xlsx`,
+      headers: authorizationHeader(token),
+    });
+
+    expect(xlsx.statusCode).toBe(200);
+    expect(xlsx.rawPayload[0]).toBe(0x50);
+    expect(xlsx.rawPayload[1]).toBe(0x4b);
+  });
+});
+
+describe("collector batch state machine", () => {
+  it("admits exactly the legal transitions and rejects every other pair", () => {
+    const legal = new Set([
+      "open>in_progress",
+      "open>submitted",
+      "open>cancelled",
+      "in_progress>submitted",
+      "in_progress>cancelled",
+      "submitted>remitted",
+      "remitted>reconciled",
+      "reconciled>closed",
+    ]);
+
+    for (const from of COLLECTOR_BATCH_STATUSES) {
+      for (const to of COLLECTOR_BATCH_STATUSES) {
+        expect(isAllowedCollectorBatchTransition(from, to)).toBe(legal.has(`${from}>${to}`));
+      }
+    }
+  });
+
+  it("walks the whole happy path from open to closed", () => {
+    const path = ["open", "in_progress", "submitted", "remitted", "reconciled", "closed"] as const;
+
+    for (let index = 0; index < path.length - 1; index += 1) {
+      expect(isAllowedCollectorBatchTransition(path[index], path[index + 1])).toBe(true);
+    }
+
+    // The terminal states move nowhere.
+    for (const to of COLLECTOR_BATCH_STATUSES) {
+      expect(isAllowedCollectorBatchTransition("closed", to)).toBe(false);
+      expect(isAllowedCollectorBatchTransition("cancelled", to)).toBe(false);
+    }
+  });
 });
 
 describe("reverse-side permissions", () => {
@@ -777,7 +1187,7 @@ describe("reverse-side permissions", () => {
       method: "POST",
       url: `/api/collector-batches/${BATCH_ID}/submit`,
       headers: authorizationHeader(token),
-      payload: { actualRemittanceCentavos: 50000 },
+      payload: {},
     });
 
     expect(response.statusCode).toBe(403);
@@ -792,6 +1202,35 @@ describe("reverse-side permissions", () => {
       url: `/api/collector-batches/${BATCH_ID}/reconcile`,
       headers: authorizationHeader(token),
       payload: {},
+    });
+
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("denies a Collector the ability to close a batch", async () => {
+    const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
+    fakeDatabase.queueSelectRows([]); // authenticate
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/collector-batches/${BATCH_ID}/close`,
+      headers: authorizationHeader(token),
+      payload: {},
+    });
+
+    // The collector who owns the batch still cannot close it: closing is a separate
+    // authorized action, not part of the collector's own remittance workflow.
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("denies a Collector the route-sheet export (needs reports:export)", async () => {
+    const { token } = signTestToken({ role: "collector", sub: COLLECTOR_A_ID });
+    fakeDatabase.queueSelectRows([]); // authenticate
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${BATCH_ID}/route-sheet/export?format=pdf`,
+      headers: authorizationHeader(token),
     });
 
     expect(response.statusCode).toBe(403);

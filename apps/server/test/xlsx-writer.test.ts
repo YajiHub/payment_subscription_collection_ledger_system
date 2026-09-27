@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildXlsxWorkbook, crc32 } from "../src/shared/xlsx/xlsx-writer";
+import { buildXlsxWorkbook, crc32, moneyCell } from "../src/shared/xlsx/xlsx-writer";
 import { buildArAgingRows } from "../src/modules/receivables/ar-aging-export.service";
 import type { ArAgingReport } from "../src/modules/receivables/ar-aging.service";
 
@@ -48,6 +48,26 @@ describe("buildXlsxWorkbook", () => {
     expect(decoded).toContain('<t xml:space="preserve">Santos, Maria</t>');
     expect(decoded).toContain('<c r="B2"><v>175000</v></c>');
   });
+
+  it("ships the styles part and its content-type so Excel reads the number format", () => {
+    expect(decoded).toContain("xl/styles.xml");
+    expect(decoded).toContain(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"
+    );
+    expect(decoded).toContain(
+      "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
+    );
+  });
+
+  it("writes a money cell as formatted pesos with the money style applied", () => {
+    const moneyWorkbook = buildXlsxWorkbook("Sheet1", [["Amount"], [moneyCell(123456)]]);
+    const moneyDecoded = asLatin1(moneyWorkbook);
+
+    // Style index 1 is the `"PHP" #,##0.00` number format.
+    expect(moneyDecoded).toContain('<c r="A2" s="1"><v>1234.56</v></c>');
+    expect(moneyDecoded).toContain('formatCode="&quot;PHP&quot; #,##0.00"');
+    expect(moneyDecoded).not.toContain("123456");
+  });
 });
 
 describe("buildArAgingRows", () => {
@@ -84,6 +104,8 @@ describe("buildArAgingRows", () => {
 
     expect(rows[0]?.[0]).toContain("as of 2025-02-15");
     expect(lastRow?.[0]).toBe("TOTAL");
-    expect(lastRow?.[lastRow.length - 1]).toBe(50000);
+    // S6-4: money leaves the report as integer centavos wrapped for formatting, so
+    // the spreadsheet shows pesos and the arithmetic above stayed integral.
+    expect(lastRow?.[lastRow.length - 1]).toEqual({ centavos: 50000 });
   });
 });

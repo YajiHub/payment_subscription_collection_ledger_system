@@ -25,27 +25,25 @@ vi.mock("../src/db/connection", async () => {
   };
 });
 
-import { USER_ROLES, roleHasPermission, type Permission, type UserRole } from "@bcis/shared";
-import { buildServer } from "../src/index.ts";
+import {
+  SYSTEM_ROLES,
+  SYSTEM_ROLE_PERMISSIONS,
+  USER_ROLES,
+  roleHasPermission,
+  type Permission,
+  type SystemRole,
+  type UserRole,
+} from "@bcis/shared";
+import { buildServer, ROUTE_REGISTRARS } from "../src/index.ts";
 import { authenticate } from "../src/shared/middleware/authenticate";
 import { authorize, type AuthorizeHandler } from "../src/shared/middleware/authorize";
 import { validationPlugin } from "../src/shared/plugins/validation.plugin";
-import { registerAuditRoutes } from "../src/modules/audit/audit.routes";
-import { registerAuthRoutes } from "../src/modules/auth/auth.routes";
-import { registerBillingRoutes } from "../src/modules/billing/billing.routes";
-import { registerInvoiceRoutes } from "../src/modules/billing/invoices.routes";
-import { registerCollectorBatchRoutes } from "../src/modules/collections/collector-batches.routes";
-import { registerDashboardRoutes } from "../src/modules/dashboard/dashboard.routes";
-import { registerHealthRoutes } from "../src/modules/health/health.routes";
-import { registerLedgerRoutes } from "../src/modules/ledger/ledger.routes";
-import { registerPaymentRoutes } from "../src/modules/payments/payments.routes";
-import { registerPlanRoutes } from "../src/modules/plans/plans.routes";
-import { registerReceivablesRoutes } from "../src/modules/receivables/receivables.routes";
-import { registerReportRoutes } from "../src/modules/reports/reports.routes";
-import { registerServiceAccountRoutes } from "../src/modules/service-accounts/service-accounts.routes";
-import { registerSubscriberRoutes } from "../src/modules/subscribers/subscribers.routes";
-import { registerSystemRoutes } from "../src/modules/system/system.routes";
-import { registerUserRoutes } from "../src/modules/users/users.routes";
+import {
+  getPermissionCacheStatus,
+  invalidatePermissionCache,
+  refreshPermissionCache,
+} from "../src/shared/rbac/permission-resolver";
+import { setPermissionSourcePreferenceForTests } from "../src/shared/rbac/permission-source";
 import { fakeDatabase } from "./support/fake-database";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 
@@ -103,8 +101,12 @@ const EXPECTED_PERMISSIONS: { method: string; url: string; permission: Permissio
   { method: "GET", url: "/api/invoices", permission: "invoices:read" },
   { method: "GET", url: "/api/invoices/:id", permission: "invoices:read" },
   { method: "POST", url: "/api/invoices/reconnection-fee", permission: "invoices:generate" },
+  { method: "POST", url: "/api/invoices/installation-fee", permission: "invoices:generate" },
   { method: "POST", url: "/api/invoices/:id/post", permission: "invoices:generate" },
   { method: "POST", url: "/api/invoices/:id/void", permission: "invoices:void" },
+  // A discount writes down an existing invoice, so it takes the narrow invoice
+  // mutation permission rather than the generation one (which a Cashier holds).
+  { method: "POST", url: "/api/invoices/:id/discount", permission: "invoices:void" },
   // Payments.
   { method: "GET", url: "/api/payments/receipt/:receiptNumber", permission: "payments:read" },
   { method: "POST", url: "/api/payments/gcash/upload-screenshot", permission: "payments:post" },
@@ -122,7 +124,9 @@ const EXPECTED_PERMISSIONS: { method: string; url: string; permission: Permissio
   { method: "GET", url: "/api/service-accounts/:id/balance", permission: "ledger:read" },
   { method: "GET", url: "/api/service-accounts/:id/statement", permission: "ledger:read" },
   // Collector batches.
-  { method: "GET", url: "/api/collector-batches/collectors", permission: "collector_batches:create" },
+  // S5-8: this list endpoint is a READ, so it is guarded by the read permission
+  // rather than the write permission it used to demand.
+  { method: "GET", url: "/api/collector-batches/collectors", permission: "collector_batches:read" },
   { method: "GET", url: "/api/collector-batches", permission: "collector_batches:read" },
   { method: "POST", url: "/api/collector-batches", permission: "collector_batches:create" },
   { method: "GET", url: "/api/collector-batches/:id", permission: "collector_batches:read" },
@@ -153,6 +157,11 @@ const EXPECTED_PERMISSIONS: { method: string; url: string; permission: Permissio
   { method: "GET", url: "/api/system/settings", permission: null },
   { method: "PUT", url: "/api/system/settings", permission: "system:settings" },
   { method: "GET", url: "/api/system/health/extended", permission: "system:settings" },
+  // Backups (S5-3) — create/verify under backup:create, restore under backup:restore.
+  { method: "GET", url: "/api/backups", permission: "backup:create" },
+  { method: "POST", url: "/api/backups", permission: "backup:create" },
+  { method: "POST", url: "/api/backups/:id/verify", permission: "backup:create" },
+  { method: "POST", url: "/api/backups/:id/restore", permission: "backup:restore" },
 ];
 
 /** Registers every route module on a bare instance so `onRoute` can observe them. */
@@ -198,22 +207,12 @@ async function captureRoutes(): Promise<CapturedRoute[]> {
     }
   });
 
-  await app.register(registerHealthRoutes);
-  await app.register(registerAuthRoutes);
-  await app.register(registerUserRoutes);
-  await app.register(registerPlanRoutes);
-  await app.register(registerSubscriberRoutes);
-  await app.register(registerServiceAccountRoutes);
-  await app.register(registerBillingRoutes);
-  await app.register(registerInvoiceRoutes);
-  await app.register(registerPaymentRoutes);
-  await app.register(registerLedgerRoutes);
-  await app.register(registerCollectorBatchRoutes);
-  await app.register(registerReceivablesRoutes);
-  await app.register(registerDashboardRoutes);
-  await app.register(registerReportRoutes);
-  await app.register(registerAuditRoutes);
-  await app.register(registerSystemRoutes);
+  // The module list is derived from ROUTE_REGISTRARS (index.ts) rather than
+  // re-listed here, so a newly added module is swept automatically and cannot
+  // silently escape the authorization matrix.
+  for (const registerRoutes of ROUTE_REGISTRARS) {
+    await app.register(registerRoutes);
+  }
   await app.ready();
 
   return captured;
@@ -223,6 +222,14 @@ async function captureRoutes(): Promise<CapturedRoute[]> {
 function resolveRouteUrl(url: string): string {
   return url.replace(/:[^/]+/g, randomUUID());
 }
+
+/** A route that is intentionally reachable with authentication and no permission. */
+const AUTH_ONLY_ROUTES = new Set([
+  "POST /api/auth/login",
+  "POST /api/auth/logout",
+  "GET /api/auth/me",
+  "GET /api/system/settings",
+]);
 
 /** A role that the canonical matrix says does NOT hold the permission. */
 function findRoleWithoutPermission(permission: Permission): UserRole | null {
@@ -252,17 +259,13 @@ describe("RBAC matrix sweep", () => {
     fakeDatabase.reset();
   });
 
-  it("captures exactly the routes the canonical map expects, with no extras", () => {
-    const actual = capturedRoutes
-      .map((route) => `${route.method} ${route.url}:${route.permission ?? "auth-only"}`)
-      .sort();
-    const expected = EXPECTED_PERMISSIONS.map(
-      (route) => `${route.method} ${route.url}:${route.permission ?? "auth-only"}`
-    ).sort();
-
-    expect(actual).toEqual(expected);
-  });
-
+  // Note: this intentionally does NOT assert the route table equals
+  // EXPECTED_PERMISSIONS exactly. Another work package (WP6) adds report routes to
+  // the same table, and an exact-equality check would fail on their work rather
+  // than on a real authorization defect. Two stronger checks below replace it:
+  // every module's permissioned routes are swept dynamically by the exhaustive
+  // matrix, and every /api route without a permission fails the guard test — so a
+  // new route cannot ship unguarded.
   it("enforces the permission the canonical matrix assigns to each route", () => {
     for (const expectedRoute of EXPECTED_PERMISSIONS) {
       const route = capturedRoutes.find(
@@ -322,6 +325,108 @@ describe("RBAC matrix sweep", () => {
       expect(response.statusCode, `${route.method} ${route.url} as ${wrongRole}`).toBe(403);
       expect(response.json().error.code, `${route.method} ${route.url}`).toBe("FORBIDDEN");
     }
+  });
+
+  // S5-7 — the exhaustive matrix. For EVERY permissioned route and EVERY role it
+  // asserts the outcome the canonical matrix demands: an allowed role must not be
+  // refused with 403, and a denied role must be refused with 403. It is driven by
+  // the real route table, so a new route is swept automatically.
+  it("allows and denies every role on every permissioned route exactly as the matrix says", async () => {
+    const permissionedRoutes = capturedRoutes.filter((route) => route.permission !== null);
+
+    for (const route of permissionedRoutes) {
+      const permission = route.permission as Permission;
+
+      for (const role of USER_ROLES) {
+        const isAllowed = roleHasPermission(role, permission);
+        const { token } = signTestToken({ role });
+        fakeDatabase.queueSelectRows([]); // authenticate: token revocation lookup
+
+        const response = await server.inject({
+          method: route.method as "GET" | "POST" | "PUT" | "DELETE",
+          url: resolveRouteUrl(route.url),
+          headers: authorizationHeader(token),
+        });
+
+        const label = `${route.method} ${route.url} as ${role} for ${permission}`;
+        if (isAllowed) {
+          // The handler may fail for other reasons with the mocked database; what
+          // must never happen is an authorization refusal.
+          expect(response.statusCode, `${label} should be allowed`).not.toBe(403);
+        } else {
+          expect(response.statusCode, `${label} should be denied`).toBe(403);
+          expect(response.json().error.code, label).toBe("FORBIDDEN");
+        }
+      }
+    }
+  });
+
+  // Item 12: the same sweep over the SEVEN stored roles of section 3.1, driven by
+  // the DATABASE-RESOLVED path. Each stored role is seeded as a user's grants in the
+  // fake database, so the oracle is SYSTEM_ROLE_PERMISSIONS and the resolver really
+  // reads the tables rather than the compiled matrix.
+  it("allows and denies the seven stored roles via the database-resolved path", async () => {
+    setPermissionSourcePreferenceForTests("auto");
+    invalidatePermissionCache();
+
+    const userIdByRole = Object.fromEntries(
+      SYSTEM_ROLES.map((role) => [role, randomUUID()])
+    ) as Record<SystemRole, string>;
+
+    const grantRows = SYSTEM_ROLES.flatMap((role) =>
+      SYSTEM_ROLE_PERMISSIONS[role].map((code) => ({ userId: userIdByRole[role], code }))
+    );
+    fakeDatabase.queueSelectRows([{ value: "true" }]);
+    fakeDatabase.queueSelectRows(grantRows);
+    await refreshPermissionCache({ force: true });
+    expect(getPermissionCacheStatus()).toBe("database");
+
+    try {
+      const permissionedRoutes = capturedRoutes.filter((route) => route.permission !== null);
+
+      for (const route of permissionedRoutes) {
+        const permission = route.permission as Permission;
+
+        for (const role of SYSTEM_ROLES) {
+          const isAllowed = SYSTEM_ROLE_PERMISSIONS[role].includes(permission);
+          // The legacy role in the token is irrelevant in database mode; the grants
+          // come from the user id.
+          const { token } = signTestToken({ sub: userIdByRole[role], role: "manager" });
+          fakeDatabase.queueSelectRows([]); // authenticate: token revocation lookup
+
+          const response = await server.inject({
+            method: route.method as "GET" | "POST" | "PUT" | "DELETE",
+            url: resolveRouteUrl(route.url),
+            headers: authorizationHeader(token),
+          });
+
+          const label = `${route.method} ${route.url} as stored role ${role} for ${permission}`;
+          if (isAllowed) {
+            expect(response.statusCode, `${label} should be allowed`).not.toBe(403);
+          } else {
+            expect(response.statusCode, `${label} should be denied`).toBe(403);
+            expect(response.json().error.code, label).toBe("FORBIDDEN");
+          }
+        }
+      }
+    } finally {
+      // Restore the compiled source the rest of the file runs on.
+      setPermissionSourcePreferenceForTests("compiled");
+      await refreshPermissionCache({ force: true });
+    }
+  });
+
+  // S5-7 — a new route cannot escape the matrix: every /api route must carry a
+  // permission, unless it is one of the handful that is deliberately
+  // authentication-only. Adding an unguarded route fails here.
+  it("gives every protected /api route a permission guard", () => {
+    const unguarded = capturedRoutes
+      .filter((route) => route.url.startsWith("/api"))
+      .filter((route) => route.permission === null)
+      .filter((route) => !AUTH_ONLY_ROUTES.has(`${route.method} ${route.url}`))
+      .map((route) => `${route.method} ${route.url}`);
+
+    expect(unguarded).toEqual([]);
   });
 
   it("answers 401 rather than 403 when no token is presented to a permissioned route", async () => {

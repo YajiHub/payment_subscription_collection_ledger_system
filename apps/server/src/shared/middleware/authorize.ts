@@ -6,8 +6,9 @@
 // directly still passes through this function and is rejected.
 
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { roleHasPermission, type Permission } from "@bcis/shared";
+import type { Permission } from "@bcis/shared";
 
+import { callerHasPermission } from "../rbac/permission-resolver";
 import { sendError } from "../response";
 
 export function authorize(requiredPermission: Permission): AuthorizeHandler {
@@ -19,7 +20,7 @@ export function authorize(requiredPermission: Permission): AuthorizeHandler {
       return sendError(reply, 401, "UNAUTHORIZED", "Authentication required");
     }
 
-    if (!roleHasPermission(request.user.role, requiredPermission)) {
+    if (!(await callerHasPermission(request.user.id, request.user.role, requiredPermission))) {
       return sendError(
         reply,
         403,

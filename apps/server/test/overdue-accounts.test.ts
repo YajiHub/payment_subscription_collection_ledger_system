@@ -12,6 +12,7 @@ import {
   type LastPaymentRow,
   type OverdueInvoiceRow,
 } from "../src/modules/receivables/overdue-accounts.service";
+import { accountFilterConditions } from "../src/modules/reports/report-filters";
 
 const AS_OF = new Date("2025-02-15T00:00:00Z");
 
@@ -22,6 +23,7 @@ function overdueInvoice(overrides: Partial<OverdueInvoiceRow> = {}): OverdueInvo
     billingPeriodYear: 2025,
     billingPeriodMonth: 1,
     dueDate: "2025-01-15",
+    invoiceNumber: "INV-2025-0001",
     serviceAccountNumber: "SA-20250101-00001",
     subscriberId: "subscriber-1",
     subscriberFirstName: "Maria",
@@ -30,6 +32,7 @@ function overdueInvoice(overrides: Partial<OverdueInvoiceRow> = {}): OverdueInvo
     storedConsecutiveOverdueMonths: 0,
     collectorId: "collector-1",
     collectorName: "Rico Reyes",
+    areaName: "Route 1",
     ...overrides,
   };
 }
@@ -139,5 +142,67 @@ describe("summarizeOverdueAccounts", () => {
     );
 
     expect(accounts[0]?.consecutiveOverdueMonths).toBe(4);
+  });
+
+  it("reports the area and the oldest unpaid invoice number", () => {
+    const accounts = summarizeOverdueAccounts(
+      [
+        overdueInvoice({ dueDate: "2025-01-15", invoiceNumber: "INV-2025-0001" }),
+        overdueInvoice({
+          dueDate: "2024-11-15",
+          invoiceNumber: "INV-2024-0011",
+          billingPeriodYear: 2024,
+          billingPeriodMonth: 11,
+        }),
+      ],
+      [],
+      {},
+      AS_OF
+    );
+
+    expect(accounts[0]).toMatchObject({
+      areaName: "Route 1",
+      oldestUnpaidInvoiceNumber: "INV-2024-0011",
+      oldestUnpaidDueDate: "2024-11-15",
+    });
+  });
+
+  it("filters by delinquency age from the OLDEST unpaid invoice", () => {
+    const invoiceRows = [
+      overdueInvoice({ dueDate: "2025-01-15", invoiceNumber: "INV-2025-0001" }),
+      overdueInvoice({
+        dueDate: "2024-11-15",
+        invoiceNumber: "INV-2024-0011",
+        billingPeriodYear: 2024,
+        billingPeriodMonth: 11,
+      }),
+    ];
+
+    // 2025-02-15 minus 2024-11-15 is 92 days; minus 2025-01-15 is 31 days.
+    expect(summarizeOverdueAccounts(invoiceRows, [], { minOverdueDays: 90 }, AS_OF)).toHaveLength(1);
+    expect(summarizeOverdueAccounts(invoiceRows, [], { minOverdueDays: 93 }, AS_OF)).toEqual([]);
+    expect(summarizeOverdueAccounts(invoiceRows, [], { minOverdueDays: 31 }, AS_OF)).toHaveLength(1);
+  });
+});
+
+// S4-5/S4-6: the overdue list and AR aging share ONE place where a filter becomes a
+// SQL condition (`accountFilterConditions`), so each new filter must produce its own
+// condition — proving the filter reaches the query instead of being accepted and
+// ignored, which is the exact defect the audit found.
+describe("overdue and aging account filters reach the SQL", () => {
+  it("adds one condition per collector, area, plan and service-type filter", () => {
+    expect(accountFilterConditions({})).toHaveLength(0);
+    expect(accountFilterConditions({ collectorId: "c1" })).toHaveLength(1);
+    expect(accountFilterConditions({ areaId: "a1" })).toHaveLength(1);
+    expect(accountFilterConditions({ planId: "p1" })).toHaveLength(1);
+    expect(accountFilterConditions({ serviceType: "internet" })).toHaveLength(1);
+    expect(
+      accountFilterConditions({
+        collectorId: "c1",
+        areaId: "a1",
+        planId: "p1",
+        serviceType: "internet",
+      })
+    ).toHaveLength(4);
   });
 });

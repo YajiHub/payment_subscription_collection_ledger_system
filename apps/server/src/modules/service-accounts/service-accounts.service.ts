@@ -7,6 +7,7 @@
 // Route handlers never touch the database directly — they call these functions.
 
 import { desc, eq, inArray, like } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 
 import { db, type DbExecutor } from "../../db/connection";
 import {
@@ -15,6 +16,11 @@ import {
   subscribers,
   subscriptionPlans,
 } from "../../db/schema/subscribers";
+import {
+  reconnectionRecords,
+  suspensionRecords,
+  type ReconnectionRecord,
+} from "../../db/schema/service-control";
 import { users } from "../../db/schema/users";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { formatDateOnly } from "../../shared/date";
@@ -315,6 +321,21 @@ async function recordStatusChange(executor: DbExecutor, change: StatusChangeReco
 }
 
 /**
+ * The operating paperwork that accompanies a status change (S4-7/S4-8).
+ *
+ * Every field is optional: an office suspension has no technician and no field
+ * dates, while a field job records who went out and when it was requested and
+ * completed. The service account's status stays the source of truth either way.
+ */
+export interface ServiceControlDetails {
+  technicianId?: string;
+  effectiveDate?: string;
+  requestDate?: string;
+  completionDate?: string;
+  notes?: string;
+}
+
+/**
  * Cuts off an active account and pauses its billing.
  * The outstanding balance is untouched — suspension stops new invoices, it does
  * not forgive old ones.
@@ -322,7 +343,8 @@ async function recordStatusChange(executor: DbExecutor, change: StatusChangeReco
 export async function suspendServiceAccount(
   serviceAccountId: string,
   reason: string,
-  changedBy: string
+  changedBy: string,
+  details: ServiceControlDetails = {}
 ): Promise<ServiceAccountSummary> {
   // The status update and its audit row commit together, so the account can
   // never end up suspended with no record of who did it or why.
@@ -343,11 +365,13 @@ export async function suspendServiceAccount(
       throw new ConflictError("A pending service account has no service to suspend");
     }
 
+    const effectiveDate = details.effectiveDate ?? formatDateOnly(new Date());
+
     const updated = await tx
       .update(serviceAccounts)
       .set({
         status: "suspended",
-        suspensionDate: formatDateOnly(new Date()),
+        suspensionDate: effectiveDate,
         updatedAt: new Date(),
       })
       .where(eq(serviceAccounts.id, serviceAccountId))
@@ -364,6 +388,20 @@ export async function suspendServiceAccount(
       newStatus: "suspended",
       reason,
       changedBy,
+    });
+
+    // S1-7: the suspension record is the operating paperwork — who approved the cut,
+    // when it takes effect and, when a technician performed it, who did and when.
+    await tx.insert(suspensionRecords).values({
+      serviceAccountId,
+      reason,
+      effectiveDate,
+      approvedBy: changedBy,
+      technicianId: details.technicianId ?? null,
+      requestDate: details.requestDate ?? null,
+      completionDate: details.completionDate ?? null,
+      notes: details.notes ?? null,
+      createdBy: changedBy,
     });
 
     return toServiceAccountSummary(updated, plan);
@@ -446,6 +484,45 @@ export async function reconnectServiceAccount(
       },
     };
   });
+}
+
+/**
+ * Records the reconnection paperwork (S4-8): who asked for the service back, which
+ * technician restored it, when the request was made and when it was completed.
+ *
+ * Called after the fee invoice exists so the record can point at it. The invoice is
+ * the financial record; this row is the operating history beside it. Nothing is
+ * edited or deleted — a corrected record is another row.
+ */
+export async function recordReconnection(
+  serviceAccountId: string,
+  reason: string | undefined,
+  feeCentavos: number,
+  createdBy: string,
+  details: ServiceControlDetails & { invoiceId?: string | null } = {}
+): Promise<ReconnectionRecord> {
+  // The id is generated here rather than left to the database default so the row is
+  // returned without a second round trip — and so the audit entry and the caller
+  // both see the same record identity.
+  const record: ReconnectionRecord = {
+    id: randomUUID(),
+    serviceAccountId,
+    reason: reason ?? `Reconnected — reconnection fee of ${feeCentavos} centavos applies`,
+    effectiveDate: details.effectiveDate ?? formatDateOnly(new Date()),
+    approvedBy: createdBy,
+    feeCentavos,
+    technicianId: details.technicianId ?? null,
+    requestDate: details.requestDate ?? null,
+    completionDate: details.completionDate ?? null,
+    invoiceId: details.invoiceId ?? null,
+    notes: details.notes ?? null,
+    createdAt: new Date(),
+    createdBy,
+  };
+
+  await db.insert(reconnectionRecords).values(record);
+
+  return record;
 }
 
 /**

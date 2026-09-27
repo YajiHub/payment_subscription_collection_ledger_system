@@ -3,9 +3,13 @@
 //
 // Route handlers never touch the database directly — they call these functions.
 
-import { and, asc, desc, eq, gt, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, lte, type SQL } from "drizzle-orm";
 
-import type { PaymentMethod, PaymentStatus } from "@bcis/shared";
+import type {
+  GcashVerificationStatus,
+  PaymentMethod,
+  PaymentStatus,
+} from "@bcis/shared";
 import { db, type DbExecutor } from "../../db/connection";
 import { invoices } from "../../db/schema/billing";
 import { gcashPayments, paymentAllocations, payments } from "../../db/schema/payments";
@@ -49,8 +53,53 @@ export interface PaymentDetail extends PaymentSummary {
     senderGcashNumber: string | null;
     senderName: string | null;
     screenshotFilePath: string | null;
+    /**
+     * Where the claim stands in the verification workflow. DERIVED from the
+     * payment's status, which is the single authority on whether the money counts:
+     * `posted` reads as "verified", and a reversal reads as "reversed".
+     */
+    verificationStatus: GcashVerificationStatus;
     verifiedAt: Date | null;
+    verifiedById: string | null;
+    rejectedAt: Date | null;
+    rejectedById: string | null;
+    rejectionReason: string | null;
   } | null;
+}
+
+/**
+ * The verification vocabulary (VERIFIED / REJECTED / …) for a stored payment
+ * status. One function, so the screen, the API and the docs cannot drift.
+ */
+export function gcashVerificationStatus(status: PaymentStatus): GcashVerificationStatus {
+  switch (status) {
+    case "pending_verification":
+      return "pending_verification";
+    case "posted":
+      return "verified";
+    case "rejected":
+      return "rejected";
+    case "reversed":
+      return "reversed";
+  }
+}
+
+/** One row of the GCash verification queue (section 4.3, the verifier's worklist). */
+export interface PendingGcashPaymentSummary {
+  paymentId: string;
+  receiptNumber: string;
+  serviceAccountId: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberName: string;
+  amountCentavos: number;
+  paymentDate: string;
+  recordedAt: Date;
+  recordedByName: string;
+  referenceNumber: string;
+  senderGcashNumber: string | null;
+  senderName: string | null;
+  screenshotFilePath: string | null;
 }
 
 export interface OutstandingInvoiceSummary {
@@ -78,7 +127,22 @@ export interface ListPaymentsFilters {
   status?: PaymentStatus;
   dateFrom?: string;
   dateTo?: string;
+  /** 1-based page number. Defaults to the first page. */
+  page?: number;
+  /** Rows per page, already bounded by the query schema's maximum. */
+  pageSize?: number;
 }
+
+/** One page of payments, with the total so a caller can render "page 2 of 7". */
+export interface PaymentPage {
+  items: PaymentSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+/** The page size used when a caller does not ask for one. Matches the query schema. */
+const DEFAULT_PAYMENT_PAGE_SIZE = 50;
 
 const paymentSummaryColumns = {
   id: payments.id,
@@ -150,12 +214,20 @@ function toPaymentSummary(row: PaymentJoinedRow): PaymentSummary {
   };
 }
 
-/** Lists payments, newest first, with subscriber and cashier names attached. */
+/**
+ * Lists payments, newest first, ONE PAGE AT A TIME (S8-1).
+ *
+ * `posted_at` with the receipt number as a tie-breaker is a stable order, so a page
+ * boundary cannot drop or repeat a row between two requests. `total` counts every
+ * payment the filters matched.
+ */
 export async function listPayments(
   filters: ListPaymentsFilters = {},
   executor: DbExecutor = db
-): Promise<PaymentSummary[]> {
-  const conditions = [];
+): Promise<PaymentPage> {
+  const page = filters.page ?? 1;
+  const pageSize = filters.pageSize ?? DEFAULT_PAYMENT_PAGE_SIZE;
+  const conditions: SQL[] = [];
 
   if (filters.serviceAccountId !== undefined) {
     conditions.push(eq(payments.serviceAccountId, filters.serviceAccountId));
@@ -173,24 +245,52 @@ export async function listPayments(
     conditions.push(lte(payments.paymentDate, filters.dateTo));
   }
 
-  const rows = await executor
-    .select(paymentSummaryColumns)
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const joinedPayments = () =>
+    executor
+      .select(paymentSummaryColumns)
+      .from(payments)
+      .innerJoin(serviceAccounts, eq(payments.serviceAccountId, serviceAccounts.id))
+      .innerJoin(subscribers, eq(serviceAccounts.subscriberId, subscribers.id))
+      .innerJoin(users, eq(payments.postedBy, users.id))
+      .leftJoin(gcashPayments, eq(gcashPayments.paymentId, payments.id));
+
+  const rows = await joinedPayments()
+    .where(where)
+    .orderBy(desc(payments.postedAt), desc(payments.receiptNumber))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize);
+
+  const totalRows = await executor
+    .select({ value: count() })
     .from(payments)
     .innerJoin(serviceAccounts, eq(payments.serviceAccountId, serviceAccounts.id))
     .innerJoin(subscribers, eq(serviceAccounts.subscriberId, subscribers.id))
     .innerJoin(users, eq(payments.postedBy, users.id))
     .leftJoin(gcashPayments, eq(gcashPayments.paymentId, payments.id))
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(payments.postedAt));
+    .where(where);
 
-  return rows.map((row) => toPaymentSummary(row));
+  return {
+    items: rows.map((row) => toPaymentSummary(row)),
+    page,
+    pageSize,
+    total: totalRows[0]?.value ?? 0,
+  };
 }
 
-/** All payments for a service account, newest first. */
+/**
+ * All payments for a service account, newest first, one page at a time.
+ *
+ * A receipt lookup sends the account id with no page arguments and gets the first
+ * page, which is the behaviour the receipt screen has always relied on.
+ */
 export async function listPaymentsForServiceAccount(
-  serviceAccountId: string
-): Promise<PaymentSummary[]> {
-  return listPayments({ serviceAccountId });
+  serviceAccountId: string,
+  page?: number,
+  pageSize?: number
+): Promise<PaymentPage> {
+  return listPayments({ serviceAccountId, page, pageSize });
 }
 
 async function loadPaymentSummary(
@@ -250,6 +350,10 @@ async function withDetail(executor: DbExecutor, summary: PaymentSummary): Promis
       senderName: gcashPayments.senderName,
       screenshotFilePath: gcashPayments.screenshotFilePath,
       verifiedAt: gcashPayments.verifiedAt,
+      verifiedById: gcashPayments.verifiedBy,
+      rejectedAt: gcashPayments.rejectedAt,
+      rejectedById: gcashPayments.rejectedBy,
+      rejectionReason: gcashPayments.rejectionReason,
     })
     .from(gcashPayments)
     .where(eq(gcashPayments.paymentId, summary.id))
@@ -259,8 +363,70 @@ async function withDetail(executor: DbExecutor, summary: PaymentSummary): Promis
   return {
     ...summary,
     allocations,
-    gcash: gcash ?? null,
+    gcash:
+      gcash === undefined
+        ? null
+        : { ...gcash, verificationStatus: gcashVerificationStatus(summary.status) },
   };
+}
+
+/**
+ * The GCash payments waiting for a verifier, oldest claim first — the two-pane
+ * queue's left-hand list (section 4.3).
+ *
+ * A pending payment has not touched a balance, so this is a worklist, not a
+ * financial report; it deliberately shows nothing that was already decided.
+ */
+export async function listPendingGcashPayments(
+  executor: DbExecutor = db
+): Promise<PendingGcashPaymentSummary[]> {
+  const rows = await executor
+    .select({
+      paymentId: payments.id,
+      receiptNumber: payments.receiptNumber,
+      serviceAccountId: payments.serviceAccountId,
+      serviceAccountNumber: serviceAccounts.serviceAccountNumber,
+      subscriberId: subscribers.id,
+      subscriberFirstName: subscribers.firstName,
+      subscriberLastName: subscribers.lastName,
+      amountCentavos: payments.amountCentavos,
+      paymentDate: payments.paymentDate,
+      recordedAt: payments.postedAt,
+      recordedByName: users.fullName,
+      referenceNumber: gcashPayments.gcashReferenceNumber,
+      senderGcashNumber: gcashPayments.senderGcashNumber,
+      senderName: gcashPayments.senderName,
+      screenshotFilePath: gcashPayments.screenshotFilePath,
+    })
+    .from(payments)
+    .innerJoin(gcashPayments, eq(gcashPayments.paymentId, payments.id))
+    .innerJoin(serviceAccounts, eq(payments.serviceAccountId, serviceAccounts.id))
+    .innerJoin(subscribers, eq(serviceAccounts.subscriberId, subscribers.id))
+    .innerJoin(users, eq(payments.postedBy, users.id))
+    .where(
+      and(
+        eq(payments.paymentMethod, "gcash"),
+        eq(payments.status, "pending_verification")
+      )
+    )
+    .orderBy(asc(payments.postedAt), asc(payments.receiptNumber));
+
+  return rows.map((row) => ({
+    paymentId: row.paymentId,
+    receiptNumber: row.receiptNumber,
+    serviceAccountId: row.serviceAccountId,
+    serviceAccountNumber: row.serviceAccountNumber,
+    subscriberId: row.subscriberId,
+    subscriberName: `${row.subscriberLastName}, ${row.subscriberFirstName}`,
+    amountCentavos: row.amountCentavos,
+    paymentDate: row.paymentDate,
+    recordedAt: row.recordedAt,
+    recordedByName: row.recordedByName,
+    referenceNumber: row.referenceNumber,
+    senderGcashNumber: row.senderGcashNumber,
+    senderName: row.senderName,
+    screenshotFilePath: row.screenshotFilePath,
+  }));
 }
 
 /**
@@ -285,7 +451,7 @@ export async function getServiceAccountPaymentSummary(
     .where(
       and(
         eq(invoices.serviceAccountId, serviceAccountId),
-        inArray(invoices.status, ["posted", "partially_paid", "overdue"]),
+        inArray(invoices.status, ["unpaid", "partially_paid", "overdue"]),
         gt(invoices.remainingBalanceCentavos, 0)
       )
     )

@@ -8,7 +8,7 @@
 // Invoices are generated as DRAFT: an admin or billing clerk can review the batch
 // before it affects subscriber balances, then post it in one action.
 
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 
 import { db, type DbExecutor } from "../../db/connection";
 import { billingRuns, invoiceLineItems, invoices } from "../../db/schema/billing";
@@ -17,7 +17,7 @@ import { formatDateOnly } from "../../shared/date";
 import { MONTHLY_INVOICE_DUE_DAY } from "@bcis/shared";
 import { buildMonthlyInvoiceDraft } from "./invoice-calculations";
 import { allocateNextInvoiceNumber } from "./invoice-number.service";
-import { postInvoiceForId } from "./invoices.service";
+import { postInvoiceInTransaction } from "./invoices.service";
 import { applyAdvanceCreditToInvoice } from "./advance-credit.service";
 
 /** One active service account that the billing job may invoice. */
@@ -91,7 +91,7 @@ function monthlyDueDate(year: number, month: number): string {
 
 /**
  * Generates one draft invoice for a single account, or reports that one already
- * exists. Runs inside the caller's transaction.
+ * exists. Opens its own transaction; used by callers that bill one account.
  *
  * Returns true when a new invoice was created, false when the account was skipped.
  */
@@ -101,106 +101,182 @@ export async function generateInvoiceForCandidate(
   month: number,
   initiatedByUserId: string
 ): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    // Lock the account row so two billing runs cannot both pass the duplicate
-    // check and insert for the same period.
-    await tx
-      .select({ id: serviceAccounts.id })
-      .from(serviceAccounts)
-      .where(eq(serviceAccounts.id, candidate.serviceAccountId))
-      .limit(1)
-      .for("update");
+  return db.transaction((tx) =>
+    generateInvoiceForCandidateInTransaction(tx, candidate, year, month, initiatedByUserId)
+  );
+}
 
-    const existingInvoice = await findExistingMonthlyInvoice(
-      tx,
-      candidate.serviceAccountId,
-      year,
-      month
-    );
+/**
+ * The body of `generateInvoiceForCandidate`, running inside a caller-supplied
+ * transaction. The monthly billing run uses this so every invoice it generates
+ * commits together with the billing-run record.
+ */
+export async function generateInvoiceForCandidateInTransaction(
+  tx: DbExecutor,
+  candidate: BillingCandidate,
+  year: number,
+  month: number,
+  initiatedByUserId: string
+): Promise<boolean> {
+  // Lock the account row so two billing runs cannot both pass the duplicate
+  // check and insert for the same period.
+  await tx
+    .select({ id: serviceAccounts.id })
+    .from(serviceAccounts)
+    .where(eq(serviceAccounts.id, candidate.serviceAccountId))
+    .limit(1)
+    .for("update");
 
-    if (existingInvoice !== undefined) {
-      return false; // already billed for this period — skip silently
-    }
+  const existingInvoice = await findExistingMonthlyInvoice(
+    tx,
+    candidate.serviceAccountId,
+    year,
+    month
+  );
 
-    const draft = buildMonthlyInvoiceDraft(
-      { name: candidate.planName, monthlyRateCentavos: candidate.monthlyRateCentavos },
-      year,
-      month
-    );
-    const invoiceDate = formatDateOnly(new Date());
-    const invoiceNumber = await allocateNextInvoiceNumber(tx, year, month);
+  if (existingInvoice !== undefined) {
+    return false; // already billed for this period — skip silently
+  }
 
-    const insertedInvoice = await tx
-      .insert(invoices)
-      .values({
-        invoiceNumber,
-        serviceAccountId: candidate.serviceAccountId,
-        invoiceType: "monthly_subscription",
-        status: "draft",
-        billingPeriodYear: year,
-        billingPeriodMonth: month,
-        invoiceDate,
-        dueDate: monthlyDueDate(year, month),
-        subtotalCentavos: draft.subtotalCentavos,
-        lateFeesCentavos: draft.lateFeesCentavos,
-        totalAmountCentavos: draft.totalAmountCentavos,
-        remainingBalanceCentavos: draft.remainingBalanceCentavos,
-        createdBy: initiatedByUserId,
-      })
-      .returning({ id: invoices.id })
-      .then((rows) => rows[0]);
+  const draft = buildMonthlyInvoiceDraft(
+    { name: candidate.planName, monthlyRateCentavos: candidate.monthlyRateCentavos },
+    year,
+    month
+  );
+  const invoiceDate = formatDateOnly(new Date());
+  const invoiceNumber = await allocateNextInvoiceNumber(tx, year, month);
 
-    if (insertedInvoice === undefined) {
-      return false;
-    }
+  const insertedInvoice = await tx
+    .insert(invoices)
+    .values({
+      invoiceNumber,
+      serviceAccountId: candidate.serviceAccountId,
+      invoiceType: "monthly_subscription",
+      status: "draft",
+      billingPeriodYear: year,
+      billingPeriodMonth: month,
+      invoiceDate,
+      dueDate: monthlyDueDate(year, month),
+      subtotalCentavos: draft.subtotalCentavos,
+      lateFeesCentavos: draft.lateFeesCentavos,
+      totalAmountCentavos: draft.totalAmountCentavos,
+      remainingBalanceCentavos: draft.remainingBalanceCentavos,
+      createdBy: initiatedByUserId,
+    })
+    .returning({ id: invoices.id })
+    .then((rows) => rows[0]);
 
-    // The invoice and its line items commit together, or not at all.
-    await tx.insert(invoiceLineItems).values(
-      draft.lineItems.map((lineItem) => ({
-        invoiceId: insertedInvoice.id,
-        description: lineItem.description,
-        quantity: lineItem.quantity,
-        unitAmountCentavos: lineItem.unitAmountCentavos,
-        totalAmountCentavos: lineItem.totalAmountCentavos,
-      }))
-    );
+  if (insertedInvoice === undefined) {
+    return false;
+  }
 
-    // Any credit the subscriber is holding pays down this new invoice before it
-    // ever reaches them.
-    await applyAdvanceCreditToInvoice(
-      tx,
-      {
-        id: insertedInvoice.id,
-        invoiceNumber,
-        serviceAccountId: candidate.serviceAccountId,
-        totalAmountCentavos: draft.totalAmountCentavos,
-      },
-      initiatedByUserId
-    );
+  // The invoice and its line items commit together, or not at all.
+  await tx.insert(invoiceLineItems).values(
+    draft.lineItems.map((lineItem) => ({
+      invoiceId: insertedInvoice.id,
+      description: lineItem.description,
+      quantity: lineItem.quantity,
+      unitAmountCentavos: lineItem.unitAmountCentavos,
+      totalAmountCentavos: lineItem.totalAmountCentavos,
+    }))
+  );
 
-    return true;
-  });
+  // Any credit the subscriber is holding pays down this new invoice before it
+  // ever reaches them.
+  await applyAdvanceCreditToInvoice(
+    tx,
+    {
+      id: insertedInvoice.id,
+      invoiceNumber,
+      serviceAccountId: candidate.serviceAccountId,
+      totalAmountCentavos: draft.totalAmountCentavos,
+    },
+    initiatedByUserId
+  );
+
+  return true;
+}
+
+/**
+ * The advisory lock that serializes billing runs for one period.
+ *
+ * Runs for different periods do not block each other. The lock is transaction
+ * scoped, so it is released on commit or rollback.
+ */
+async function lockBillingPeriod(
+  executor: DbExecutor,
+  year: number,
+  month: number
+): Promise<void> {
+  await executor.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`billing-run-${year}-${month}`}))`
+  );
+}
+
+/** The completed run already recorded for a period, if any. */
+async function findCompletedBillingRun(
+  executor: DbExecutor,
+  year: number,
+  month: number
+): Promise<typeof billingRuns.$inferSelect | undefined> {
+  return executor
+    .select()
+    .from(billingRuns)
+    .where(
+      and(
+        eq(billingRuns.billingPeriodYear, year),
+        eq(billingRuns.billingPeriodMonth, month),
+        eq(billingRuns.status, "completed")
+      )
+    )
+    .orderBy(desc(billingRuns.ranAt))
+    .limit(1)
+    .then((rows) => rows[0]);
 }
 
 /**
  * Generates one draft invoice per active service account for a billing period.
  *
- * Safe to re-run: a period that has already been billed is skipped, not duplicated.
+ * The whole run is ONE transaction: the billing_runs record and every generated
+ * invoice commit together or not at all. A failure half way through therefore
+ * leaves no invoices and no run record — a re-run starts from a clean slate.
+ * Before touching anything the transaction takes a period-scoped advisory lock, so
+ * two concurrent runs for the same period are serialized rather than racing on
+ * invoice numbers.
+ *
+ * The run is idempotent per period: if a completed run already exists, its
+ * recorded outcome is returned and nothing is generated again. Re-running is safe
+ * and produces the same result.
  */
 export async function runMonthlyBilling(
   billingYear: number,
   billingMonth: number,
   initiatedByUserId: string
 ): Promise<BillingRunResult> {
-  const candidates = await loadActiveBillingCandidates(db);
+  return db.transaction(async (tx) => {
+    await lockBillingPeriod(tx, billingYear, billingMonth);
 
-  let generated = 0;
-  let skipped = 0;
-  let totalAmountBilledCentavos = 0;
+    const completedRun = await findCompletedBillingRun(tx, billingYear, billingMonth);
+    if (completedRun !== undefined) {
+      return {
+        billingPeriodYear: billingYear,
+        billingPeriodMonth: billingMonth,
+        totalServiceAccountsProcessed: completedRun.totalServiceAccountsProcessed,
+        totalInvoicesGenerated: completedRun.totalInvoicesGenerated,
+        totalInvoicesSkipped: completedRun.totalInvoicesSkipped,
+        totalAmountBilledCentavos: completedRun.totalAmountBilledCentavos,
+      };
+    }
 
-  try {
+    const candidates = await loadActiveBillingCandidates(tx);
+
+    let generated = 0;
+    let skipped = 0;
+    let totalAmountBilledCentavos = 0;
+
     for (const candidate of candidates) {
-      const wasGenerated = await generateInvoiceForCandidate(
+      const wasGenerated = await generateInvoiceForCandidateInTransaction(
+        tx,
         candidate,
         billingYear,
         billingMonth,
@@ -214,42 +290,28 @@ export async function runMonthlyBilling(
         skipped++;
       }
     }
-  } catch (error) {
-    // Record the failed run before rethrowing, so the audit trail shows the attempt.
-    await db.insert(billingRuns).values({
+
+    // Commits with every invoice generated above, or rolls back with them.
+    await tx.insert(billingRuns).values({
       billingPeriodYear: billingYear,
       billingPeriodMonth: billingMonth,
       totalServiceAccountsProcessed: candidates.length,
       totalInvoicesGenerated: generated,
       totalInvoicesSkipped: skipped,
       totalAmountBilledCentavos,
-      status: "failed",
-      errorDetails: error instanceof Error ? error.message : "Unknown billing error",
+      status: "completed",
       ranBy: initiatedByUserId,
     });
 
-    throw error;
-  }
-
-  await db.insert(billingRuns).values({
-    billingPeriodYear: billingYear,
-    billingPeriodMonth: billingMonth,
-    totalServiceAccountsProcessed: candidates.length,
-    totalInvoicesGenerated: generated,
-    totalInvoicesSkipped: skipped,
-    totalAmountBilledCentavos,
-    status: "completed",
-    ranBy: initiatedByUserId,
+    return {
+      billingPeriodYear: billingYear,
+      billingPeriodMonth: billingMonth,
+      totalServiceAccountsProcessed: candidates.length,
+      totalInvoicesGenerated: generated,
+      totalInvoicesSkipped: skipped,
+      totalAmountBilledCentavos,
+    };
   });
-
-  return {
-    billingPeriodYear: billingYear,
-    billingPeriodMonth: billingMonth,
-    totalServiceAccountsProcessed: candidates.length,
-    totalInvoicesGenerated: generated,
-    totalInvoicesSkipped: skipped,
-    totalAmountBilledCentavos,
-  };
 }
 
 /**
@@ -293,31 +355,37 @@ export async function previewMonthlyBilling(
 
 /**
  * Posts every draft invoice for a period, creating one ledger debit each.
- * Returns how many invoices were posted.
+ *
+ * The whole batch is ONE transaction: either every draft posts, or none does, so a
+ * failure part way through can never leave a period half posted. The posting guard
+ * still rejects anything that is not a draft, so an invoice voided between the
+ * read and the write is never resurrected.
  */
 export async function postAllDraftInvoices(
   billingYear: number,
   billingMonth: number,
   postedByUserId: string
 ): Promise<number> {
-  const draftInvoices = await db
-    .select({ id: invoices.id })
-    .from(invoices)
-    .where(
-      and(
-        eq(invoices.status, "draft"),
-        eq(invoices.billingPeriodYear, billingYear),
-        eq(invoices.billingPeriodMonth, billingMonth)
-      )
-    );
+  return db.transaction(async (tx) => {
+    const draftInvoices = await tx
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(
+        and(
+          eq(invoices.status, "draft"),
+          eq(invoices.billingPeriodYear, billingYear),
+          eq(invoices.billingPeriodMonth, billingMonth)
+        )
+      );
 
-  let posted = 0;
-  for (const draftInvoice of draftInvoices) {
-    await postInvoiceForId(draftInvoice.id, postedByUserId);
-    posted++;
-  }
+    let posted = 0;
+    for (const draftInvoice of draftInvoices) {
+      await postInvoiceInTransaction(tx, draftInvoice.id, postedByUserId);
+      posted++;
+    }
 
-  return posted;
+    return posted;
+  });
 }
 
 /** The billing run history, newest first. */

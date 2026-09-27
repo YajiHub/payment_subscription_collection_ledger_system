@@ -9,9 +9,10 @@
 // Service accounts are NEVER deleted. They move through the statuses below and
 // every move is written to service_status_history so the audit trail survives.
 
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -19,10 +20,12 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
 
+import { collectionAreas } from "./areas";
 import { users } from "./users";
 
 // ─── Service Types ────────────────────────────────────────────────────────────
@@ -72,38 +75,133 @@ export const subscriptionPlans = pgTable("subscription_plans", {
 
 // ─── Subscribers ──────────────────────────────────────────────────────────────
 // A subscriber is a customer/household. They may have multiple service accounts.
-export const subscribers = pgTable("subscribers", {
-  id: uuid("id").primaryKey().defaultRandom(),
+export const subscribers = pgTable(
+  "subscribers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
 
-  // The subscriber's account number — shown on every document and printed receipt.
-  // Format: SUB-YYYYMMDD-XXXXX (auto-generated, human-readable, sortable by date)
-  accountNumber: varchar("account_number", { length: 30 }).notNull().unique(),
+    // The subscriber's account number — shown on every document and printed receipt.
+    // Format: SUB-YYYYMMDD-XXXXX (auto-generated, human-readable, sortable by date)
+    accountNumber: varchar("account_number", { length: 30 }).notNull().unique(),
 
-  firstName: varchar("first_name", { length: 100 }).notNull(),
-  lastName: varchar("last_name", { length: 100 }).notNull(),
-  middleName: varchar("middle_name", { length: 100 }),
+    firstName: varchar("first_name", { length: 100 }).notNull(),
+    lastName: varchar("last_name", { length: 100 }).notNull(),
+    middleName: varchar("middle_name", { length: 100 }),
 
-  // Contact information
-  primaryPhone: varchar("primary_phone", { length: 20 }).notNull(),
-  secondaryPhone: varchar("secondary_phone", { length: 20 }),
-  emailAddress: varchar("email_address", { length: 150 }),
+    // Contact information
+    primaryPhone: varchar("primary_phone", { length: 20 }).notNull(),
+    secondaryPhone: varchar("secondary_phone", { length: 20 }),
+    emailAddress: varchar("email_address", { length: 150 }),
 
-  // Service address (where equipment is installed — may differ from billing address)
-  serviceAddress: text("service_address").notNull(),
-  serviceBarangay: varchar("service_barangay", { length: 100 }).notNull(),
-  serviceMunicipality: varchar("service_municipality", { length: 100 }).notNull(),
-  serviceProvince: varchar("service_province", { length: 100 }).notNull(),
+    // Service address (where equipment is installed — may differ from billing address)
+    serviceAddress: text("service_address").notNull(),
+    serviceBarangay: varchar("service_barangay", { length: 100 }).notNull(),
+    serviceMunicipality: varchar("service_municipality", { length: 100 }).notNull(),
+    serviceProvince: varchar("service_province", { length: 100 }).notNull(),
 
-  // Notes for internal use (installation notes, landmarks, …)
-  internalNotes: text("internal_notes"),
+    // S1-5: the collection area (route) this subscriber belongs to. The
+    // `service_barangay` string above stays as denormalized data — it is what was
+    // recorded when the account was opened and it is printed on documents.
+    areaId: uuid("area_id").references(() => collectionAreas.id),
 
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  createdBy: uuid("created_by")
-    .notNull()
-    .references(() => users.id),
-  updatedBy: uuid("updated_by").references(() => users.id),
-});
+    // Notes for internal use (installation notes, landmarks, …)
+    internalNotes: text("internal_notes"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    updatedBy: uuid("updated_by").references(() => users.id),
+  },
+  (table) => [
+    // S1-5: the area list and the route-sheet picker read subscribers by area.
+    index("subscribers_area_idx").on(table.areaId),
+    // S1-10 / S12-4: the subscriber list searches every one of these columns with
+    // ILIKE '%…%', which a btree index cannot serve. A pg_trgm GIN index turns
+    // each one into an indexable trigram match instead of a sequential scan, which
+    // is what holds at the section 4.5 target of 20,000 subscribers.
+    // One index per column because the service ORs conditions on separate columns.
+    index("subscribers_first_name_trgm_idx").using("gin", sql`${table.firstName} gin_trgm_ops`),
+    index("subscribers_last_name_trgm_idx").using("gin", sql`${table.lastName} gin_trgm_ops`),
+    index("subscribers_middle_name_trgm_idx").using("gin", sql`${table.middleName} gin_trgm_ops`),
+    index("subscribers_account_number_trgm_idx").using(
+      "gin",
+      sql`${table.accountNumber} gin_trgm_ops`
+    ),
+    index("subscribers_primary_phone_trgm_idx").using(
+      "gin",
+      sql`${table.primaryPhone} gin_trgm_ops`
+    ),
+    index("subscribers_secondary_phone_trgm_idx").using(
+      "gin",
+      sql`${table.secondaryPhone} gin_trgm_ops`
+    ),
+    index("subscribers_email_address_trgm_idx").using(
+      "gin",
+      sql`${table.emailAddress} gin_trgm_ops`
+    ),
+    index("subscribers_service_address_trgm_idx").using(
+      "gin",
+      sql`${table.serviceAddress} gin_trgm_ops`
+    ),
+    index("subscribers_service_barangay_trgm_idx").using(
+      "gin",
+      sql`${table.serviceBarangay} gin_trgm_ops`
+    ),
+    index("subscribers_service_municipality_trgm_idx").using(
+      "gin",
+      sql`${table.serviceMunicipality} gin_trgm_ops`
+    ),
+  ]
+);
+
+// ─── Subscriber Addresses ─────────────────────────────────────────────────────
+// S1-9: one subscriber may hold several addresses (home, billing, a second
+// installation), so an address is a row rather than four columns on the
+// subscriber. The subscriber's original columns stay as denormalized data — the
+// migration moves a copy of them here and nothing is deleted.
+export const subscriberAddresses = pgTable(
+  "subscriber_addresses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    subscriberId: uuid("subscriber_id")
+      .notNull()
+      .references(() => subscribers.id),
+
+    // Free label the office recognises, e.g. "Home", "Store", "Billing address".
+    label: varchar("label", { length: 50 }).notNull().default("Primary"),
+
+    addressLine: text("address_line").notNull(),
+    barangay: varchar("barangay", { length: 100 }),
+    municipality: varchar("municipality", { length: 100 }),
+    province: varchar("province", { length: 100 }),
+
+    // S1-5: an address can sit in a collection area, so a route sheet can be
+    // built from addresses rather than from the subscriber's single barangay.
+    areaId: uuid("area_id").references(() => collectionAreas.id),
+
+    // Exactly one address per subscriber is primary (partial unique index below);
+    // it is the one the migration derived from the old subscriber columns.
+    isPrimary: boolean("is_primary").notNull().default(false),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    updatedBy: uuid("updated_by").references(() => users.id),
+  },
+  (table) => [
+    index("subscriber_addresses_subscriber_idx").on(table.subscriberId),
+    index("subscriber_addresses_area_idx").on(table.areaId),
+    // At most one primary address per subscriber, and any number of others.
+    uniqueIndex("subscriber_addresses_primary_uq")
+      .on(table.subscriberId)
+      .where(sql`${table.isPrimary}`),
+  ]
+);
 
 // ─── Service Accounts ─────────────────────────────────────────────────────────
 // Each service account represents one service (Internet or Cable TV) for one subscriber.
@@ -125,8 +223,22 @@ export const serviceAccounts = pgTable(
 
     status: serviceAccountStatusEnum("status").notNull().default("pending"),
 
+    // S1-9: where this service is actually installed. Nullable: an account may
+    // bill without an installation record. Points at one of the subscriber's
+    // addresses, so two services can install at two different addresses.
+    installationAddressId: uuid("installation_address_id").references(() => subscriberAddresses.id),
+
     // The date service began (used to determine the first billing period)
     activationDate: date("activation_date"),
+
+    // S1-11: per-account billing schedule. `billing_start_date` is the first day
+    // this account may be billed for; the two day-of-month columns are OVERRIDES
+    // of the global `invoice_due_day_of_month` setting. When either is null the
+    // billing engine falls back to the system setting, so an account only carries
+    // a value when somebody deliberately moved its bill off the office default.
+    billingStartDate: date("billing_start_date"),
+    billingDay: integer("billing_day"),
+    dueDay: integer("due_day"),
 
     // The date service was suspended or terminated (null if still active)
     suspensionDate: date("suspension_date"),
@@ -135,6 +247,10 @@ export const serviceAccounts = pgTable(
     // The field collector assigned to this account.
     // null = office payment only; not assigned to a collector
     assignedCollectorId: uuid("assigned_collector_id").references(() => users.id),
+
+    // S1-5: the collection area for this specific service. Nullable because an
+    // account may predate areas, and it may differ from the subscriber's area.
+    areaId: uuid("area_id").references(() => collectionAreas.id),
 
     // Overdue tracking: how many consecutive months unpaid
     consecutiveOverdueMonths: integer("consecutive_overdue_months").notNull().default(0),
@@ -146,9 +262,22 @@ export const serviceAccounts = pgTable(
       .references(() => users.id),
   },
   (table) => [
+    // S1-5: the route sheet and the by-area reports read accounts by area.
+    index("service_accounts_area_idx").on(table.areaId),
     // Phase 8's dashboard counts active, suspended, and terminated accounts, and the
     // subscriber list filters by status; this index serves both.
     index("service_accounts_status_idx").on(table.status),
+    // S1-11: a day-of-month override must be a real billing day. Days 29-31 are
+    // excluded on purpose — every month has 28, and a bill that falls due on the
+    // 31st cannot be calculated in February.
+    check(
+      "service_accounts_billing_day_check",
+      sql`${table.billingDay} IS NULL OR (${table.billingDay} BETWEEN 1 AND 28)`
+    ),
+    check(
+      "service_accounts_due_day_check",
+      sql`${table.dueDay} IS NULL OR (${table.dueDay} BETWEEN 1 AND 28)`
+    ),
   ]
 );
 
@@ -172,6 +301,18 @@ export const serviceStatusHistory = pgTable("service_status_history", {
 // ─── Relations ───────────────────────────────────────────────────────────────
 export const subscribersRelations = relations(subscribers, ({ many }) => ({
   serviceAccounts: many(serviceAccounts),
+  addresses: many(subscriberAddresses),
+}));
+
+export const subscriberAddressesRelations = relations(subscriberAddresses, ({ one }) => ({
+  subscriber: one(subscribers, {
+    fields: [subscriberAddresses.subscriberId],
+    references: [subscribers.id],
+  }),
+  area: one(collectionAreas, {
+    fields: [subscriberAddresses.areaId],
+    references: [collectionAreas.id],
+  }),
 }));
 
 export const subscriptionPlansRelations = relations(subscriptionPlans, ({ many }) => ({
@@ -186,6 +327,10 @@ export const serviceAccountsRelations = relations(serviceAccounts, ({ one, many 
   plan: one(subscriptionPlans, {
     fields: [serviceAccounts.planId],
     references: [subscriptionPlans.id],
+  }),
+  installationAddress: one(subscriberAddresses, {
+    fields: [serviceAccounts.installationAddressId],
+    references: [subscriberAddresses.id],
   }),
   statusHistory: many(serviceStatusHistory),
 }));
@@ -205,3 +350,5 @@ export type ServiceAccount = typeof serviceAccounts.$inferSelect;
 export type NewServiceAccount = typeof serviceAccounts.$inferInsert;
 export type ServiceStatusHistoryEntry = typeof serviceStatusHistory.$inferSelect;
 export type NewServiceStatusHistoryEntry = typeof serviceStatusHistory.$inferInsert;
+export type SubscriberAddress = typeof subscriberAddresses.$inferSelect;
+export type NewSubscriberAddress = typeof subscriberAddresses.$inferInsert;

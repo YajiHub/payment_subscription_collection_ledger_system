@@ -22,6 +22,7 @@ vi.mock("../src/db/connection", async () => {
 
 import { buildServer } from "../src/index.ts";
 import { billingRuns, invoiceLineItems, invoices } from "../src/db/schema/billing";
+import { auditLogs } from "../src/db/schema/audit";
 import { ledgerEntries } from "../src/db/schema/ledger";
 import { paymentAllocations } from "../src/db/schema/payments";
 import { fakeDatabase, type RecordedInsert } from "./support/fake-database";
@@ -107,6 +108,7 @@ describe("billing and invoice routes", () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
     fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice for the period
@@ -148,6 +150,7 @@ describe("billing and invoice routes", () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
     fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice for the period
@@ -223,7 +226,7 @@ describe("billing and invoice routes", () => {
     fakeDatabase.queueUpdateRows([]); // status -> posted
     fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // current ledger balance
     fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
-    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "posted" })]); // reload summary
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "unpaid" })]); // reload summary
     fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
 
     const response = await server.inject({
@@ -241,7 +244,7 @@ describe("billing and invoice routes", () => {
     expect(ledgerValues.runningBalanceCentavos).toBe(69900);
   });
 
-  it("posts a fully credit-covered draft as paid without a new ledger debit", async () => {
+  it("posts a fully credit-covered draft as CREDITED without a new ledger debit", async () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
@@ -252,13 +255,14 @@ describe("billing and invoice routes", () => {
         serviceAccountId: SERVICE_ACCOUNT_ID,
         status: "draft",
         totalAmountCentavos: 99900,
+        paidAmountCentavos: 99900, // already covered by advance credit
         remainingBalanceCentavos: 0,
         billingPeriodYear: 2025,
         billingPeriodMonth: 1,
       },
     ]); // invoice for update
-    fakeDatabase.queueUpdateRows([]); // status -> paid
-    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "paid" })]); // reload summary
+    fakeDatabase.queueUpdateRows([]); // status -> credited
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "credited" })]); // reload summary
     fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
 
     const response = await server.inject({
@@ -268,18 +272,19 @@ describe("billing and invoice routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().data.status).toBe("paid");
+    expect(response.json().data.status).toBe("credited");
 
     // Nothing new is owed, so no invoice_posted debit is written.
     expect(insertedInto(ledgerEntries)).toHaveLength(0);
-    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "paid" });
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "credited" });
   });
 
-  it("does not create a duplicate when the billing job runs twice for the same month", async () => {
+  it("is idempotent: re-running the same period returns the recorded run and writes nothing new", async () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     // First run: no invoice exists yet, so one is generated.
     fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
     fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice
@@ -298,13 +303,19 @@ describe("billing and invoice routes", () => {
     expect(firstRun.statusCode).toBe(201);
     expect(firstRun.json().data.totalInvoicesGenerated).toBe(1);
     expect(insertedInto(invoices)).toHaveLength(1);
+    expect(insertedInto(billingRuns)).toHaveLength(1);
 
-    // Second run for the same month: an invoice already exists, so the account is skipped.
+    // Second run for the same month: a completed run is already recorded, so the
+    // job returns that outcome and generates nothing again.
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
-    fakeDatabase.queueSelectRows([]); // lock the account row
-    fakeDatabase.queueSelectRows([{ id: INVOICE_ID }]); // existing invoice found
-    fakeDatabase.queueInsertRows([]); // billing run insert
+    fakeDatabase.queueSelectRows([
+      {
+        totalServiceAccountsProcessed: 1,
+        totalInvoicesGenerated: 1,
+        totalInvoicesSkipped: 0,
+        totalAmountBilledCentavos: 99900,
+      },
+    ]); // the completed run for the period
 
     const secondRun = await server.inject({
       method: "POST",
@@ -314,11 +325,93 @@ describe("billing and invoice routes", () => {
     });
 
     expect(secondRun.statusCode).toBe(201);
-    expect(secondRun.json().data.totalInvoicesGenerated).toBe(0);
-    expect(secondRun.json().data.totalInvoicesSkipped).toBe(1);
+    expect(secondRun.json().data).toMatchObject({
+      totalInvoicesGenerated: 1,
+      totalInvoicesSkipped: 0,
+      totalAmountBilledCentavos: 99900,
+    });
 
-    // Still exactly one invoice: the second run added none.
+    // Still exactly one invoice and one run record: the second run added neither.
     expect(insertedInto(invoices)).toHaveLength(1);
+    expect(insertedInto(billingRuns)).toHaveLength(1);
+  });
+
+  it("posts all drafts in one transaction: a mid-batch failure rolls the first invoice back too", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+    const secondInvoiceId = randomUUID();
+
+    const draftRow = (id: string, invoiceNumber: string) => ({
+      id,
+      invoiceNumber,
+      serviceAccountId: SERVICE_ACCOUNT_ID,
+      status: "draft",
+      totalAmountCentavos: 99900,
+      paidAmountCentavos: 0,
+      remainingBalanceCentavos: 99900,
+      billingPeriodYear: 2025,
+      billingPeriodMonth: 1,
+    });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      { id: INVOICE_ID },
+      { id: secondInvoiceId },
+    ]); // the two draft invoices for the period
+
+    // First invoice posts cleanly…
+    fakeDatabase.queueSelectRows([draftRow(INVOICE_ID, "INV-2025-01-000001")]);
+    fakeDatabase.queueUpdateRows([]); // status -> unpaid
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // its ledger debit
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "unpaid" })]); // reload summary
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    // …the second fails while writing its ledger debit.
+    fakeDatabase.queueSelectRows([draftRow(secondInvoiceId, "INV-2025-01-000002")]);
+    fakeDatabase.queueUpdateRows([]); // status -> unpaid
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance
+    fakeDatabase.failNextInsert(new Error("ledger write failed on the second invoice"));
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/post-all-draft",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(response.statusCode).toBe(500);
+
+    // The batch is one transaction, so nothing posted: neither ledger debit nor
+    // either status change survived.
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows).toHaveLength(0);
+  });
+
+  it("rolls the whole run back when an invoice insert fails: no invoices and no run record", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
+    fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
+    fakeDatabase.queueSelectRows([]); // lock the account row
+    fakeDatabase.queueSelectRows([]); // no existing invoice
+    fakeDatabase.queueSelectRows([]); // no invoice numbers yet
+    fakeDatabase.failNextInsert(new Error("simulated failure while inserting the invoice"));
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/run",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(response.statusCode).toBe(500);
+
+    // The run transaction rolled back: nothing was committed, not even a partial
+    // run record, so a re-run starts from a clean slate.
+    expect(insertedInto(invoices)).toHaveLength(0);
+    expect(insertedInto(invoiceLineItems)).toHaveLength(0);
+    expect(insertedInto(billingRuns)).toHaveLength(0);
   });
 
   it("posts an invoice and creates a matching ledger DEBIT entry", async () => {
@@ -340,7 +433,7 @@ describe("billing and invoice routes", () => {
     fakeDatabase.queueUpdateRows([]); // status -> posted
     fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // current ledger balance
     fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
-    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "posted" })]); // reload summary
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "unpaid" })]); // reload summary
     fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
 
     const response = await server.inject({
@@ -350,7 +443,7 @@ describe("billing and invoice routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().data.status).toBe("posted");
+    expect(response.json().data.status).toBe("unpaid");
 
     const ledgerWrites = insertedInto(ledgerEntries);
     expect(ledgerWrites).toHaveLength(1);
@@ -360,25 +453,26 @@ describe("billing and invoice routes", () => {
     expect(ledgerValues.amountCentavos).toBe(99900);
     expect(ledgerValues.runningBalanceCentavos).toBe(99900);
 
-    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "posted" });
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "unpaid" });
   });
 
   it("voids an invoice: marks it void, keeps the row, and creates a ledger CREDIT entry", async () => {
     const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
 
+    const invoiceForVoid = {
+      id: INVOICE_ID,
+      invoiceNumber: "INV-2025-01-000001",
+      serviceAccountId: SERVICE_ACCOUNT_ID,
+      status: "unpaid",
+      totalAmountCentavos: 99900,
+      remainingBalanceCentavos: 99900,
+      billingPeriodYear: 2025,
+      billingPeriodMonth: 1,
+    };
+
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([
-      {
-        id: INVOICE_ID,
-        invoiceNumber: "INV-2025-01-000001",
-        serviceAccountId: SERVICE_ACCOUNT_ID,
-        status: "posted",
-        totalAmountCentavos: 99900,
-        remainingBalanceCentavos: 99900,
-        billingPeriodYear: 2025,
-        billingPeriodMonth: 1,
-      },
-    ]); // invoice for update
+    fakeDatabase.queueSelectRows([invoiceForVoid]); // invoice for update
+    fakeDatabase.queueSelectRows([{ debitedCentavos: 99900 }]); // what the invoice debited
     fakeDatabase.queueSelectRows([{ balanceCentavos: 99900 }]); // current ledger balance
     fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
     fakeDatabase.queueUpdateRows([]); // status -> void
@@ -405,6 +499,119 @@ describe("billing and invoice routes", () => {
 
     // The invoice row is updated, never deleted.
     expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "void" });
+
+    // The audit trail names the status the invoice actually held before the void.
+    const auditRow = insertedInto(auditLogs)[0]?.values as Record<string, unknown>;
+    expect(auditRow.previousState).toMatchObject({ status: "unpaid" });
+    expect(auditRow.newState).toMatchObject({ status: "void" });
+  });
+
+  it("voids a draft without writing a ledger entry, because a draft never debited one", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "draft",
+        totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 99900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update
+    fakeDatabase.queueSelectRows([{ debitedCentavos: 0 }]); // the invoice debited nothing
+    fakeDatabase.queueUpdateRows([]); // status -> void
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "void", notes: "Duplicate draft" })]); // reload
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/void`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Duplicate draft" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.status).toBe("void");
+
+    // No ledger entry: the balance never moved for this draft, so voiding it must
+    // not move the balance either.
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({
+      status: "void",
+      voidedByTransactionId: null,
+    });
+  });
+
+  it("credits a draft only the amount an advance credit already debited", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "draft",
+        totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 59900,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update — a draft an advance credit paid 400.00 down
+    fakeDatabase.queueSelectRows([{ debitedCentavos: 40000 }]); // only the credit was debited
+    fakeDatabase.queueSelectRows([{ balanceCentavos: -59900 }]); // current ledger balance
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
+    fakeDatabase.queueUpdateRows([]); // status -> void
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "void" })]); // reload
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/void`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Billed the wrong period" },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const ledgerWrites = insertedInto(ledgerEntries);
+    expect(ledgerWrites).toHaveLength(1);
+    const ledgerValues = ledgerWrites[0]?.values as Record<string, unknown>;
+    expect(ledgerValues.amountCentavos).toBe(40000); // NOT the 99900 total
+    expect(ledgerValues.runningBalanceCentavos).toBe(-99900);
+  });
+
+  it("refuses to void an invoice settled by advance credit", async () => {
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        id: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        serviceAccountId: SERVICE_ACCOUNT_ID,
+        status: "credited",
+        totalAmountCentavos: 99900,
+        remainingBalanceCentavos: 0,
+        billingPeriodYear: 2025,
+        billingPeriodMonth: 1,
+      },
+    ]); // invoice for update
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/invoices/${INVOICE_ID}/void`,
+      headers: authorizationHeader(token),
+      payload: { reason: "Erase the credit" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("CONFLICT");
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
   });
 
   it("refuses to void a fully paid invoice", async () => {
@@ -510,7 +717,7 @@ describe("billing and invoice routes", () => {
         id: INVOICE_ID,
         invoiceNumber: "INV-2025-01-000001",
         serviceAccountId: SERVICE_ACCOUNT_ID,
-        status: "posted",
+        status: "unpaid",
         totalAmountCentavos: 99900,
         lateFeesCentavos: 0,
         remainingBalanceCentavos: 99900,

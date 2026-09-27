@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { SERVICE_TYPES } from "@bcis/shared";
 import { createPlanSchema, updatePlanSchema } from "@bcis/shared";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
 import { createPlan, getPlanById, listPlans, retirePlan, updatePlan } from "./plans.service";
@@ -36,6 +37,7 @@ export async function postPlan(request: FastifyRequest, reply: FastifyReply): Pr
   const body = parseOrThrow(createPlanSchema, request.body);
   const createdBy = request.user?.id ?? "";
   const plan = await createPlan({ ...body, createdBy });
+  await audit.planCreated({ ...plan }, requestActor(request));
   return sendSuccess(reply, plan, 201);
 }
 
@@ -50,7 +52,11 @@ export async function getPlan(request: FastifyRequest, reply: FastifyReply): Pro
 export async function putPlan(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   const { id } = parseOrThrow(planIdParamsSchema, request.params);
   const body = parseOrThrow(updatePlanSchema, request.body);
+
+  // Snapshot the previous state so the audit trail can show what changed (S5-6).
+  const previous = await getPlanById(id);
   const plan = await updatePlan(id, body);
+  await audit.planUpdated({ ...plan }, previous, requestActor(request));
   return sendSuccess(reply, plan);
 }
 
@@ -61,5 +67,6 @@ export async function putPlanRetired(
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(planIdParamsSchema, request.params);
   const plan = await retirePlan(id);
+  await audit.planRetired({ ...plan }, requestActor(request));
   return sendSuccess(reply, plan);
 }

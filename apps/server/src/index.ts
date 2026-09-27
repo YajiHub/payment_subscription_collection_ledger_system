@@ -16,6 +16,7 @@ import { config } from "./config";
 import { closeDatabaseConnection } from "./db/connection";
 import { registerAuditRoutes } from "./modules/audit/audit.routes";
 import { registerAuthRoutes } from "./modules/auth/auth.routes";
+import { registerBackupRoutes } from "./modules/backup/backup.routes";
 import { registerBillingRoutes } from "./modules/billing/billing.routes";
 import { registerInvoiceRoutes } from "./modules/billing/invoices.routes";
 import { registerCollectorBatchRoutes } from "./modules/collections/collector-batches.routes";
@@ -34,6 +35,7 @@ import { registerUserRoutes } from "./modules/users/users.routes";
 import { isAppError } from "./shared/errors";
 import { securityPlugin } from "./shared/plugins/security.plugin";
 import { validationPlugin } from "./shared/plugins/validation.plugin";
+import { startPermissionCacheRefresh, ensurePermissionCacheLoaded } from "./shared/rbac/permission-resolver";
 import { sendError } from "./shared/response";
 
 const isDevelopment = config.NODE_ENV === "development";
@@ -44,6 +46,35 @@ const loggerOptions: FastifyServerOptions["logger"] = isDevelopment
 
 /** Phase 9 §4: the largest JSON request body the API will accept (1 MB). */
 const JSON_BODY_LIMIT_BYTES = 1_048_576;
+
+/**
+ * Every route module the server registers, in registration order.
+ *
+ * Exported as data so the RBAC sweep test derives its module list from here rather
+ * than re-listing the modules by hand: a new module added to this array is swept
+ * automatically and cannot silently escape the authorization matrix.
+ */
+export const ROUTE_REGISTRARS: readonly ((
+  server: FastifyInstance
+) => Promise<void>)[] = [
+  registerHealthRoutes,
+  registerAuthRoutes,
+  registerUserRoutes,
+  registerPlanRoutes,
+  registerSubscriberRoutes,
+  registerServiceAccountRoutes,
+  registerBillingRoutes,
+  registerInvoiceRoutes,
+  registerPaymentRoutes,
+  registerLedgerRoutes,
+  registerCollectorBatchRoutes,
+  registerReceivablesRoutes,
+  registerDashboardRoutes,
+  registerReportRoutes,
+  registerAuditRoutes,
+  registerSystemRoutes,
+  registerBackupRoutes,
+];
 
 /**
  * Installs plugins and routes in the order they must run.
@@ -57,22 +88,9 @@ async function registerApplication(server: FastifyInstance): Promise<void> {
   validationPlugin(server);
   await securityPlugin(server);
 
-  await server.register(registerHealthRoutes);
-  await server.register(registerAuthRoutes);
-  await server.register(registerUserRoutes);
-  await server.register(registerPlanRoutes);
-  await server.register(registerSubscriberRoutes);
-  await server.register(registerServiceAccountRoutes);
-  await server.register(registerBillingRoutes);
-  await server.register(registerInvoiceRoutes);
-  await server.register(registerPaymentRoutes);
-  await server.register(registerLedgerRoutes);
-  await server.register(registerCollectorBatchRoutes);
-  await server.register(registerReceivablesRoutes);
-  await server.register(registerDashboardRoutes);
-  await server.register(registerReportRoutes);
-  await server.register(registerAuditRoutes);
-  await server.register(registerSystemRoutes);
+  for (const registerRoutes of ROUTE_REGISTRARS) {
+    await server.register(registerRoutes);
+  }
 }
 
 /** Creates the Fastify instance with every plugin, route, and error handler applied. */
@@ -107,6 +125,13 @@ export function buildServer(): FastifyInstance {
 
 async function startServer(): Promise<void> {
   const server = buildServer();
+
+  // Resolve the permission matrix from the RBAC tables (S1-2, S12-9) and AWAIT it
+  // before the first request is served, so there is no boot window in which
+  // authorization is unresolved. A failure leaves the cache failing closed rather
+  // than falling back to the compiled matrix.
+  await ensurePermissionCacheLoaded();
+  startPermissionCacheRefresh();
 
   // A fresh database is seeded with the default business rules. A failure must
   // not stop the server from starting: the health endpoint reports the database

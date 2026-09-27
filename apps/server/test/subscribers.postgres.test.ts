@@ -18,6 +18,7 @@ import { buildServer } from "../src/index.ts";
 import { closeDatabaseConnection, pool } from "../src/db/connection";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 import { deleteAuditLogsForUsers } from "./support/audit-cleanup";
+import { deleteLedgerEntriesForServiceAccounts } from "./support/ledger-cleanup";
 
 /** A valid bcrypt hash. The value is never checked in this test — only its shape. */
 const DUMMY_PASSWORD_HASH = "$2b$12$OMlJdIjzDLp3Jfn.9NR3qOBmwx5aLVRkyrFhSH6e5J1g.kCBMSeJe";
@@ -80,7 +81,14 @@ describe.skipIf(!databaseIsReachable)("Phase 3 against real PostgreSQL", () => {
   afterAll(async () => {
     // Remove this suite's rows in foreign-key order. Nothing else is touched.
     // Phase 4 rows reference the service account, so they go first.
-    await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
+    await deleteLedgerEntriesForServiceAccounts(createdIds.serviceAccountIds);
+    // S4-7/S4-8: suspension and reconnection records reference the service account,
+    // and a reconnection record references the reconnection-fee invoice, so they must
+    // go before the invoices they point at.
+    await pool.query("DELETE FROM reconnection_records WHERE service_account_id = ANY($1::uuid[])", [
+      createdIds.serviceAccountIds,
+    ]);
+    await pool.query("DELETE FROM suspension_records WHERE service_account_id = ANY($1::uuid[])", [
       createdIds.serviceAccountIds,
     ]);
     await pool.query(

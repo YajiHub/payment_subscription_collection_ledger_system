@@ -1,10 +1,11 @@
 // Builds the AR aging workbook for export.
 //
-// The numbers are written as WHOLE CENTAVOS so no peso amount is ever converted
-// through a floating-point value. The column headers say so explicitly.
+// The money columns carry INTEGER CENTAVOS and are written as formatted peso cells
+// (S6-4), so the spreadsheet shows human-readable amounts without any floating-point
+// arithmetic on the way.
 
 import type { ArAgingReport } from "./ar-aging.service";
-import { buildXlsxWorkbook, type XlsxRow } from "../../shared/xlsx/xlsx-writer";
+import { buildXlsxWorkbook, moneyCell, type XlsxRow } from "../../shared/xlsx/xlsx-writer";
 
 export const AR_AGING_EXPORT_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -20,36 +21,36 @@ export function buildArAgingRows(report: ArAgingReport): XlsxRow[] {
     "Subscriber",
     "Account #",
     "Plan",
-    "Current (centavos)",
-    "1-30 Days (centavos)",
-    "31-60 Days (centavos)",
-    "61-90 Days (centavos)",
-    "90+ Days (centavos)",
-    "Total (centavos)",
+    "Current",
+    "1-30 Days",
+    "31-60 Days",
+    "61-90 Days",
+    "90+ Days",
+    "Total",
   ];
 
   const detailRows: XlsxRow[] = report.entries.map((entry) => [
     entry.subscriberName,
     entry.serviceAccountNumber,
     entry.planName,
-    entry.currentCentavos,
-    entry.bucket_1_30_centavos,
-    entry.bucket_31_60_centavos,
-    entry.bucket_61_90_centavos,
-    entry.over_90_centavos,
-    entry.totalOutstandingCentavos,
+    moneyCell(entry.currentCentavos),
+    moneyCell(entry.bucket_1_30_centavos),
+    moneyCell(entry.bucket_31_60_centavos),
+    moneyCell(entry.bucket_61_90_centavos),
+    moneyCell(entry.over_90_centavos),
+    moneyCell(entry.totalOutstandingCentavos),
   ]);
 
   const totalsRow: XlsxRow = [
     "TOTAL",
     `${report.entries.length} account(s)`,
     "",
-    report.totals.current,
-    report.totals.bucket_1_30,
-    report.totals.bucket_31_60,
-    report.totals.bucket_61_90,
-    report.totals.over_90,
-    report.totals.grandTotal,
+    moneyCell(report.totals.current),
+    moneyCell(report.totals.bucket_1_30),
+    moneyCell(report.totals.bucket_31_60),
+    moneyCell(report.totals.bucket_61_90),
+    moneyCell(report.totals.over_90),
+    moneyCell(report.totals.grandTotal),
   ];
 
   return [

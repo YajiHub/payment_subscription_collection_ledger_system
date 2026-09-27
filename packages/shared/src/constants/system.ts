@@ -13,6 +13,14 @@ export const SYSTEM_SETTING_KEYS = {
   companyAddress: "company_address",
   companyPhone: "company_phone",
   receiptFooterText: "receipt_footer_text",
+  // Per-account login lockout (S5-5). The environment supplies the bootstrap
+  // defaults in config.ts; these rows let an administrator change them at runtime.
+  loginLockoutThreshold: "login_lockout_threshold",
+  loginLockoutCooldownMinutes: "login_lockout_cooldown_minutes",
+  // S12-9 rollback switch, seeded as "true" by migration 0009. When it is "true"
+  // authorization resolves from role_permissions; when it is missing or any other
+  // value, the compiled ROLE_PERMISSIONS matrix is used instead.
+  rbacPermissionsInDatabase: "rbac_permissions_in_database",
 } as const;
 
 export type SystemSettingKey = (typeof SYSTEM_SETTING_KEYS)[keyof typeof SYSTEM_SETTING_KEYS];
@@ -64,6 +72,18 @@ export const DEFAULT_SYSTEM_SETTINGS: readonly SystemSettingDefault[] = [
     key: SYSTEM_SETTING_KEYS.receiptFooterText,
     value: "Thank you for your payment!",
     description: "Message printed at the bottom of an Official Receipt",
+  },
+  {
+    key: SYSTEM_SETTING_KEYS.loginLockoutThreshold,
+    value: "5",
+    description:
+      "Failed logins for one account before it is locked (default 5; env LOGIN_LOCKOUT_THRESHOLD)",
+  },
+  {
+    key: SYSTEM_SETTING_KEYS.loginLockoutCooldownMinutes,
+    value: "15",
+    description:
+      "Minutes a locked account must wait before it can log in again (env LOGIN_LOCKOUT_COOLDOWN_MINUTES)",
   },
 ];
 

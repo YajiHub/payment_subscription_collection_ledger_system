@@ -12,6 +12,7 @@ import { and, asc, eq, gte, lte } from "drizzle-orm";
 
 import {
   isDebitLedgerEntryType,
+  type InvoiceStatus,
   type LedgerEntryType,
   type ServiceAccountStatus,
   type ServiceType,
@@ -62,6 +63,8 @@ export interface StatementOfAccountLine {
   balanceCentavos: number;
   /** The invoice or receipt number this entry came from, or "" for a manual entry. */
   referenceNumber: string;
+  /** The status of the invoice this line came from, or null for a payment entry. */
+  invoiceStatus: InvoiceStatus | null;
   entryType: LedgerEntryType;
 }
 
@@ -128,6 +131,7 @@ export async function getStatementOfAccount(
       runningBalanceCentavos: ledgerEntries.runningBalanceCentavos,
       description: ledgerEntries.description,
       invoiceNumber: invoices.invoiceNumber,
+      invoiceStatus: invoices.status,
       receiptNumber: payments.receiptNumber,
     })
     .from(ledgerEntries)
@@ -153,6 +157,7 @@ export async function getStatementOfAccount(
       creditCentavos: isDebit ? 0 : entry.amountCentavos,
       balanceCentavos: entry.runningBalanceCentavos,
       referenceNumber: entry.invoiceNumber ?? entry.receiptNumber ?? "",
+      invoiceStatus: entry.invoiceStatus ?? null,
       entryType: entry.entryType,
     };
   });

@@ -10,13 +10,11 @@
 
 import { and, eq, gt, inArray } from "drizzle-orm";
 
-import { classifyInvoiceAge, type AgingBucket } from "@bcis/shared";
+import { OUTSTANDING_INVOICE_STATUSES, classifyInvoiceAge, type AgingBucket } from "@bcis/shared";
 import { db, type DbExecutor } from "../../db/connection";
 import { invoices } from "../../db/schema/billing";
 import { serviceAccounts, subscribers, subscriptionPlans } from "../../db/schema/subscribers";
-
-/** Invoices that still owe money — the only ones aging applies to. */
-const OUTSTANDING_INVOICE_STATUSES = ["posted", "partially_paid", "overdue"] as const;
+import { accountFilterConditions, type ReportFilters } from "../reports/report-filters";
 
 /** What aging shows for one service account. */
 export interface AgingEntry {
@@ -136,9 +134,15 @@ export function buildAgingReport(
   return { entries, totals };
 }
 
-/** Loads every outstanding invoice with its subscriber and plan. */
+/**
+ * Loads every outstanding invoice with its subscriber and plan (S6-2).
+ *
+ * A collector, area, plan, or service-type filter becomes a condition in the SQL
+ * `where` clause, so a filtered aging report really does query fewer invoices.
+ */
 export async function loadOutstandingInvoices(
-  executor: DbExecutor = db
+  executor: DbExecutor = db,
+  filters: ReportFilters = {}
 ): Promise<OutstandingInvoiceAgingRow[]> {
   return executor
     .select({
@@ -159,7 +163,8 @@ export async function loadOutstandingInvoices(
     .where(
       and(
         inArray(invoices.status, [...OUTSTANDING_INVOICE_STATUSES]),
-        gt(invoices.remainingBalanceCentavos, 0)
+        gt(invoices.remainingBalanceCentavos, 0),
+        ...accountFilterConditions(filters)
       )
     );
 }
@@ -167,9 +172,10 @@ export async function loadOutstandingInvoices(
 /** Computes the AR aging report as of a given day (defaults to a caller-supplied one). */
 export async function computeArAging(
   asOfDate: Date,
-  executor: DbExecutor = db
+  executor: DbExecutor = db,
+  filters: ReportFilters = {}
 ): Promise<ArAgingReport> {
-  const invoiceRows = await loadOutstandingInvoices(executor);
+  const invoiceRows = await loadOutstandingInvoices(executor, filters);
   const { entries, totals } = buildAgingReport(invoiceRows, asOfDate);
 
   return { asOfDate: asOfDate.toISOString().slice(0, 10), entries, totals };

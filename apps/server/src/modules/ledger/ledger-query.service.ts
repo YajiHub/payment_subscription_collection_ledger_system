@@ -9,6 +9,7 @@ import { and, asc, count, desc, eq, gte, lte } from "drizzle-orm";
 
 import {
   isDebitLedgerEntryType,
+  type InvoiceStatus,
   type LedgerEntryDirection,
   type LedgerEntryType,
   type ServiceAccountStatus,
@@ -36,6 +37,8 @@ export interface LedgerEntrySummary {
   invoiceId: string | null;
   paymentId: string | null;
   referenceNumber: string;
+  /** The status of the invoice this entry came from, or null for a payment entry. */
+  invoiceStatus: InvoiceStatus | null;
   createdBy: string;
 }
 
@@ -104,6 +107,7 @@ export async function listLedgerEntries(
       paymentId: ledgerEntries.paymentId,
       createdBy: ledgerEntries.createdBy,
       invoiceNumber: invoices.invoiceNumber,
+      invoiceStatus: invoices.status,
       receiptNumber: payments.receiptNumber,
     })
     .from(ledgerEntries)
@@ -135,6 +139,7 @@ export async function listLedgerEntries(
       invoiceId: row.invoiceId,
       paymentId: row.paymentId,
       referenceNumber: row.invoiceNumber ?? row.receiptNumber ?? "",
+      invoiceStatus: row.invoiceStatus ?? null,
       createdBy: row.createdBy,
     };
   });

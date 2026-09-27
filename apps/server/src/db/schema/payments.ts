@@ -15,7 +15,7 @@
 //     allocatedCentavos + advanceCreditCentavos === amountCentavos
 // The allocation service guarantees it, and the allocation invariant test pins it.
 
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   date,
   index,
@@ -33,20 +33,33 @@ import { serviceAccounts } from "./subscribers";
 import { users } from "./users";
 
 // ─── Payment Method ───────────────────────────────────────────────────────────
-// Mirrors PAYMENT_METHODS in the shared package. Check and bank transfer are
-// reserved for later phases; the API only accepts cash and GCash today.
+// Mirrors PAYMENT_METHODS in the shared package. All five methods section 3.6
+// requires are postable: cash, GCash, bank transfer, cheque (`check` has been the
+// stored spelling since migration 0004) and other.
 export const paymentMethodEnum = pgEnum("payment_method", [
   "cash",
   "gcash",
   "check",
   "bank_transfer",
+  "other",
 ]);
 
 // ─── Payment Status ───────────────────────────────────────────────────────────
 // Mirrors PAYMENT_STATUSES in the shared package.
+//
+//   pending_verification — a GCash payment recorded but not yet confirmed by a
+//                          verifier. It has no allocations, no ledger entries and
+//                          no invoice changes, so it cannot move a balance (S3-2).
+//   posted               — the money is received. For GCash this is the state the
+//                          verifier moves it to, and `gcash_payments.verified_at` /
+//                          `verified_by` then record who confirmed it (S3-3).
+//   reversed             — corrected by a reversal — see payment_reversals.
+//   rejected             — a GCash payment a verifier refused, with a reason.
 export const paymentStatusEnum = pgEnum("payment_status", [
-  "posted", // Normal, active payment
-  "reversed", // Corrected by a reversal — see payment_reversals
+  "pending_verification",
+  "posted",
+  "reversed",
+  "rejected",
 ]);
 
 // ─── Payments ─────────────────────────────────────────────────────────────────
@@ -93,32 +106,60 @@ export const payments = pgTable(
     // The history screen filters by account and by date; both are cheap with this.
     index("payments_service_account_idx").on(table.serviceAccountId),
     index("payments_payment_date_idx").on(table.paymentDate),
+    // S12-4: a receipt number read off a printed OR is searched as a substring.
+    index("payments_receipt_number_trgm_idx").using(
+      "gin",
+      sql`${table.receiptNumber} gin_trgm_ops`
+    ),
   ]
 );
 
 // ─── GCash Payment Details ────────────────────────────────────────────────────
 // GCash-specific details. One row per GCash payment.
-export const gcashPayments = pgTable("gcash_payments", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  paymentId: uuid("payment_id")
-    .notNull()
-    .unique()
-    .references(() => payments.id),
+export const gcashPayments = pgTable(
+  "gcash_payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    paymentId: uuid("payment_id")
+      .notNull()
+      .unique()
+      .references(() => payments.id),
 
-  // The reference number from GCash. UNIQUE system-wide: this constraint is the
-  // primary duplicate-detection mechanism, so the same reference can never be
-  // posted twice even under concurrent requests.
-  gcashReferenceNumber: varchar("gcash_reference_number", { length: 50 }).notNull().unique(),
+    // The reference number from GCash. UNIQUE system-wide: this constraint is the
+    // primary duplicate-detection mechanism, so the same reference can never be
+    // posted twice even under concurrent requests.
+    gcashReferenceNumber: varchar("gcash_reference_number", { length: 50 }).notNull().unique(),
 
-  senderGcashNumber: varchar("sender_gcash_number", { length: 20 }),
-  senderName: varchar("sender_name", { length: 100 }),
+    senderGcashNumber: varchar("sender_gcash_number", { length: 20 }),
+    senderName: varchar("sender_name", { length: 100 }),
 
-  // Path to the uploaded screenshot proof, relative to the uploads directory.
-  screenshotFilePath: text("screenshot_file_path"),
+    // Path to the uploaded screenshot proof, relative to the uploads directory.
+    // A screenshot is PROOF OF A CLAIM, never proof of payment: only a verifier's
+    // confirmation moves the payment to `posted`, so an image alone can never mark
+    // an account paid (section 3.7).
+    screenshotFilePath: text("screenshot_file_path"),
 
-  verifiedAt: timestamp("verified_at", { withTimezone: true }),
-  verifiedBy: uuid("verified_by").references(() => users.id),
-});
+    // Who confirmed the transfer, and when. Written by the verify step (S3-3), and
+    // retained afterwards as history — a later reversal does not erase the fact
+    // that this person verified it.
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    verifiedBy: uuid("verified_by").references(() => users.id),
+
+    // Who refused the claim, and why. A rejection is final for this row; the
+    // invoice is untouched because a pending GCash payment never touched it.
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    rejectedBy: uuid("rejected_by").references(() => users.id),
+    rejectionReason: text("rejection_reason"),
+  },
+  (table) => [
+    // S12-4: verifiers search the queue by the reference number they were given
+    // on the phone, which is a substring match on a unique btree key.
+    index("gcash_payments_reference_trgm_idx").using(
+      "gin",
+      sql`${table.gcashReferenceNumber} gin_trgm_ops`
+    ),
+  ]
+);
 
 // ─── Payment Allocations ──────────────────────────────────────────────────────
 // Exactly how a payment was spread across invoices. This is the bridge between

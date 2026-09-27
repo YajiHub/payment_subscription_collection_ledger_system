@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { listLedgerQuerySchema, manualLedgerEntrySchema, statementQuerySchema } from "@bcis/shared";
 import { db } from "../../db/connection";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
 import {
@@ -102,6 +103,19 @@ export async function postManualLedgerEntryHandler(
     const balance = await getServiceAccountBalance(body.serviceAccountId, tx);
     return { entryId, balanceCentavos: balance.balanceCentavos };
   });
+
+  // S5-6: a manual debit/credit is the one ledger write an operator makes by hand,
+  // so it is recorded with its reason, actor, amount and account.
+  await audit.manualLedgerEntryPosted(
+    {
+      entryId: result.entryId,
+      serviceAccountId: body.serviceAccountId,
+      entryType: body.entryType,
+      amountCentavos: body.amountCentavos,
+    },
+    body.reason,
+    requestActor(request)
+  );
 
   return sendSuccess(reply, result, 201);
 }

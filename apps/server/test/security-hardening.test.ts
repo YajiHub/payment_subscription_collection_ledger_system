@@ -377,12 +377,14 @@ describe("rate limiting and transport hardening", () => {
   it("blocks the eleventh login attempt within the window with 429", async () => {
     const server = await createServer();
 
+    // Each attempt uses a different username so the per-account lockout (S5-5), a
+    // separate control, does not interfere with the per-IP limit this test proves.
     for (let attempt = 1; attempt <= 10; attempt++) {
       fakeDatabase.queueSelectRows([]); // no such user
       const response = await server.inject({
         method: "POST",
         url: "/api/auth/login",
-        payload: { username: "brute-force", password: "guess" },
+        payload: { username: `brute-force-${attempt}`, password: "guess" },
       });
       expect(response.statusCode, `attempt ${attempt}`).toBe(401);
     }
@@ -390,7 +392,7 @@ describe("rate limiting and transport hardening", () => {
     const blocked = await server.inject({
       method: "POST",
       url: "/api/auth/login",
-      payload: { username: "brute-force", password: "guess" },
+      payload: { username: "brute-force-11", password: "guess" },
     });
 
     expect(blocked.statusCode).toBe(429);

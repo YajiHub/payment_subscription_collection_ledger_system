@@ -3,10 +3,13 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
+import { SYSTEM_SETTING_KEYS } from "@bcis/shared";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
+import { invalidatePermissionCache, refreshPermissionCache } from "../../shared/rbac/permission-resolver";
 import { getExtendedHealth } from "./system-health.service";
-import { listSystemSettings, updateSystemSettings } from "./system-settings.service";
+import { getSystemSettingsMap, listSystemSettings, updateSystemSettings } from "./system-settings.service";
 
 // Exported so the route table can declare it as the route's Zod schema, which
 // makes Fastify reject an invalid body before this handler runs.
@@ -37,7 +40,27 @@ export async function putSystemSettingsHandler(
 ): Promise<FastifyReply> {
   const body = parseOrThrow(updateSystemSettingsBodySchema, request.body);
   const updatedByUserId = request.user?.id ?? "";
+
+  // Snapshot the current values so the audit trail can record old AND new for
+  // each changed setting (S5-6).
+  const previousValues = await getSystemSettingsMap();
+
   const items = await updateSystemSettings(body.settings, updatedByUserId);
+
+  for (const update of body.settings) {
+    const previousValue = previousValues[update.key] ?? null;
+    if (previousValue !== update.value) {
+      await audit.systemSettingUpdated(update.key, previousValue, update.value, requestActor(request));
+    }
+
+    // S12-9: flipping the rollback switch must take effect immediately, not on the
+    // next TTL tick. Clearing the cache re-resolves from the new source of truth.
+    if (update.key === SYSTEM_SETTING_KEYS.rbacPermissionsInDatabase) {
+      invalidatePermissionCache();
+      void refreshPermissionCache({ force: true });
+    }
+  }
+
   return sendSuccess(reply, { items });
 }
 

@@ -10,7 +10,9 @@ import { authenticate } from "../../shared/middleware/authenticate";
 import { authorize } from "../../shared/middleware/authorize";
 import {
   getServiceAccount,
+  getSuspensionCandidates,
   postServiceAccount,
+  postSuspensionRun,
   putServiceAccountCollector,
   putServiceAccountPlan,
   putServiceAccountReconnected,
@@ -24,6 +26,21 @@ export async function registerServiceAccountRoutes(server: FastifyInstance): Pro
   const suspend = { preHandler: [authenticate, authorize("subscribers:suspend")] };
   const reconnect = { preHandler: [authenticate, authorize("subscribers:reconnect")] };
   const update = { preHandler: [authenticate, authorize("subscribers:update")] };
+
+  // S4-7: threshold preview and the explicit run. Both are declared before the
+  // ":id" routes so the literal "suspension-candidates" segment is never mistaken
+  // for a service account id. Looking at the candidates is a read; running the
+  // suspensions needs the suspend permission.
+  server.get(
+    "/api/service-accounts/suspension-candidates",
+    read,
+    getSuspensionCandidates
+  );
+  server.post(
+    "/api/service-accounts/suspension-candidates/run",
+    suspend,
+    postSuspensionRun
+  );
 
   server.get("/api/service-accounts/:id", read, getServiceAccount);
 

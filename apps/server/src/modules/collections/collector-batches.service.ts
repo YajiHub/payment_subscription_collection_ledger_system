@@ -22,6 +22,7 @@ import {
   type CollectedMethod,
   type CollectorBatchStatus,
   type UserRole,
+  isAllowedCollectorBatchTransition,
   isMoneyCollectionResult,
 } from "@bcis/shared";
 import { db, type DbExecutor } from "../../db/connection";
@@ -29,6 +30,7 @@ import { invoices } from "../../db/schema/billing";
 import {
   batchAssignments,
   collectorBatches,
+  collectorRemittances,
   type BatchAssignment,
   type CollectorBatch,
 } from "../../db/schema/collections";
@@ -77,6 +79,25 @@ export interface CollectorBatchSummary {
   createdAt: Date;
   submittedAt: Date | null;
   reconciledAt: Date | null;
+  closedAt: Date | null;
+}
+
+/**
+ * The batch's money split by method (S4-4).
+ *
+ * `expectedReceivable` is what the collector was sent to collect (the outstanding
+ * balances of the assigned accounts). The collected total is split into cash and
+ * non-cash (everything that is not cash — GCash today); `uncollected` is what the
+ * collector did not bring back. By construction:
+ *   cash + nonCash = collected, and collected + uncollected = expectedReceivable.
+ */
+export interface BatchMethodSummary {
+  expectedReceivableCentavos: number;
+  cashCollectedCentavos: number;
+  gcashCollectedCentavos: number;
+  nonCashCollectedCentavos: number;
+  collectedTotalCentavos: number;
+  uncollectedCentavos: number;
 }
 
 /** One assigned service account and the collector's result for it. */
@@ -101,6 +122,8 @@ export interface CollectorBatchDetail extends CollectorBatchSummary {
   assignments: BatchAssignmentSummary[];
   collectedTotalCentavos: number;
   outstandingTotalCentavos: number;
+  /** S4-4: the money split by method, always consistent with the assignments. */
+  methodSummary: BatchMethodSummary;
 }
 
 export interface ListCollectorBatchesFilters {
@@ -125,7 +148,7 @@ export interface CreateCollectorBatchInput {
   serviceAccountIds: string[];
 }
 
-const OUTSTANDING_INVOICE_STATUSES = ["posted", "partially_paid", "overdue"] as const;
+const OUTSTANDING_INVOICE_STATUSES = ["unpaid", "partially_paid", "overdue"] as const;
 
 /**
  * Rejects a batch a Collector does not own, by pretending it does not exist.
@@ -296,6 +319,7 @@ function toCollectorBatchSummary(
     createdAt: batch.createdAt,
     submittedAt: batch.submittedAt,
     reconciledAt: batch.reconciledAt,
+    closedAt: batch.closedAt,
   };
 }
 
@@ -408,6 +432,7 @@ export async function createCollectorBatch(
       assignments: [],
       collectedTotalCentavos: 0,
       outstandingTotalCentavos: 0,
+      methodSummary: buildMethodSummary([]),
     };
   });
 }
@@ -480,6 +505,54 @@ export interface RecordCollectionCommand {
   gcash?: { referenceNumber: string; senderName?: string; senderGcashNumber?: string };
 }
 
+/** Splits a batch's assignments into the S4-4 method summary. Pure arithmetic. */
+function buildMethodSummary(assignments: readonly BatchAssignmentSummary[]): BatchMethodSummary {
+  let expectedReceivableCentavos = 0;
+  let cashCollectedCentavos = 0;
+  let gcashCollectedCentavos = 0;
+  let nonCashCollectedCentavos = 0;
+  let collectedTotalCentavos = 0;
+
+  for (const assignment of assignments) {
+    const amountCentavos = assignment.collectedAmountCentavos ?? 0;
+
+    expectedReceivableCentavos += assignment.outstandingBalanceCentavos;
+    collectedTotalCentavos += amountCentavos;
+
+    if (assignment.collectedMethod === "cash") {
+      cashCollectedCentavos += amountCentavos;
+    } else if (assignment.collectedMethod !== null) {
+      // Every other field method is non-cash; GCash is the only one today.
+      nonCashCollectedCentavos += amountCentavos;
+      if (assignment.collectedMethod === "gcash") {
+        gcashCollectedCentavos += amountCentavos;
+      }
+    }
+  }
+
+  return {
+    expectedReceivableCentavos,
+    cashCollectedCentavos,
+    gcashCollectedCentavos,
+    nonCashCollectedCentavos,
+    collectedTotalCentavos,
+    uncollectedCentavos: expectedReceivableCentavos - collectedTotalCentavos,
+  };
+}
+
+/**
+ * Records a batch transition, rejecting one the state machine does not allow.
+ *
+ * Kept in one place so each step (start, submit, remit, reconcile, close) shares
+ * the same conflict message and the transitions are provably the table in
+ * packages/shared rather than a literal per call site.
+ */
+function requireTransition(from: CollectorBatchStatus, to: CollectorBatchStatus): void {
+  if (!isAllowedCollectorBatchTransition(from, to)) {
+    throw new ConflictError(`A ${from} batch cannot move to ${to}`);
+  }
+}
+
 /**
  * Records what the collector found at one subscriber and, when money changed hands,
  * creates the official payment (with its allocations, receipt, and ledger credits)
@@ -500,8 +573,18 @@ export async function recordCollection(
     const batch = await requireBatchForUpdate(tx, batchId);
     assertBatchIsVisible(batch, actor);
 
-    if (batch.status !== "open") {
-      throw new ConflictError("Collections can only be recorded on an open batch");
+    if (batch.status !== "open" && batch.status !== "in_progress") {
+      throw new ConflictError("Collections can only be recorded on an open or in-progress batch");
+    }
+
+    // Recording the first collection is what starts the run: the batch moves from
+    // `open` to `in_progress` in the same transaction as the collection.
+    if (batch.status === "open") {
+      requireTransition("open", "in_progress");
+      await tx
+        .update(collectorBatches)
+        .set({ status: "in_progress" })
+        .where(eq(collectorBatches.id, batchId));
     }
 
     const assignment = await requireAssignmentForUpdate(tx, batchId, serviceAccountId);
@@ -577,8 +660,8 @@ export async function voidCollection(
   return db.transaction(async (tx) => {
     const batch = await requireBatchForUpdate(tx, batchId);
 
-    if (batch.status !== "open") {
-      throw new ConflictError("A collection can only be voided on an open batch");
+    if (batch.status !== "open" && batch.status !== "in_progress") {
+      throw new ConflictError("A collection can only be voided on an open or in-progress batch");
     }
 
     const assignment = await requireAssignmentForUpdate(tx, batchId, serviceAccountId);
@@ -620,32 +703,150 @@ export async function voidCollection(
   });
 }
 
-export interface SubmitRemittanceResult {
+export interface SubmitBatchResult {
   batchId: string;
+  status: CollectorBatchStatus;
+  submittedAt: Date;
+  assignmentCount: number;
   expectedRemittanceCentavos: number;
-  actualRemittanceCentavos: number;
-  varianceCentavos: number;
-  hasVariance: boolean;
 }
 
 /**
- * Records the cash the collector actually handed in and freezes the batch.
+ * Declares the field run finished.
  *
- * Variance is `actual - expected`: positive means the collector handed in more
- * (overage), negative means less (shortage). It is stored as-is. Only an open batch
- * can be submitted, so re-submitting is a conflict rather than a second transition.
+ * Submitting freezes the collections: no assignment may be recorded or voided once
+ * the batch is submitted. It deliberately carries NO amount — the cash handed in is
+ * the separate remittance step (see `recordBatchRemittance`), so the two actions
+ * cannot be confused. Allowed from `open` (nothing collected) or `in_progress`.
  */
-export async function submitBatchRemittance(
-  batchId: string,
-  actualRemittanceCentavos: number,
-  actor: BatchActor
-): Promise<SubmitRemittanceResult> {
+export async function submitBatch(batchId: string, actor: BatchActor): Promise<SubmitBatchResult> {
   return db.transaction(async (tx) => {
     const batch = await requireBatchForUpdate(tx, batchId);
     assertBatchIsVisible(batch, actor);
 
-    if (batch.status !== "open") {
-      throw new ConflictError("Only an open batch can be submitted for remittance");
+    requireTransition(batch.status, "submitted");
+
+    const submittedAt = new Date();
+    const updated = await tx
+      .update(collectorBatches)
+      .set({ status: "submitted", submittedAt })
+      .where(eq(collectorBatches.id, batchId))
+      .returning()
+      .then((rows) => rows[0]);
+
+    if (updated === undefined) {
+      throw new NotFoundError("Collector batch not found");
+    }
+
+    const assignments = await tx
+      .select({ id: batchAssignments.id })
+      .from(batchAssignments)
+      .where(eq(batchAssignments.batchId, batchId));
+
+    return {
+      batchId,
+      status: "submitted" as const,
+      submittedAt,
+      assignmentCount: assignments.length,
+      expectedRemittanceCentavos: updated.expectedRemittanceCentavos,
+    };
+  });
+}
+
+export interface RemitBatchResult {
+  batchId: string;
+  remittanceId: string;
+  status: CollectorBatchStatus;
+  expectedRemittanceCentavos: number;
+  actualRemittanceCentavos: number;
+  varianceCentavos: number;
+  hasVariance: boolean;
+  remittanceCount: number;
+}
+
+export interface RecordRemittanceCommand {
+  /** The total handed in. Negative only when correcting an earlier remittance. */
+  amountCentavos: number;
+  cashAmountCentavos?: number;
+  gcashAmountCentavos?: number;
+  notes?: string;
+}
+
+/**
+ * Records one hand-in of cash against a submitted batch (S4-2).
+ *
+ * A batch may be remitted more than once (a collector paying in instalments), and a
+ * correction is an offsetting row BESIDE the one it fixes, never an edit — the rows
+ * are the history a report and an auditor read. The batch-level
+ * `actualRemittanceCentavos` is the signed sum of those rows and the variance is
+ * `actual - expected`, both recomputed in the same transaction, so the column can
+ * never drift from the history.
+ *
+ * Allowed while the batch is `submitted` (the first remittance moves it to
+ * `remitted`) or already `remitted` (an instalment or a correction).
+ */
+export async function recordBatchRemittance(
+  batchId: string,
+  command: RecordRemittanceCommand,
+  actor: BatchActor
+): Promise<RemitBatchResult> {
+  return db.transaction(async (tx) => {
+    const batch = await requireBatchForUpdate(tx, batchId);
+    assertBatchIsVisible(batch, actor);
+
+    if (batch.status !== "submitted" && batch.status !== "remitted") {
+      throw new ConflictError("Only a submitted batch can be remitted");
+    }
+    if (batch.status === "submitted") {
+      requireTransition("submitted", "remitted");
+    }
+
+    if (!Number.isInteger(command.amountCentavos) || command.amountCentavos === 0) {
+      throw new ValidationError("A non-zero whole-centavo remittance amount is required");
+    }
+
+    // A split is optional: with neither half supplied the whole amount is cash, and
+    // with one half supplied the other is the remainder.
+    const cashAmountCentavos =
+      command.cashAmountCentavos ?? command.amountCentavos - (command.gcashAmountCentavos ?? 0);
+    const gcashAmountCentavos = command.amountCentavos - cashAmountCentavos;
+
+    if (cashAmountCentavos + gcashAmountCentavos !== command.amountCentavos) {
+      throw new ValidationError("The cash and GCash split must add up to the remittance amount");
+    }
+
+    const existingRows = await tx
+      .select({ amountCentavos: collectorRemittances.amountCentavos })
+      .from(collectorRemittances)
+      .where(eq(collectorRemittances.batchId, batchId));
+
+    const previousTotalCentavos = existingRows.reduce(
+      (runningTotal, row) => runningTotal + row.amountCentavos,
+      0
+    );
+    const actualRemittanceCentavos = previousTotalCentavos + command.amountCentavos;
+
+    if (actualRemittanceCentavos < 0) {
+      throw new ValidationError(
+        "A remittance correction cannot take the batch total below zero"
+      );
+    }
+
+    const inserted = await tx
+      .insert(collectorRemittances)
+      .values({
+        batchId,
+        amountCentavos: command.amountCentavos,
+        cashAmountCentavos,
+        gcashAmountCentavos,
+        remittedBy: actor.id,
+        notes: command.notes ?? null,
+      })
+      .returning()
+      .then((rows) => rows[0]);
+
+    if (inserted === undefined) {
+      throw new NotFoundError("The remittance could not be recorded");
     }
 
     const varianceCentavos = actualRemittanceCentavos - batch.expectedRemittanceCentavos;
@@ -653,21 +854,78 @@ export async function submitBatchRemittance(
     await tx
       .update(collectorBatches)
       .set({
-        status: "submitted",
+        status: "remitted",
         actualRemittanceCentavos,
         varianceCentavos,
-        submittedAt: new Date(),
+        submittedAt: batch.submittedAt ?? new Date(),
       })
       .where(eq(collectorBatches.id, batchId));
 
     return {
       batchId,
+      remittanceId: inserted.id,
+      status: "remitted" as const,
       expectedRemittanceCentavos: batch.expectedRemittanceCentavos,
       actualRemittanceCentavos,
       varianceCentavos,
       hasVariance: varianceCentavos !== 0,
+      remittanceCount: existingRows.length + 1,
     };
   });
+}
+
+export interface BatchRemittanceSummary {
+  id: string;
+  batchId: string;
+  amountCentavos: number;
+  cashAmountCentavos: number;
+  gcashAmountCentavos: number;
+  remittedById: string;
+  remittedByName: string;
+  remittedAt: Date;
+  notes: string | null;
+}
+
+/**
+ * The remittances recorded against a batch, newest first (S4-2).
+ *
+ * This is the history the batch-level total is derived from, so a collector who paid
+ * in twice, or a correction, is visible rather than collapsed into one number.
+ */
+export async function listBatchRemittances(
+  batchId: string,
+  actor: BatchActor
+): Promise<BatchRemittanceSummary[]> {
+  const batch = await db
+    .select()
+    .from(collectorBatches)
+    .where(eq(collectorBatches.id, batchId))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (batch === undefined) {
+    throw new NotFoundError("Collector batch not found");
+  }
+  assertBatchIsVisible(batch, actor);
+
+  const rows = await db
+    .select({
+      id: collectorRemittances.id,
+      batchId: collectorRemittances.batchId,
+      amountCentavos: collectorRemittances.amountCentavos,
+      cashAmountCentavos: collectorRemittances.cashAmountCentavos,
+      gcashAmountCentavos: collectorRemittances.gcashAmountCentavos,
+      remittedById: collectorRemittances.remittedBy,
+      remittedByName: users.fullName,
+      remittedAt: collectorRemittances.remittedAt,
+      notes: collectorRemittances.notes,
+    })
+    .from(collectorRemittances)
+    .innerJoin(users, eq(collectorRemittances.remittedBy, users.id))
+    .where(eq(collectorRemittances.batchId, batchId))
+    .orderBy(desc(collectorRemittances.remittedAt));
+
+  return rows;
 }
 
 export interface ReconcileBatchResult {
@@ -682,12 +940,14 @@ export interface ReconcileBatchResult {
 }
 
 /**
- * Closes a submitted batch, requiring an explanation for any variance.
+ * Reconciles a REMITTED batch, requiring an explanation for any variance (AT-08).
  *
- * Reconciliation cannot precede remittance and cannot be applied twice: only a
- * "submitted" batch may be reconciled. The ledger totals of the batch's payments
- * are recomputed and returned so the office can see that the money the batch
- * represents really reached the ledger.
+ * Reconciliation cannot precede remittance and cannot be applied twice. A shortage
+ * is stored as the variance it is; it is never silently balanced, and the missing
+ * explanation is refused before the status changes. The ledger totals of the batch's
+ * payments are recomputed and returned so the office can see that the money the
+ * batch represents really reached the ledger. The final sign-off is a SEPARATE
+ * action (`closeBatch`), not part of this call.
  */
 export async function reconcileBatch(
   batchId: string,
@@ -697,9 +957,7 @@ export async function reconcileBatch(
   return db.transaction(async (tx) => {
     const batch = await requireBatchForUpdate(tx, batchId);
 
-    if (batch.status !== "submitted") {
-      throw new ConflictError("Only a submitted batch can be reconciled");
-    }
+    requireTransition(batch.status, "reconciled");
 
     const varianceCentavos = batch.varianceCentavos ?? 0;
     const trimmedNotes = varianceNotes?.trim() ?? "";
@@ -738,6 +996,51 @@ export async function reconcileBatch(
       actualRemittanceCentavos: batch.actualRemittanceCentavos ?? 0,
       ledgerCreditTotalCentavos,
       ledgerReconciles: ledgerCreditTotalCentavos === batch.expectedRemittanceCentavos,
+    };
+  });
+}
+
+export interface CloseBatchResult {
+  batchId: string;
+  batchNumber: string;
+  status: CollectorBatchStatus;
+  closedAt: Date;
+  varianceCentavos: number;
+  reconciledAt: Date | null;
+}
+
+/**
+ * Finally signs off a RECONCILED batch (S4-1/S4-2).
+ *
+ * Closing is deliberately its own endpoint and its own authorized action: an office
+ * clerk reconciles the money, a supervisor closes the batch after reviewing it. The
+ * state machine refuses a close that has not been reconciled first.
+ */
+export async function closeBatch(batchId: string, actor: BatchActor): Promise<CloseBatchResult> {
+  return db.transaction(async (tx) => {
+    const batch = await requireBatchForUpdate(tx, batchId);
+
+    requireTransition(batch.status, "closed");
+
+    const closedAt = new Date();
+    const updated = await tx
+      .update(collectorBatches)
+      .set({ status: "closed", closedAt, closedBy: actor.id })
+      .where(eq(collectorBatches.id, batchId))
+      .returning()
+      .then((rows) => rows[0]);
+
+    if (updated === undefined) {
+      throw new NotFoundError("Collector batch not found");
+    }
+
+    return {
+      batchId,
+      batchNumber: updated.batchNumber,
+      status: "closed" as const,
+      closedAt,
+      varianceCentavos: updated.varianceCentavos ?? 0,
+      reconciledAt: updated.reconciledAt,
     };
   });
 }
@@ -1011,5 +1314,6 @@ async function loadBatchDetail(
     assignments,
     collectedTotalCentavos,
     outstandingTotalCentavos,
+    methodSummary: buildMethodSummary(assignments),
   };
 }

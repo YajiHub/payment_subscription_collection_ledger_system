@@ -50,6 +50,10 @@ const debitTypeList = sql.join(
 
 const balanceExpression = sql<number>`coalesce(sum(case when ${ledgerEntries.entryType} in (${debitTypeList}) then ${ledgerEntries.amountCentavos} else -${ledgerEntries.amountCentavos} end), 0)`;
 
+// The same direction rule, but only for the debit side: what one invoice has
+// charged the account. Used by the void workflow to credit back no more than this.
+const invoiceDebitExpression = sql<number>`coalesce(sum(case when ${ledgerEntries.entryType} in (${debitTypeList}) then ${ledgerEntries.amountCentavos} else 0 end), 0)`;
+
 /** The balance and the next sequence number a writer needs, from the latest entry. */
 interface LedgerState {
   balanceCentavos: number;
@@ -330,17 +334,33 @@ export async function recordInvoicePosted(
   return inserted?.id ?? "";
 }
 
-/** Records the credit that reverses a voided invoice. The invoice row is kept. */
+/**
+ * Records the credit that reverses a voided invoice. The invoice row is kept.
+ *
+ * The amount comes from the ledger (`getInvoiceDebitedCentavos`), never from
+ * `invoice.totalAmountCentavos`: the invoice's total says what it WOULD cost, while
+ * the ledger says what it actually owes — the two differ for a draft that was never
+ * posted, which is exactly the case that must not be credited.
+ */
 export async function recordInvoiceVoided(
   executor: DbExecutor,
   invoice: InvoiceForLedger,
   reason: string,
   createdByUserId: string
 ): Promise<string> {
+  // Credit back exactly what this invoice actually debited, never more. A draft that
+  // was never posted debited nothing, so it is voided with no ledger entry at all;
+  // a draft an advance credit already paid down debited exactly that much.
+  const debitedCentavos = await getInvoiceDebitedCentavos(executor, invoice);
+
+  if (debitedCentavos <= 0) {
+    return "";
+  }
+
   const entry = await buildLedgerEntry(executor, {
     serviceAccountId: invoice.serviceAccountId,
     entryType: "invoice_void",
-    amountCentavos: invoice.totalAmountCentavos,
+    amountCentavos: debitedCentavos,
     description: `Invoice ${invoice.invoiceNumber} Voided — ${reason}`,
     invoiceId: invoice.id,
     createdByUserId,
@@ -353,6 +373,35 @@ export async function recordInvoiceVoided(
     .then((rows) => rows[0]);
 
   return inserted?.id ?? "";
+}
+
+/**
+ * What this invoice has ACTUALLY debited to the ledger.
+ *
+ * An invoice debits the ledger when it is posted (its still-owed balance), when an
+ * advance credit is applied to it while it is still a draft, and when a late fee is
+ * charged against it. A draft that was never posted and was never touched by an
+ * advance credit has debited nothing, so this is 0.
+ *
+ * This is the amount a void may credit: money that never reached the ledger must
+ * never be credited back out of it, or the account's balance would fall below what
+ * it owed before the invoice existed.
+ */
+async function getInvoiceDebitedCentavos(
+  executor: DbExecutor,
+  invoice: { id: string; serviceAccountId: string }
+): Promise<number> {
+  const rows = await executor
+    .select({ debitedCentavos: invoiceDebitExpression })
+    .from(ledgerEntries)
+    .where(
+      and(
+        eq(ledgerEntries.serviceAccountId, invoice.serviceAccountId),
+        eq(ledgerEntries.invoiceId, invoice.id)
+      )
+    );
+
+  return Number(rows[0]?.debitedCentavos ?? 0);
 }
 
 /** Records the debit created when a late fee is added to an overdue invoice. */

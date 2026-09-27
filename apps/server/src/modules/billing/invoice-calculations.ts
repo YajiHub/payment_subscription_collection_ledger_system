@@ -6,6 +6,14 @@
 // Invariant: totalAmountCentavos === subtotalCentavos + lateFeesCentavos, and it
 // also equals the sum of every line item's total. All arithmetic is integer
 // centavos, so it is exact.
+//
+// ROUNDING RULE (section 3.4 / S2-3)
+// --------------------------------
+// A percentage-based line (a discount, for example) may not divide evenly into
+// centavos. The rule is: round the exact result HALF AWAY FROM ZERO, apply the
+// rounding ONCE PER LINE, then sum the already-rounded line totals. Rounding is
+// done in integer arithmetic only — no float is ever introduced — so the same
+// inputs always produce the same cents on every machine.
 
 import { getMonthYearLabel } from "@bcis/shared";
 
@@ -74,6 +82,93 @@ export function buildReconnectionFeeLineItem(
     quantity: 1,
     unitAmountCentavos: reconnectionFeeCentavos,
     totalAmountCentavos: reconnectionFeeCentavos,
+  };
+}
+
+/** An installation fee line, charged once when a service account is installed. */
+export function buildInstallationFeeLineItem(
+  planName: string,
+  installationFeeCentavos: number
+): InvoiceLineItemDraft {
+  return {
+    description: `Installation Fee — ${planName}`,
+    quantity: 1,
+    unitAmountCentavos: installationFeeCentavos,
+    totalAmountCentavos: installationFeeCentavos,
+  };
+}
+
+/**
+ * A discount line. The amount is stored as a NEGATIVE line total so it reduces the
+ * invoice when the line totals are summed, exactly like any other charge math.
+ */
+export function buildDiscountLineItem(
+  reason: string,
+  discountCentavos: number
+): InvoiceLineItemDraft {
+  return {
+    description: `Discount — ${reason}`,
+    quantity: 1,
+    unitAmountCentavos: -discountCentavos,
+    totalAmountCentavos: -discountCentavos,
+  };
+}
+
+/**
+ * Divides two integers and rounds the exact result half away from zero.
+ *
+ * Integer arithmetic only, so no float ever touches a money value:
+ * `(2 * |n| + |d|) / (2 * |d|)` is the half-away-from-zero rounding of `|n| / |d|`.
+ * Signs are applied afterwards, so 1/2 → 1, -1/2 → -1 and 3/2 → 2.
+ */
+export function divideRoundingHalfAwayFromZero(numerator: number, denominator: number): number {
+  if (denominator === 0) {
+    throw new Error("Cannot divide a money amount by zero");
+  }
+
+  const isNegative = numerator < 0 !== denominator < 0;
+  const absoluteNumerator = Math.abs(numerator);
+  const absoluteDenominator = Math.abs(denominator);
+  const roundedMagnitude = Math.floor(
+    (2 * absoluteNumerator + absoluteDenominator) / (2 * absoluteDenominator)
+  );
+
+  return isNegative ? -roundedMagnitude : roundedMagnitude;
+}
+
+/**
+ * A percentage of an amount, in centavos, rounded half away from zero.
+ *
+ * The rate is an integer number of basis points (1% = 100 bp), so the arithmetic
+ * stays in whole numbers: centavos * bp / 10 000.
+ */
+export function calculatePercentageOfCentavos(
+  baseCentavos: number,
+  rateBasisPoints: number
+): number {
+  return divideRoundingHalfAwayFromZero(baseCentavos * rateBasisPoints, 10_000);
+}
+
+/**
+ * Builds an invoice draft from an explicit set of line items.
+ *
+ * Every line total is already rounded, so the sum is exact. A negative discount
+ * line reduces the subtotal; late fees are added on top. Used by the installation
+ * fee and discount paths, which build their own line sets.
+ */
+export function buildInvoiceDraftFromLineItems(
+  lineItems: readonly InvoiceLineItemDraft[],
+  lateFeesCentavos = 0
+): MonthlyInvoiceDraft {
+  const subtotalCentavos = sumLineItemTotalsCentavos(lineItems);
+  const totalAmountCentavos = subtotalCentavos + lateFeesCentavos;
+
+  return {
+    subtotalCentavos,
+    lateFeesCentavos,
+    totalAmountCentavos,
+    remainingBalanceCentavos: totalAmountCentavos,
+    lineItems: [...lineItems],
   };
 }
 

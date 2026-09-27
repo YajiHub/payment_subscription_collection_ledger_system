@@ -81,6 +81,30 @@ function assertSettingValueIsValid(key: string, value: string): void {
       throw new ValidationError("suspension_after_days must be a whole number of days");
     }
   }
+
+  // S5-5: the per-account login lockout policy.
+  if (key === SYSTEM_SETTING_KEYS.loginLockoutThreshold) {
+    const threshold = Number(value);
+    if (!Number.isInteger(threshold) || threshold < 1) {
+      throw new ValidationError("login_lockout_threshold must be a whole number of attempts (at least 1)");
+    }
+  }
+
+  if (key === SYSTEM_SETTING_KEYS.loginLockoutCooldownMinutes) {
+    const minutes = Number(value);
+    if (!Number.isInteger(minutes) || minutes < 0) {
+      throw new ValidationError(
+        "login_lockout_cooldown_minutes must be a whole number of minutes (0 or more)"
+      );
+    }
+  }
+
+  // S12-9: the rollback switch between the database matrix and the compiled one.
+  if (key === SYSTEM_SETTING_KEYS.rbacPermissionsInDatabase) {
+    if (value !== "true" && value !== "false") {
+      throw new ValidationError("rbac_permissions_in_database must be 'true' or 'false'");
+    }
+  }
 }
 
 /**

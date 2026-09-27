@@ -9,7 +9,10 @@
 import { z } from "zod";
 
 import {
+  GCASH_REJECTION_REASON_MIN_LENGTH,
   GCASH_SCREENSHOT_MIME_TYPES,
+  MANUAL_ALLOCATION_REASON_MIN_LENGTH,
+  MANUALLY_ALLOCATABLE_PAYMENT_METHODS,
   PAYMENT_STATUSES,
   POSTABLE_PAYMENT_METHODS,
 } from "../constants/payments";
@@ -50,6 +53,72 @@ export const postPaymentSchema = z
     path: ["gcash"],
   });
 export type PostPaymentFields = z.infer<typeof postPaymentSchema>;
+
+/**
+ * One "pay this invoice by this much" instruction from an operator (S3-5).
+ */
+export const manualAllocationLineSchema = z.object({
+  invoiceId: z.string().uuid("A valid invoice id is required"),
+  amountCentavos: z
+    .number()
+    .int("An allocation must be a whole number of centavos")
+    .positive("An allocation must be greater than zero"),
+});
+export type ManualAllocationLineFields = z.infer<typeof manualAllocationLineSchema>;
+
+/**
+ * An operator's chosen split, with the leftover DECLARED rather than assumed. The
+ * server refuses the request unless the chosen amounts plus `advanceCreditCentavos`
+ * equal the payment exactly, so a split can neither over- nor under-allocate; see
+ * `buildManualAllocation`.
+ */
+export const manualAllocationSchema = z.object({
+  allocations: z.array(manualAllocationLineSchema).max(200),
+  advanceCreditCentavos: z
+    .number()
+    .int("Advance credit must be a whole number of centavos")
+    .nonnegative("Advance credit cannot be negative"),
+  reason: z
+    .string()
+    .trim()
+    .min(
+      MANUAL_ALLOCATION_REASON_MIN_LENGTH,
+      `A manual allocation needs a reason of at least ${MANUAL_ALLOCATION_REASON_MIN_LENGTH} characters`
+    )
+    .max(1000),
+});
+export type ManualAllocationFields = z.infer<typeof manualAllocationSchema>;
+
+/**
+ * Posts a payment whose money is already in hand and directs it at chosen invoices.
+ * GCash is not one of the methods here: a GCash split is applied when a verifier
+ * confirms the transfer.
+ */
+export const manualAllocationPaymentSchema = z.object({
+  serviceAccountId: z.string().uuid(),
+  paymentMethod: z.enum(MANUALLY_ALLOCATABLE_PAYMENT_METHODS),
+  amountCentavos: z
+    .number()
+    .int("Payment amount must be a whole number of centavos")
+    .positive("Payment amount must be greater than zero"),
+  paymentDate: z.string().date("Payment date must be a calendar date (YYYY-MM-DD)"),
+  notes: z.string().trim().max(1000).optional(),
+  manualAllocation: manualAllocationSchema,
+});
+export type ManualAllocationPaymentFields = z.infer<typeof manualAllocationPaymentSchema>;
+
+/** Refuses a pending GCash payment. The reason is mandatory and audited. */
+export const rejectGcashPaymentSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(
+      GCASH_REJECTION_REASON_MIN_LENGTH,
+      `A GCash rejection needs a reason of at least ${GCASH_REJECTION_REASON_MIN_LENGTH} characters`
+    )
+    .max(1000),
+});
+export type RejectGcashPaymentFields = z.infer<typeof rejectGcashPaymentSchema>;
 
 /** The filters the payment history screen may apply. */
 export const listPaymentsQuerySchema = z.object({

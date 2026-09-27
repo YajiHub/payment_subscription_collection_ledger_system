@@ -86,13 +86,26 @@ export type CreateSubscriberWithServiceAccountFields = z.infer<
   typeof createSubscriberWithServiceAccountSchema
 >;
 
+// S4-7/S4-8: the operating paperwork that sits beside the status change. All parts
+// are optional — an office suspension has no technician and no field dates, while a
+// field job records who went out and when it was requested and completed.
+const serviceControlDetailFields = {
+  technicianId: z.string().uuid("The technician id must be a UUID").optional(),
+  effectiveDate: z.string().date().optional(),
+  requestDate: z.string().date().optional(),
+  completionDate: z.string().date().optional(),
+  notes: z.string().trim().max(500).optional(),
+};
+
 export const suspendServiceAccountSchema = z.object({
   reason: z.string().trim().min(10, "Suspension reason must be at least 10 characters"),
+  ...serviceControlDetailFields,
 });
 export type SuspendServiceAccountFields = z.infer<typeof suspendServiceAccountSchema>;
 
 export const reconnectServiceAccountSchema = z.object({
   reason: z.string().trim().min(10, "Reconnection reason must be at least 10 characters").optional(),
+  ...serviceControlDetailFields,
 });
 export type ReconnectServiceAccountFields = z.infer<typeof reconnectServiceAccountSchema>;
 

@@ -5,25 +5,86 @@
 // Money is never named here: every amount is an integer number of centavos handled
 // by the modules that use these constants.
 
-// The lifecycle of a collector batch.
+// The lifecycle of a collector batch (S4-1, section 3.8).
 //
-//   open       → created, the collector is in the field recording collections
-//   submitted  → the collector returned and declared the cash they handed in
-//   reconciled → the office confirmed the amounts and closed the batch
-//   cancelled  → abandoned before any collection was recorded
+//   open        → created, the collector has not started recording
+//   in_progress → the collector is in the field recording collections
+//   submitted   → the collector returned and declared the run finished
+//   remitted    → the cash handed in has been recorded (one or more remittances)
+//   reconciled  → the office confirmed the amounts against the ledger
+//   closed      → the batch is finally signed off, after reconciliation
+//   cancelled   → abandoned before any collection was recorded
 //
-// A batch only moves forward. Re-submitting or re-reconciling is a conflict, not
-// a second transition.
-export const COLLECTOR_BATCH_STATUSES = ["open", "submitted", "reconciled", "cancelled"] as const;
+// The normal path only moves forward: OPEN → IN_PROGRESS → SUBMITTED → REMITTED →
+// RECONCILED → CLOSED, with `cancelled` reachable from an open run. Every other
+// transition is a conflict, enforced in the service and exercised by the
+// state-machine test.
+export const COLLECTOR_BATCH_STATUSES = [
+  "open",
+  "in_progress",
+  "submitted",
+  "remitted",
+  "reconciled",
+  "closed",
+  "cancelled",
+] as const;
 export type CollectorBatchStatus = (typeof COLLECTOR_BATCH_STATUSES)[number];
 
 /** Human-readable batch status names, used in badges and filters. */
 export const COLLECTOR_BATCH_STATUS_LABELS = {
   open: "Open",
+  in_progress: "In Progress",
   submitted: "Submitted",
+  remitted: "Remitted",
   reconciled: "Reconciled",
+  closed: "Closed",
   cancelled: "Cancelled",
 } as const satisfies Record<CollectorBatchStatus, string>;
+
+/**
+ * The single step a batch may move to next, or `null` when it is terminal.
+ *
+ * `cancelled` is deliberately not in the table: it is allowed only from `open` and
+ * only when nothing has been collected, which the service checks separately. This
+ * table is what the state-machine test walks.
+ */
+export const COLLECTOR_BATCH_NEXT_STATUS: Record<CollectorBatchStatus, CollectorBatchStatus | null> = {
+  open: "in_progress",
+  in_progress: "submitted",
+  submitted: "remitted",
+  remitted: "reconciled",
+  reconciled: "closed",
+  closed: null,
+  cancelled: null,
+};
+
+/**
+ * The legal transitions, as the state-machine test and the service both read them.
+ *
+ * `cancelled` is reachable from an open run only (and only while nothing has been
+ * collected, which the service checks). Every pair not listed is illegal and is
+ * rejected with a conflict.
+ */
+export const COLLECTOR_BATCH_TRANSITIONS: ReadonlyArray<
+  readonly [CollectorBatchStatus, CollectorBatchStatus]
+> = [
+  ["open", "in_progress"],
+  ["open", "submitted"],
+  ["open", "cancelled"],
+  ["in_progress", "submitted"],
+  ["in_progress", "cancelled"],
+  ["submitted", "remitted"],
+  ["remitted", "reconciled"],
+  ["reconciled", "closed"],
+];
+
+/** True when a batch may move from `from` to `to`. */
+export function isAllowedCollectorBatchTransition(
+  from: CollectorBatchStatus,
+  to: CollectorBatchStatus
+): boolean {
+  return COLLECTOR_BATCH_TRANSITIONS.some(([start, end]) => start === from && end === to);
+}
 
 // What happened when the collector visited a subscriber.
 export const COLLECTION_RESULTS = [

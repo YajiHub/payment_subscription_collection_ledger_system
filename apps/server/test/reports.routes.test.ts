@@ -31,6 +31,7 @@ vi.mock("../src/db/connection", async () => {
 
 import type { UserRole } from "@bcis/shared";
 import { buildServer } from "../src/index.ts";
+import { refreshPermissionCache } from "../src/shared/rbac/permission-resolver";
 import { fakeDatabase } from "./support/fake-database";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 
@@ -209,6 +210,15 @@ const UNKNOWN_ROLE_TOKEN = (): string => signTestToken({ role: "auditor" as User
 beforeAll(async () => {
   app = buildServer();
   await app.ready();
+
+  // These tests exercise the report routes, not RBAC resolution — that has its own
+  // suite. The server resolves permissions from the RBAC tables when it can, so the
+  // cache is warmed ONCE here with the documented rollback switch off, which selects
+  // the compiled matrix. Warming it before any test queues rows keeps the warm-up
+  // read from consuming a test's queued result sets.
+  fakeDatabase.queueSelectRows([{ value: "false" }]);
+  await refreshPermissionCache({ force: true });
+  fakeDatabase.reset();
 
   adminToken = signTestToken({ sub: ADMIN_ID, role: "admin" }).token;
   cashierToken = signTestToken({ role: "cashier" }).token;

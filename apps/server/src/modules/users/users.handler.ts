@@ -9,6 +9,10 @@ import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
 import { audit, requestActor } from "../../shared/audit/audit-logger";
 import {
+  invalidatePermissionCache,
+  refreshPermissionCache,
+} from "../../shared/rbac/permission-resolver";
+import {
   changeUserPassword,
   createUser,
   getUserById,
@@ -99,7 +103,7 @@ export async function putUser(request: FastifyRequest, reply: FastifyReply): Pro
     previousRole = existingUser.role;
   }
 
-  const updated = await updateUser(id, body);
+  const updated = await updateUser(id, { ...body, roleChangedBy: request.user?.id });
 
   if (previousRole !== undefined && previousRole !== updated.role) {
     await audit.userRoleChanged(
@@ -108,6 +112,13 @@ export async function putUser(request: FastifyRequest, reply: FastifyReply): Pro
       updated.role,
       requestActor(request)
     );
+
+    // S12-9: a role change must take effect on the next request, not after the
+    // permission cache's TTL. Invalidation drops the cache to "unloaded", which
+    // denies until re-resolved, so no caller is answered from the compiled matrix
+    // in the gap. The refresh is kicked off immediately to close the gap quickly.
+    invalidatePermissionCache();
+    void refreshPermissionCache({ force: true });
   }
 
   return sendSuccess(reply, updated);

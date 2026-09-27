@@ -136,7 +136,10 @@ describe.skipIf(!databaseIsReachable)("SQL injection attempts against PostgreSQL
   });
 
   it("never lets a payload in a username reach the users query", async () => {
-    const payload = "' OR '1'='1";
+    // The payload still heads the username, but a unique suffix keeps repeated runs
+    // from tripping the per-account lockout (S5-5), which is a separate control —
+    // this test is about injection, not lockout.
+    const payload = `' OR '1'='1 ${randomUUID()}`;
 
     const response = await server.inject({
       method: "POST",

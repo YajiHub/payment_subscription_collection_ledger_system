@@ -18,6 +18,7 @@ import { closeDatabaseConnection, pool } from "../src/db/connection";
 import { generateInvoiceForCandidate } from "../src/modules/billing/monthly-billing.service.ts";
 import { authorizationHeader, signTestToken } from "./support/tokens";
 import { deleteAuditLogsForUsers } from "./support/audit-cleanup";
+import { deleteLedgerEntriesForServiceAccounts } from "./support/ledger-cleanup";
 
 /** A valid bcrypt hash. The value is never checked in this test — only its shape. */
 const DUMMY_PASSWORD_HASH = "$2b$12$OMlJdIjzDLp3Jfn.9NR3qOBmwx5aLVRkyrFhSH6e5J1g.kCBMSeJe";
@@ -99,8 +100,8 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
           invoice_date, due_date, subtotal_centavos, late_fees_centavos, total_amount_centavos,
           paid_amount_centavos, remaining_balance_centavos, created_by)
        VALUES
-         ($1, $2, $5, 'monthly_subscription', 'posted', 2025, 1, '2025-01-01', '2025-01-15', 50000, 0, 50000, 0, 50000, $6),
-         ($3, $4, $5, 'monthly_subscription', 'posted', 2025, 2, '2025-02-01', '2025-02-15', 80000, 0, 80000, 0, 80000, $6)`,
+         ($1, $2, $5, 'monthly_subscription', 'unpaid', 2025, 1, '2025-01-01', '2025-01-15', 50000, 0, 50000, 0, 50000, $6),
+         ($3, $4, $5, 'monthly_subscription', 'unpaid', 2025, 2, '2025-02-01', '2025-02-15', 80000, 0, 80000, 0, 80000, $6)`,
       [
         oldestInvoiceId,
         `INV-INT-${randomUUID().slice(0, 8)}`,
@@ -128,9 +129,7 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
       [created.serviceAccountIds]
     );
     // The ledger references both payments and invoices, so it is cleared first.
-    await pool.query("DELETE FROM ledger_entries WHERE service_account_id = ANY($1::uuid[])", [
-      created.serviceAccountIds,
-    ]);
+    await deleteLedgerEntriesForServiceAccounts(created.serviceAccountIds);
     await pool.query("DELETE FROM payments WHERE service_account_id = ANY($1::uuid[])", [
       created.serviceAccountIds,
     ]);
@@ -167,6 +166,70 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
       [serviceAccountId]
     );
     return result.rows[0].net;
+  }
+
+  /** The net of one account's ledger, for a test that owns its whole ledger. */
+  async function ledgerNetFor(accountId: string): Promise<number> {
+    const result = await pool.query(
+      `SELECT coalesce(sum(case
+          when entry_type in ('invoice_posted','late_fee','manual_debit','payment_reversal','advance_credit_applied')
+            then amount_centavos else -amount_centavos end), 0)::int AS net
+         FROM ledger_entries WHERE service_account_id = $1`,
+      [accountId]
+    );
+    return result.rows[0].net;
+  }
+
+  /**
+   * A brand-new account with one unpaid invoice and nothing else on its ledger, so
+   * a test can assert whole-balance facts without another suite's rows in the way.
+   */
+  async function createAccountWithInvoice(
+    label: string,
+    invoiceCentavos: number
+  ): Promise<{ serviceAccountId: string; invoiceId: string }> {
+    const freshPlanId = randomUUID();
+    await pool.query(
+      `INSERT INTO subscription_plans
+         (id, name, service_type, speed_mbps, monthly_rate_centavos, reconnection_fee_centavos, is_active, created_by)
+       VALUES ($1, $2, 'internet', 25, 99900, 50000, true, $3)`,
+      [freshPlanId, `WP3 ${label} Fiber ${freshPlanId.slice(0, 8)}`, adminId]
+    );
+    created.planIds.push(freshPlanId);
+
+    const freshSubscriberId = randomUUID();
+    await pool.query(
+      `INSERT INTO subscribers
+         (id, account_number, first_name, last_name, primary_phone, service_address,
+          service_barangay, service_municipality, service_province, created_by)
+       VALUES ($1, $2, $3, $4, '09170000009', '9 Test Street',
+               'Poblacion', 'Testville', 'Testprovince', $5)`,
+      [freshSubscriberId, `SUB-${randomUUID().slice(0, 8)}`, label, "Payment", adminId]
+    );
+    created.subscriberIds.push(freshSubscriberId);
+
+    const freshAccountId = randomUUID();
+    await pool.query(
+      `INSERT INTO service_accounts
+         (id, service_account_number, subscriber_id, plan_id, status, activation_date, created_by)
+       VALUES ($1, $2, $3, $4, 'active', '2025-01-01', $5)`,
+      [freshAccountId, `SA-${randomUUID().slice(0, 8)}`, freshSubscriberId, freshPlanId, adminId]
+    );
+    created.serviceAccountIds.push(freshAccountId);
+
+    const freshInvoiceId = randomUUID();
+    await pool.query(
+      `INSERT INTO invoices
+         (id, invoice_number, service_account_id, invoice_type, status, billing_period_year, billing_period_month,
+          invoice_date, due_date, subtotal_centavos, late_fees_centavos, total_amount_centavos,
+          paid_amount_centavos, remaining_balance_centavos, created_by)
+       VALUES ($1, $2, $3, 'monthly_subscription', 'unpaid', 2025, 3,
+               '2025-03-01', '2025-03-15', $4, 0, $4, 0, $4, $5)`,
+      [freshInvoiceId, `INV-WP3-${randomUUID().slice(0, 8)}`, freshAccountId, invoiceCentavos, adminId]
+    );
+    created.invoiceIds.push(freshInvoiceId);
+
+    return { serviceAccountId: freshAccountId, invoiceId: freshInvoiceId };
   }
 
   it("posts a payment oldest-first, then reverses it and restores the invoice balances", async () => {
@@ -223,12 +286,12 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
 
     // ── Verify the restoration and that nothing was deleted ──────────────────
     expect(await invoiceState(oldestInvoiceId)).toMatchObject({
-      status: "posted",
+      status: "unpaid",
       paid_amount_centavos: 0,
       remaining_balance_centavos: 50000,
     });
     expect(await invoiceState(newestInvoiceId)).toMatchObject({
-      status: "posted",
+      status: "unpaid",
       paid_amount_centavos: 0,
       remaining_balance_centavos: 80000,
     });
@@ -387,5 +450,155 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
 
     expect(duplicate.statusCode).toBe(409);
     expect(duplicate.json().error.code).toBe("CONFLICT");
+  });
+
+  it("posts cash, bank transfer, cheque and other through the real database (S3-1)", async () => {
+    const { token } = signTestToken({ role: "admin", sub: adminId });
+    const headers = authorizationHeader(token);
+    const account = await createAccountWithInvoice("Methods", 200000);
+
+    for (const paymentMethod of ["cash", "bank_transfer", "check", "other"] as const) {
+      const response = await server.inject({
+        method: "POST",
+        url: "/api/payments",
+        headers,
+        payload: {
+          serviceAccountId: account.serviceAccountId,
+          paymentMethod,
+          amountCentavos: 1000,
+          paymentDate: "2025-03-03",
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().data.payment).toMatchObject({ paymentMethod, status: "posted" });
+    }
+
+    const stored = await pool.query(
+      "SELECT payment_method, status FROM payments WHERE service_account_id = $1 ORDER BY receipt_number",
+      [account.serviceAccountId]
+    );
+    expect(stored.rows.map((row) => row.payment_method)).toEqual([
+      "cash",
+      "bank_transfer",
+      "check",
+      "other",
+    ]);
+    expect(stored.rows.every((row) => row.status === "posted")).toBe(true);
+
+    // Every one of them allocated and moved the invoice by its own amount.
+    expect(await invoiceState(account.invoiceId)).toMatchObject({
+      paid_amount_centavos: 4000,
+      remaining_balance_centavos: 196000,
+    });
+  });
+
+  it("keeps a GCash payment out of the balances until a verifier confirms it, then reverses it (S3-2, S3-6)", async () => {
+    const { token } = signTestToken({ role: "admin", sub: adminId });
+    const headers = authorizationHeader(token);
+    const account = await createAccountWithInvoice("GcashVerification", 50000);
+
+    const reference = `GCASH WP3 ${randomUUID().slice(0, 8)}`;
+    const normalizedReference = reference.replace(/\s+/g, "").toUpperCase();
+
+    // ── Record the claim. It must not move a single centavo. ────────────────
+    const recorded = await server.inject({
+      method: "POST",
+      url: "/api/payments",
+      headers,
+      payload: {
+        serviceAccountId: account.serviceAccountId,
+        paymentMethod: "gcash",
+        amountCentavos: 50000,
+        paymentDate: "2025-03-04",
+        gcash: { referenceNumber: reference },
+      },
+    });
+
+    expect(recorded.statusCode).toBe(201);
+    const paymentId = recorded.json().data.payment.id as string;
+    expect(recorded.json().data.payment.status).toBe("pending_verification");
+
+    expect(await invoiceState(account.invoiceId)).toMatchObject({
+      status: "unpaid",
+      paid_amount_centavos: 0,
+      remaining_balance_centavos: 50000,
+    });
+    expect(await ledgerNetFor(account.serviceAccountId)).toBe(0);
+
+    const storedClaim = await pool.query(
+      "SELECT gcash_reference_number, verified_at, verified_by FROM gcash_payments WHERE payment_id = $1",
+      [paymentId]
+    );
+    // S12-7: the reference is stored normalized, so a reformatted one collides.
+    expect(storedClaim.rows[0]).toMatchObject({
+      gcash_reference_number: normalizedReference,
+      verified_at: null,
+      verified_by: null,
+    });
+
+    const reformatted = await server.inject({
+      method: "POST",
+      url: "/api/payments",
+      headers,
+      payload: {
+        serviceAccountId: account.serviceAccountId,
+        paymentMethod: "gcash",
+        amountCentavos: 50000,
+        paymentDate: "2025-03-04",
+        gcash: { referenceNumber: `  ${reference.toLowerCase().replace(/\s+/g, "  ")} ` },
+      },
+    });
+    expect(reformatted.statusCode).toBe(409);
+    expect(reformatted.json().error.code).toBe("CONFLICT");
+
+    // ── Verify it: now it posts, allocates and retains who did it. ───────────
+    const verified = await server.inject({
+      method: "POST",
+      url: `/api/payments/gcash/${paymentId}/verify`,
+      headers,
+      payload: {},
+    });
+
+    expect(verified.statusCode).toBe(200);
+    expect(verified.json().data.payment.status).toBe("posted");
+    expect(await invoiceState(account.invoiceId)).toMatchObject({
+      status: "paid",
+      paid_amount_centavos: 50000,
+      remaining_balance_centavos: 0,
+    });
+    expect(await ledgerNetFor(account.serviceAccountId)).toBe(-50000);
+
+    const storedVerification = await pool.query(
+      "SELECT verified_at, verified_by FROM gcash_payments WHERE payment_id = $1",
+      [paymentId]
+    );
+    expect(storedVerification.rows[0].verified_by).toBe(adminId);
+    expect(storedVerification.rows[0].verified_at).not.toBeNull();
+
+    const verifyAudit = await pool.query(
+      "SELECT performed_by FROM audit_logs WHERE entity_id = $1 AND action = 'payment.gcash_verified'",
+      [paymentId]
+    );
+    expect(verifyAudit.rowCount).toBe(1);
+    expect(verifyAudit.rows[0].performed_by).toBe(adminId);
+
+    // ── Reverse it: the money comes back and the row stops reading as posted. ─
+    const reversed = await server.inject({
+      method: "POST",
+      url: `/api/payments/${paymentId}/reverse`,
+      headers,
+      payload: { reason: "Transfer was recalled by the sender" },
+    });
+
+    expect(reversed.statusCode).toBe(200);
+    const storedPayment = await pool.query("SELECT status FROM payments WHERE id = $1", [paymentId]);
+    expect(storedPayment.rows[0]).toMatchObject({ status: "reversed" });
+    expect(await invoiceState(account.invoiceId)).toMatchObject({
+      status: "unpaid",
+      paid_amount_centavos: 0,
+      remaining_balance_centavos: 50000,
+    });
+    expect(await ledgerNetFor(account.serviceAccountId)).toBe(0);
   });
 });
