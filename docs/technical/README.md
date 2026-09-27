@@ -169,7 +169,7 @@ users ──┬─< login_audit_log
 | Table                 | Purpose                                                                  |
 | --------------------- | ------------------------------------------------------------------------ |
 | `payments`            | One row per payment: receipt number, method, amount, allocated vs advance |
-| `gcash_payments`      | GCash reference number (UNIQUE system-wide), sender, screenshot path      |
+| `gcash_payments`      | GCash reference number (UNIQUE system-wide, stored normalized), sender, screenshot path, verification (`verified_at`/`verified_by`, `rejected_at`/`rejected_by`/`rejection_reason`) |
 | `payment_allocations` | Exactly how a payment was spread across invoices — the audit trail of the allocation algorithm |
 | `payment_reversals`   | When a payment is undone: reason, reversal receipt number, who and when   |
 
@@ -256,16 +256,49 @@ Every later request:  Authorization: Bearer <token>
         │
         ├─ authenticate  — verifies the signature and expiry, and checks the jti is
         │                  not in revoked_tokens → 401 when invalid
-        └─ authorize(permission) — looks the role up in the permission matrix → 403
-                                   when the role does not hold that permission
+        └─ authorize(permission) — resolves the caller's effective permissions → 403
+                                   when they do not hold that permission
 
 POST /api/auth/logout → writes the jti to revoked_tokens, so the token is dead
                          immediately rather than at expiry.
 ```
 
-The role is embedded in the token but is **not** trusted on its own: `authorize()`
-resolves it through the matrix in `packages/shared/src/constants/permissions.ts`
-on every protected route.
+The role is embedded in the token but is **not** trusted on its own. `authorize()`
+resolves the caller's permissions on every protected route.
+
+### How permissions are resolved (S1-2, S12-9)
+
+Permissions come from the four RBAC tables (`roles`, `permissions`,
+`role_permissions`, `user_roles`), so changing a grant takes effect **without a
+code deploy**. The compiled `ROLE_PERMISSIONS` matrix in
+`packages/shared/src/constants/permissions.ts` is kept as a documented **fallback**.
+
+The resolver lives in `apps/server/src/shared/rbac/permission-resolver.ts` and:
+
+- caches the resolved matrix in memory for `RBAC_PERMISSION_CACHE_TTL_MS` (default
+  30 s), because authorization runs on every request;
+- exposes `invalidatePermissionCache()`, the real invalidation path called whenever
+  roles, grants or a user's role change. It moves the cache to "unloaded", which
+  **denies until re-resolved**, so no caller is ever answered from a stale or
+  compiled source in the gap; the caller kicks off a refresh immediately;
+- **resolves on demand** when the cache is not loaded, and **denies** if that
+  resolution fails — an unresolved cache is never answered from the compiled
+  matrix;
+- **fails closed** on a database failure: every check is refused until a refresh
+  succeeds;
+- **denies a user with no resolved grants.** Deleting every `user_roles` row or
+  revoking every permission must not silently fall back to the compiled role set;
+- selects the compiled matrix **only** when the seeded switch
+  `system_settings.rbac_permissions_in_database` is the explicit string `"false"`.
+  A missing row, a garbage value or a settings row lost in a partial restore all
+  mean the DATABASE is the authority.
+
+A monotonic epoch guards against a stale resurrection: a refresh captures the epoch
+when it starts and discards its snapshot if an invalidation landed meanwhile, so an
+in-flight read can never overwrite newer authority. `startServer` AWAITS the initial
+load before it listens, so there is no boot window in which authorization is
+unresolved. Users created or role-changed through the API write `user_roles` in the
+same transaction, so the tables are the single source of truth for them too.
 
 ### Permission matrix
 
@@ -279,7 +312,7 @@ on every protected route.
 | `plans:create/update`          | ✓ | ✓ | | | |
 | `plans:read`                   | ✓ | ✓ | | | ✓ |
 | `invoices:generate`            | ✓ | ✓ | | | |
-| `invoices:void`                | ✓ | | | | |
+| `invoices:void` (also guards a draft discount) | ✓ | | | | |
 | `invoices:read`                | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `payments:post`                | ✓ | | ✓ | | |
 | `payments:reverse`             | ✓ | | | | |
@@ -295,7 +328,33 @@ on every protected route.
 | `reports:management_view`      | ✓ | ✓ | | | ✓ |
 | `reports:export`               | ✓ | | | | ✓ |
 | `system:settings` / `system:backup` | ✓ | | | | |
+| `backup:create` / `backup:restore` (owner / administrator only) | ✓ | | | | |
+| `payments:verify_gcash` / `payments:reject_gcash` | ✓ | | ✓ | | |
+| `payments:allocate_manually` | ✓ | | ✓ | | |
 | `audit:read`                   | ✓ | | | | |
+
+### Spec-name → permission-spelling equivalence (S5-2)
+
+The lab specification names some permissions in `domain.verb` form; this repository
+spells them `domain:verb`. The equivalent is never renamed — every live route guard
+keeps working — and the mapping is documented in the code too:
+
+| Specification name | Permission in this repository |
+| ------------------ | ----------------------------- |
+| `subscriber.view` | `subscribers:read` |
+| `billing.generate` | `invoices:generate` |
+| `payment.create` | `payments:post` |
+| `payment.reverse` | `payments:reverse` |
+| `collection.reconcile` | `collector_batches:reconcile` |
+| `report.export` | `reports:export` |
+| `user.manage` | `users:create` / `users:update` / `users:deactivate` |
+| `backup.restore` | `backup:restore` (legacy: `system:backup`) |
+| `backup.create` | `backup:create` (legacy: `system:backup`) |
+
+GCash verification and manual allocation had no earlier equivalent, so
+`payments:verify_gcash`, `payments:reject_gcash` and `payments:allocate_manually`
+are new. They are held by the Owner, Administrator and Cashier; a Technician and a
+Read-only Viewer hold none of them.
 
 Notable consequences, all enforced on the server:
 
@@ -308,6 +367,40 @@ Notable consequences, all enforced on the server:
   settings, or read the audit trail.
 
 Wrong role → **HTTP 403** from the server, regardless of what the UI shows.
+
+Guard width: a read endpoint requires a read permission. `GET
+/api/collector-batches/collectors` used to demand `collector_batches:create` and now
+requires `collector_batches:read` (S5-8); proof/screenshot retrieval stays on
+`payments:read`.
+
+### Failed-login lockout (S5-5)
+
+In addition to the per-IP rate limit, an account locks after
+`LOGIN_LOCKOUT_THRESHOLD` consecutive failures (default 5) for
+`LOGIN_LOCKOUT_COOLDOWN_MINUTES` (default 15). Both are read from `system_settings`
+(`login_lockout_threshold`, `login_lockout_cooldown_minutes`) with the `config.ts`
+values as the bootstrap default. The counter is **derived**: it counts failures
+recorded in `login_audit_log` since the account's last success, so a successful
+login clears it without deleting a row. A locked account is refused (HTTP 429)
+before the password is verified, the refusal is written to `login_audit_log` and the
+audit trail, and a real and an unknown username receive the identical message.
+
+The lock is **anchored to the moment the failure count reached the threshold**, not
+to the most recent failure. Further requests while locked cannot push the unlock
+out, so an attacker cannot keep an account locked forever with one request per
+cooldown. After the cooldown elapses the streak is spent and the next failure starts
+a fresh streak, so brute-force protection resumes without a successful login.
+
+### Backup and restore (S5-3)
+
+Backup as an application feature is Owner/Administrator only (`backup:create` to
+create, list and verify; `backup:restore` to restore). The endpoints run the shipped
+`scripts/backup.sh` / `scripts/restore.sh`, then apply the checks the application
+owns: an archive is verified (size, gzip integrity, decompressed size and a sha256
+checksum) before it is published to `backup_history` with `verified_at`; a restore
+re-verifies the archive, refuses an unverified or corrupt one, and never runs
+without the explicit `{ "confirm": true }` body. Every backup and restore appends a
+`backup_history` row; a successful restore also stamps `restore_tested_at`.
 
 ---
 
@@ -355,6 +448,172 @@ If the amount is larger than every open invoice, the remainder becomes an
 automatically consumes it via an `advance_credit_applied` debit, so the subscriber
 is never billed twice for money already held.
 
+### Payment methods (S3-1)
+
+The five methods section 3.6 requires are all postable, and the three lists that
+describe them are the same five values: `PAYMENT_METHODS` in
+`packages/shared/src/constants/statuses.ts`, `POSTABLE_PAYMENT_METHODS` in
+`packages/shared/src/constants/payments.ts`, and the `payment_method` enum in
+`apps/server/src/db/schema/payments.ts`.
+
+| Stored value    | Shown as      | How it posts                                    |
+| --------------- | ------------- | ----------------------------------------------- |
+| `cash`          | Cash          | Immediately                                     |
+| `gcash`         | GCash         | Only when a verifier confirms it (see below)     |
+| `bank_transfer` | Bank Transfer | Immediately                                     |
+| `check`         | Cheque        | Immediately                                     |
+| `other`         | Other         | Immediately                                     |
+
+`check` keeps its stored spelling from migration 0004 and is labelled "Cheque" in
+the interface; the enum, the label table and the API therefore need no translation
+layer. The allocation algorithm does not care how the money arrived: all five run
+the same oldest-invoice-first split, the same receipt numbering and the same ledger
+credits.
+
+**Totals.** `summarizePayments` in `apps/server/src/modules/reports/daily-collection.service.ts`
+counts a payment only when its status is `posted`. That rule is what makes the
+GCash workflow below safe: a pending or rejected claim is excluded from the daily
+collection figure, and a reversed payment is excluded from every figure.
+
+### GCash: the duplicate-reference policy (S3-4)
+
+**One GCash transfer may be recorded once.** The reference number is the only thing
+that ties a claim to a single transfer in the GCash app, so the same reference can
+never be recorded twice.
+
+Where it is enforced, in order:
+
+1. **Normalize first (S12-7).** `normalizeGcashReference` in
+   `apps/server/src/modules/payments/gcash-reference.ts` trims the ends, removes
+   every whitespace character inside, and uppercases. Only whitespace changes: a
+   reference may legitimately contain digits, letters and hyphens, so nothing else
+   is stripped. The normalized value is what gets **stored**, which is why every
+   later lookup compares like with like.
+2. **Pre-check.** `postPaymentWithinTransaction` rejects a normalized reference
+   that already exists with `409 CONFLICT` and a readable message naming the
+   reference. The caller never sees a raw database error.
+3. **Database backstop.** `gcash_payments.gcash_reference_number` is `UNIQUE`
+   (migration 0004). A race that passes the pre-check is caught by the constraint
+   and turned into the same `409`, never a `500`.
+
+Consequences worth knowing:
+
+- A reference that differs only in case or spacing is **the same reference** and is
+  refused: `"0031 234 567"`, `"  0031234567 "` and `"0031234567"` collide.
+- A reference that differs by a visible character is a **different** reference
+  (`"GCASH-OK-001"` and `"GCASH OK 001"` do not collide), because the rule strips
+  whitespace only. That is deliberate: stripping punctuation would make genuinely
+  different transfers look alike.
+- A rejected or reversed GCash payment keeps its reference number reserved. Its
+  claim was recorded, and the reference must not silently become reusable.
+
+### GCash verification workflow (S3-2, S3-3)
+
+Section 3.7 splits a GCash payment in two: staff record the transfer, and an
+authorized person confirms it. **An uploaded screenshot is proof of a claim, never
+proof of payment** — it is stored beside the payment and has no effect on any
+balance.
+
+```text
+  recorded            verify                    reject
+  ────────            ──────                    ──────
+  payments.status     payments.status           payments.status
+  = pending_           = posted                  = rejected
+    verification      allocated + ledgered      invoice untouched
+  no allocations      gcash_payments:           gcash_payments:
+  no ledger entry     verified_at, verified_by  rejected_at, rejected_by,
+  invoice untouched                             rejection_reason
+                      audit: payment.gcash_      audit: payment.gcash_
+                      verified                    rejected (with the reason)
+```
+
+- **`payments.status` is the single authority.** `posted` means the money counts.
+  The names S3-2 uses are reported alongside it and derived from it by
+  `gcashVerificationStatus` (`packages/shared` is not the only vocabulary):
+  `pending_verification` → `pending_verification`, `posted` → **`VERIFIED`**,
+  `rejected` → `rejected`, `reversed` → `reversed`. There is no second copy of the
+  state to drift out of step.
+- **Recording** (`POST /api/payments`, permission `payments:post`) writes the
+  payment row in `pending_verification` with `allocated_centavos = 0` and
+  `advance_credit_centavos = 0`, plus the GCash detail row. No invoice balance, no
+  allocation and no ledger entry is touched, so a pending claim cannot appear in
+  the daily collection total or in any outstanding balance.
+- **Verifying** (`POST /api/payments/gcash/:id/verify`, permission
+  `payments:verify_gcash`) loads the payment `FOR UPDATE`, requires
+  `pending_verification`, allocates oldest-invoice-first exactly as cash does,
+  writes `verified_at` and `verified_by` on the GCash detail row, posts the ledger
+  credit, and writes a `payment.gcash_verified` audit row with the actor.
+- **Rejecting** (`POST /api/payments/gcash/:id/reject`, permission
+  `payments:reject_gcash`) requires a reason of at least 10 characters, sets the
+  status to `rejected`, records `rejected_at` / `rejected_by` / `rejection_reason`,
+  and writes a `payment.gcash_rejected` audit row carrying the reason. The invoice
+  is not touched, because there was nothing to undo.
+- **`verified_at` / `verified_by` are provenance.** They are written by the verify
+  step and kept afterwards — a later reversal does not erase the fact that this
+  person confirmed the transfer, because the audit trail must still be able to show
+  it.
+- **The receipt number is reserved when the claim is recorded.**
+  `postPaymentWithinTransaction` allocates the `OR-YYYY-XXXXXX` number as it always
+  has, so the pending row is a complete payment from the moment it exists. The
+  receipt is not *issued* — nothing is printed and no balance moves — until the
+  payment is verified. A claim that is rejected therefore keeps a reserved number
+  that is never printed and never reused, which is the same guarantee the receipt
+  book already gives for a reversed receipt: a number is never handed out twice.
+
+### Reversing a verified GCash payment (S3-6)
+
+A verified GCash payment is reversed exactly like cash: `payments.status` becomes
+`reversed`, a `payment_reversals` row records who reversed it and why, the invoice
+balances are restored, and a debit cancels the credit. Because every read of "money
+received" keys off `status = posted`, a reversed payment cannot still read as
+verified-and-posted: `gcashVerificationStatus` reports it as `reversed`.
+
+A GCash payment that **no verifier confirmed** is refused instead, with `409` and a
+message naming the workflow step that does apply:
+
+- it never posted, so there is no credit for `recordPaymentReversed` to cancel, and
+  running it would invent a debit out of nothing;
+- its own step is **reject**, which is already recorded with a reason.
+
+Reversing an already-**rejected** GCash payment is refused for the same reason.
+
+### Manual allocation (S3-5)
+
+`POST /api/payments/manual-allocation`, permission `payments:allocate_manually`
+(half of the resolvable set: it is granted to the Administrator and the Cashier),
+posts a payment whose money is already in hand and directs it at the invoices the
+operator chose instead of the default oldest-unpaid-first sweep.
+
+The request carries the payment, a mandatory `reason` of at least 10 characters, and
+`manualAllocation: { allocations[], advanceCreditCentavos }`. **The operator must
+account for every centavo:**
+
+```text
+  SUM(allocations) + advanceCreditCentavos === amountCentavos
+```
+
+The server refuses, with 400 and a message naming the offending invoice, when:
+
+- the chosen amounts plus the declared credit do not equal the payment — an
+  **under-allocated** or **over-allocated** split;
+- one invoice would receive more than it still owes;
+- an invoice is named twice;
+- an invoice is not outstanding for that account (already settled, void, or another
+  account's).
+
+The same invariant therefore holds on both paths: `allocated + advance === amount`.
+The split and the reason are audited with the payment (`payment.posted` with
+`manualAllocation: { reason, allocations }` in the new state), so an auditor sees
+which invoices were chosen and why.
+
+**GCash is not one of the methods here.** A GCash payment is allocated when a
+verifier confirms it, and the verifier applies the default oldest-first split. An
+operator who needs a GCash transfer aimed at particular invoices must record it,
+let it verify, and correct the allocation through the ledger adjustment workflow
+instead. This is a known boundary rather than an oversight: allowing a split on a
+claim that has not been confirmed would let an unverified payment decide which debt
+is settled.
+
 ### Partial, exact, and advance payments
 
 | Case             | `allocated` | `advance` | Invoice status after |
@@ -363,12 +622,84 @@ is never billed twice for money already held.
 | Exact            | = amount    | 0         | `paid`               |
 | Overpayment      | = open debt | > 0       | invoices `paid`, credit held |
 
+### Invoice statuses
+
+An invoice uses exactly the state set of the specification:
+
+`draft → unpaid / partially_paid / paid / overdue`, plus the terminal `void` and
+`credited`.
+
+- `unpaid` is the stored spelling. Migration `0020` renamed the old `posted` value
+  to `unpaid`; for **one release** the API still accepts `posted` as an input alias
+  (see `LEGACY_INVOICE_STATUS_ALIASES`) and normalizes it to `unpaid`, so an older
+  client keeps working. The old spelling is never stored and never returned.
+- `credited` is set when an **advance credit**, not a payment, fully settles an
+  invoice while it is still a draft. Posting such an invoice writes no new
+  `invoice_posted` debit — `advance_credit_applied` already recorded what was owed —
+  so a `credited` invoice is never a debt. It is therefore refused by the void
+  workflow, exactly like a `paid` invoice.
+
+### Rounding rule for percentage line items
+
+Line amounts are integer centavos, and the rule is applied **once per line**:
+
+1. compute the exact line amount in centavos, then
+2. round it **half away from zero** to the nearest centavo, then
+3. sum the already-rounded line totals.
+
+A rate is an integer number of basis points (1% = 100 bp), so
+`amount = amountCentavos × basisPoints ÷ 10000`, and the division is rounded half
+away from zero entirely in integer arithmetic (`divideRoundingHalfAwayFromZero`).
+No float ever touches a money value, so the same inputs produce the same cents on
+every machine. E.g. 3.33% of `99999` centavos is `3329.9667` → `3330`.
+
+A **discount** is a first-class line item stored with a NEGATIVE total; an
+**installation fee** is a first-class line item like a reconnection fee. Because a
+posted invoice is immutable, a discount can be added to a `draft` only.
+
+### Invoice adjustments: installation fee and discount (S2-3)
+
+Both adjustments are first-class invoice line items, and both cross the HTTP
+boundary as **integer centavos** — the server schemas reject a float.
+
+| Operation                 | Route                             | Permission           | Roles that hold it |
+| ------------------------- | --------------------------------- | -------------------- | ------------------ |
+| Charge an installation fee | `POST /api/invoices/installation-fee` | `invoices:generate` | Admin, Billing Clerk |
+| Discount a draft invoice  | `POST /api/invoices/:id/discount` | `invoices:void`      | Admin              |
+
+**Charge an installation fee** takes
+`{ serviceAccountId, installationFeeCentavos, reason? }`. It creates a NEW
+`draft` invoice of type `installation_fee` whose single line is
+`Installation Fee — <plan name>`, so the fee feeds the invoice total and — once
+the invoice is posted — the ledger debit. Any advance credit the subscriber holds
+is applied to it, exactly like a reconnection fee.
+
+**Discount a draft invoice** takes `{ reason, discountCentavos |
+discountRateBasisPoints }` — exactly one of the two forms. A percentage is an
+integer **basis-point count** (1% = 100 bp), never a float. The service:
+
+- refuses anything that is not a `draft` with **HTTP 409** (a finalized invoice is
+  immutable outside the void and adjustment workflows), so a posted, paid or
+  credited invoice cannot be discounted silently;
+- refuses a discount that would take the invoice **below zero**, or below the
+  amount still unpaid (an advance credit can pay a draft down before it is ever
+  discounted), with **HTTP 400**;
+- stores the discount as a negative line item, so the total always equals the sum
+  of the line items, and rounds a percentage **half away from zero, once per line,
+  before the lines are summed** (see the rounding rule above).
+
+Both operations write an `audit_logs` row with the acting user, the mandatory
+reason and the **old and new totals** (`invoice.installation_fee_charged`,
+`invoice.discount_applied`), because a discount or a fee waiver is exactly the
+action an auditor asks about.
+
 ### Corrections never delete
 
 A posted payment is never deleted. Reversing it writes a `payment_reversals` row,
 sets the payment's status to `reversed`, and adds a **debit** ledger entry of the
 same amount. The original row and its ledger credit remain visible forever. The
-same pattern applies to a voided invoice.
+same pattern applies to a voided invoice, and a GCash payment's verification state
+is reversed with it (see *Reversing a verified GCash payment* above).
 
 ---
 

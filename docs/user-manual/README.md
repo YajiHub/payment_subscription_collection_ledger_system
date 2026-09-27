@@ -27,7 +27,7 @@ there is a change.
    `pnpm start`.
 3. Leave that window open. The API must stay running for the other PCs to work.
 4. **[screenshot]** The server log should say the server is listening on
-   `http://0.0.0.0:3001`.
+   `http://0.0.0.0:3003`.
 
 ### 1.2 First login
 
@@ -72,12 +72,19 @@ there is a change.
 ### 1.7 Correct a mistake
 
 1. To undo a wrong payment: open the payment, choose **Reverse**, and give a
-   reason. The original payment is kept and a reversal is recorded beside it —
-   money history is never deleted.
-2. To undo a wrong invoice: open the invoice and choose **Void** with a reason.
-3. To adjust a balance by hand: open the service account's **Ledger** and choose
+   reason (at least 10 characters). The original payment is kept and a reversal
+   document `RV-…` is recorded beside it — money history is never deleted, and the
+   money returns to the subscriber's balance.
+2. A GCash payment that is still **Pending Verification** cannot be reversed — it
+   never posted, so there is nothing to undo. Open the GCash verification queue and
+   **Reject** it with a reason instead.
+3. Reversing a **verified** GCash payment works exactly like reversing cash. The
+   record still shows who verified the transfer, and the payment no longer counts as
+   received.
+4. To undo a wrong invoice: open the invoice and choose **Void** with a reason.
+5. To adjust a balance by hand: open the service account's **Ledger** and choose
    **Manual entry**, giving a reason.
-4. To check a ledger: open the service account's **Ledger** and choose
+6. To check a ledger: open the service account's **Ledger** and choose
    **Verify integrity**. A green result means the running balance recomputed from
    the entries matches what is stored.
 
@@ -175,20 +182,58 @@ The Cashier takes money at the office counter and prints receipts.
 ### 3.2 Post a cash payment
 
 1. Enter the amount received **in pesos** (the screen does the centavo maths).
-2. Choose the payment date and method **Cash**.
+2. Choose the payment date and method — **Cash**, **Bank Transfer**, **Cheque** or
+   **Other**. All four post straight away.
 3. Add a note if useful (for example "paid by family member").
 4. Choose **Post payment**.
 5. **[screenshot]** The receipt preview opens. The system allocated the money to
    the oldest invoice first and shows what is still outstanding.
 
+> If you hold the **manual allocation** permission, you can instead send the payment
+> to the invoices you name, giving a reason. Every centavo must be accounted for:
+> anything you do not allocate is declared as the subscriber's advance credit. The
+> reason and the invoices chosen are recorded in the audit trail.
+
 ### 3.3 Post a GCash payment
 
-1. Follow steps 1–2 above, but choose method **GCash**.
-2. Type the GCash **reference number** exactly as shown in the subscriber's
-   screenshot, plus the sender name and number if known.
+A GCash payment is **two steps**: you record the transfer, and someone with the
+verification permission confirms it. The money does not reach the subscriber's
+account until it is confirmed, because a screenshot on its own does not prove money
+arrived.
+
+1. Go to **Payments** → **Post payment** and find the account as in steps 1–2 above,
+   then choose method **GCash**.
+2. Type the GCash **reference number** as shown in the subscriber's screenshot, plus
+   the sender name and number if known.
 3. Optionally choose **Attach screenshot** and pick the image file.
-4. Choose **Post payment**. The same reference number can never be posted twice —
-   the system rejects a duplicate.
+4. Choose **Post payment**. The payment is saved as **Pending Verification**: no
+   invoice is settled, no credit is given, and the receipt number is held for it.
+   Tell the subscriber it will be applied once the transfer is confirmed.
+5. **The same reference number can never be used twice.** Spaces and capitals do not
+   help — `0031 234 567`, `0031234567` and `0031234567 ` are all treated as the same
+   reference, and the system refuses the duplicate with a red message naming the
+   reference. Check with the subscriber; if the earlier payment was rejected, ask a
+   supervisor to look at it rather than re-entering the same reference.
+
+#### Verify or reject a pending GCash payment
+
+Anyone holding the GCash verification permission (the Cashier and the
+Administrator) can do this.
+
+1. Open the GCash verification queue (**Payments** → **GCash verification**). The
+   oldest claim is first.
+2. Open the claim and check the reference, sender and screenshot against the actual
+   GCash transfer. When the office can see the transfer in the wallet:
+   - choose **Verify** — the system now posts and allocates the payment exactly like
+     cash (oldest unpaid invoice first) and prints the receipt; or
+   - choose **Reject** and type **why** (at least 10 characters). The rejection is
+     recorded with your name and the reason, and the subscriber's invoices are left
+     exactly as they were.
+3. A rejected claim can never be verified afterwards. If the subscriber sends the
+   money again, record it under the **new** transfer's reference number.
+
+> Never verify a claim you cannot see in the GCash wallet. Verifying is what moves
+the money; the screenshot only records what somebody said.
 
 ### 3.4 Print a receipt
 

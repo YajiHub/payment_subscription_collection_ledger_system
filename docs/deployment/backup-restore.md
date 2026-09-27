@@ -93,7 +93,7 @@ setting the environment variable for the task.
 4. Verify the restore before letting staff back in:
 
    ```bash
-   curl http://localhost:3001/health/db          # must return 200
+   curl http://localhost:3/health/db          # must return 200
    ```
 
    Then log in as the Administrator and check that:
