@@ -1,6 +1,8 @@
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 import { USER_ROLE_LABELS, USER_ROLES, type UserRole } from "@bcis/shared";
 import {
@@ -12,6 +14,9 @@ import {
   updateUser,
   type ManagedUser,
 } from "../lib/api-client";
+import { SelectField } from "../components/form/SelectField";
+import { TextField } from "../components/form/TextField";
+import { formResolver } from "../components/form/form-resolver";
 import { DataTable, type TableColumn } from "../components/table/DataTable";
 import { EmptyState } from "../components/ui/EmptyState";
 
@@ -28,6 +33,52 @@ const emptyForm: UserFormState = {
   password: "",
   role: "cashier",
 };
+
+// The three user schemas below mirror `apps/server/src/modules/users/users.handler.ts`
+// rule for rule and message for message: `createUserBodySchema`,
+// `updateUserBodySchema` and `changePasswordBodySchema` are handler-local and are
+// not exported from `@bcis/shared`, so there is nothing shared to import. Keep the
+// two files in step. All three cover the same four fields so every mode of the
+// dialog has one form type.
+const fullNameField = z.string().trim().min(1, "Full name is required").max(100);
+const usernameField = z
+  .string()
+  .trim()
+  .min(3, "Username must be at least 3 characters")
+  .max(50)
+  .regex(
+    /^[a-zA-Z0-9._-]+$/,
+    "Username may only contain letters, numbers, dots, dashes, underscores"
+  );
+const passwordField = z.string().min(8, "Password must be at least 8 characters");
+const roleField = z.enum(USER_ROLES);
+
+/** Mirrors `createUserBodySchema`: every field is required. */
+const createUserFormSchema = z.object({
+  fullName: fullNameField,
+  username: usernameField,
+  password: passwordField,
+  role: roleField,
+});
+
+/**
+ * Mirrors `updateUserBodySchema`: only the name and the role are sent. The
+ * username box is disabled in this mode and no password is captured.
+ */
+const editUserFormSchema = z.object({
+  fullName: fullNameField,
+  username: z.string(),
+  password: z.string(),
+  role: roleField,
+});
+
+/** Mirrors `changePasswordBodySchema`: only the new password is sent. */
+const resetPasswordFormSchema = z.object({
+  fullName: z.string(),
+  username: z.string(),
+  password: passwordField,
+  role: roleField,
+});
 
 /** The page size the screen opens with. Server-side paging caps it at 200. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -48,7 +99,24 @@ export function UserManagementPage(): ReactNode {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
-  const [form, setForm] = useState<UserFormState>(emptyForm);
+
+  // Each mode asks a different question, so it validates against its own schema.
+  const userFormSchema =
+    modalMode === "create"
+      ? createUserFormSchema
+      : modalMode === "password"
+        ? resetPasswordFormSchema
+        : editUserFormSchema;
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<UserFormState>({
+    resolver: formResolver(userFormSchema),
+    defaultValues: emptyForm,
+  });
 
   const loadUsers = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -69,22 +137,28 @@ export function UserManagementPage(): ReactNode {
   }, [loadUsers]);
 
   function openCreateModal(): void {
-    setForm(emptyForm);
+    reset(emptyForm);
     setSelectedUser(null);
     setModalMode("create");
   }
 
-  const openEditModal = useCallback((user: ManagedUser): void => {
-    setForm({ fullName: user.fullName, username: user.username, password: "", role: user.role });
-    setSelectedUser(user);
-    setModalMode("edit");
-  }, []);
+  const openEditModal = useCallback(
+    (user: ManagedUser): void => {
+      reset({ fullName: user.fullName, username: user.username, password: "", role: user.role });
+      setSelectedUser(user);
+      setModalMode("edit");
+    },
+    [reset]
+  );
 
-  const openPasswordModal = useCallback((user: ManagedUser): void => {
-    setForm({ ...emptyForm, fullName: user.fullName, username: user.username, role: user.role });
-    setSelectedUser(user);
-    setModalMode("password");
-  }, []);
+  const openPasswordModal = useCallback(
+    (user: ManagedUser): void => {
+      reset({ ...emptyForm, fullName: user.fullName, username: user.username, role: user.role });
+      setSelectedUser(user);
+      setModalMode("password");
+    },
+    [reset]
+  );
 
   function closeModal(): void {
     setModalMode(null);
@@ -182,29 +256,30 @@ export function UserManagementPage(): ReactNode {
     [openEditModal, openPasswordModal, toggleActive]
   );
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  // A rejected username or a refused password reset is the server's answer to a
+  // valid-looking form, so it stays a banner rather than a field message.
+  const onSubmit = handleSubmit(async (values) => {
     setErrorMessage(null);
 
     try {
       if (modalMode === "create") {
         await createUser({
-          fullName: form.fullName,
-          username: form.username,
-          password: form.password,
-          role: form.role,
+          fullName: values.fullName,
+          username: values.username,
+          password: values.password,
+          role: values.role,
         });
       } else if (modalMode === "edit" && selectedUser !== null) {
-        await updateUser(selectedUser.id, { fullName: form.fullName, role: form.role });
+        await updateUser(selectedUser.id, { fullName: values.fullName, role: values.role });
       } else if (modalMode === "password" && selectedUser !== null) {
-        await changeUserPassword(selectedUser.id, form.password);
+        await changeUserPassword(selectedUser.id, values.password);
       }
       closeModal();
       await loadUsers();
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     }
-  }
+  });
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-8">
@@ -227,7 +302,7 @@ export function UserManagementPage(): ReactNode {
         </div>
       </header>
 
-      {errorMessage !== null && (
+      {errorMessage !== null && modalMode === null && (
         <p
           role="alert"
           className="rounded border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-strong"
@@ -265,7 +340,8 @@ export function UserManagementPage(): ReactNode {
       {modalMode !== null && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/40 p-4">
           <form
-            onSubmit={handleSubmit}
+            noValidate
+            onSubmit={(event) => void onSubmit(event)}
             className="w-full max-w-sm space-y-4 rounded-lg bg-surface p-6 shadow-lg"
           >
             <h2 className="text-lg font-semibold">
@@ -276,59 +352,50 @@ export function UserManagementPage(): ReactNode {
 
             {modalMode !== "password" && (
               <>
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-content-primary">Full Name</span>
-                  <input
-                    type="text"
-                    value={form.fullName}
-                    onChange={(event) => setForm({ ...form, fullName: event.target.value })}
-                    required
-                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-                  />
-                </label>
+                <TextField
+                  id="userFullName"
+                  label="Full Name"
+                  required
+                  error={errors.fullName?.message}
+                  {...register("fullName")}
+                />
 
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-content-primary">Username</span>
-                  <input
-                    type="text"
-                    value={form.username}
-                    onChange={(event) => setForm({ ...form, username: event.target.value })}
-                    disabled={modalMode === "edit"}
-                    required
-                    className="w-full rounded border border-line-strong px-3 py-2 text-sm disabled:bg-canvas"
-                  />
-                </label>
+                <TextField
+                  id="userUsername"
+                  label="Username"
+                  required
+                  // React Hook Form drops a disabled field from the submitted
+                  // values, so the username can never be rewritten by an edit.
+                  disabled={modalMode === "edit"}
+                  error={errors.username?.message}
+                  {...register("username")}
+                />
 
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-content-primary">Role</span>
-                  <select
-                    value={form.role}
-                    onChange={(event) => setForm({ ...form, role: event.target.value as UserRole })}
-                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-                  >
-                    {USER_ROLES.map((role) => (
-                      <option key={role} value={role}>
-                        {USER_ROLE_LABELS[role]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <SelectField
+                  id="userRole"
+                  label="Role"
+                  error={errors.role?.message}
+                  {...register("role")}
+                >
+                  {USER_ROLES.map((role) => (
+                    <option key={role} value={role}>
+                      {USER_ROLE_LABELS[role]}
+                    </option>
+                  ))}
+                </SelectField>
               </>
             )}
 
             {(modalMode === "create" || modalMode === "password") && (
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-content-primary">Password</span>
-                <input
-                  type="password"
-                  value={form.password}
-                  onChange={(event) => setForm({ ...form, password: event.target.value })}
-                  minLength={8}
-                  required
-                  className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-                />
-                <span className="text-xs text-content-secondary">At least 8 characters.</span>
-              </label>
+              <TextField
+                id="userPassword"
+                label="Password"
+                type="password"
+                required
+                hint="At least 8 characters."
+                error={errors.password?.message}
+                {...register("password")}
+              />
             )}
 
             {errorMessage !== null && (

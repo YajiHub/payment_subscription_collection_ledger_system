@@ -1,9 +1,12 @@
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 import {
   SERVICE_TYPES,
   SERVICE_TYPE_LABELS,
+  createPlanSchema,
   roleHasPermission,
   type ServiceType,
 } from "@bcis/shared";
@@ -12,11 +15,15 @@ import {
   extractApiErrorMessage,
   listPlans,
   retirePlan,
+  type CreatePlanInput,
   type Plan,
 } from "../lib/api-client";
 import { formatCentavos } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
 import { AppShell } from "../components/layout/AppShell";
+import { SelectField } from "../components/form/SelectField";
+import { TextField } from "../components/form/TextField";
+import { formResolver } from "../components/form/form-resolver";
 import { DataTable, type TableColumn } from "../components/table/DataTable";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -25,16 +32,17 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
 import { Modal } from "../components/ui/Modal";
 
-interface PlanFormState {
+/** The plan form's fields. Money is typed in pesos and converted on the way out. */
+type PlanFormValues = {
   name: string;
   serviceType: ServiceType;
   speedMbps: string;
   cablePackageDescription: string;
   monthlyRatePesos: string;
   reconnectionFeePesos: string;
-}
+};
 
-const emptyPlanForm: PlanFormState = {
+const emptyPlanForm: PlanFormValues = {
   name: "",
   serviceType: "internet",
   speedMbps: "",
@@ -52,6 +60,73 @@ const emptyPlanForm: PlanFormState = {
 function pesosToCentavos(pesos: string): number {
   return Math.round(Number.parseFloat(pesos) * 100);
 }
+
+/**
+ * Builds the request body for a new plan.
+ *
+ * This is the one place the form is turned into a payload: the schema below
+ * validates exactly this object against the same `createPlanSchema` the server
+ * uses, so a body the client accepts is a body the server accepts.
+ */
+function buildPlanPayload(values: PlanFormValues): CreatePlanInput {
+  return {
+    name: values.name,
+    serviceType: values.serviceType,
+    speedMbps: values.speedMbps === "" ? undefined : Number.parseInt(values.speedMbps, 10),
+    cablePackageDescription:
+      values.cablePackageDescription === "" ? undefined : values.cablePackageDescription,
+    monthlyRateCentavos: pesosToCentavos(values.monthlyRatePesos),
+    reconnectionFeeCentavos:
+      values.reconnectionFeePesos === "" ? 0 : pesosToCentavos(values.reconnectionFeePesos),
+  };
+}
+
+/** The form field each request field is typed into, so an error lands on the box. */
+const FORM_FIELD_FOR_REQUEST_FIELD: Record<string, keyof PlanFormValues> = {
+  name: "name",
+  serviceType: "serviceType",
+  speedMbps: "speedMbps",
+  cablePackageDescription: "cablePackageDescription",
+  monthlyRateCentavos: "monthlyRatePesos",
+  reconnectionFeeCentavos: "reconnectionFeePesos",
+};
+
+/**
+ * The Add Plan rules.
+ *
+ * The name and the service type are `createPlanSchema`'s own fields, and the whole
+ * request body this form builds is checked against that same schema, so the two
+ * sides cannot drift. The peso boxes are text, so they carry one extra rule each:
+ * they must hold something a number can be read from.
+ */
+const planFormSchema = z
+  .object({
+    name: createPlanSchema.shape.name,
+    serviceType: createPlanSchema.shape.serviceType,
+    speedMbps: z.string(),
+    cablePackageDescription: z.string(),
+    monthlyRatePesos: z
+      .string()
+      .trim()
+      .min(1, "Enter the monthly rate")
+      .refine((text) => Number.isFinite(Number.parseFloat(text)), "Enter a valid amount"),
+    reconnectionFeePesos: z
+      .string()
+      .trim()
+      .refine((text) => text === "" || Number.isFinite(Number.parseFloat(text)), "Enter a valid amount"),
+  })
+  .superRefine((values, ctx) => {
+    const fromServer = createPlanSchema.safeParse(buildPlanPayload(values));
+    if (fromServer.success) {
+      return;
+    }
+    // An issue the field rules above already reported keeps its own wording:
+    // zodResolver keeps the first message it sees for a field.
+    for (const issue of fromServer.error.issues) {
+      const field = FORM_FIELD_FOR_REQUEST_FIELD[String(issue.path[0] ?? "")] ?? "name";
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: issue.message });
+    }
+  });
 
 /** The "Speed / Package" cell: a speed for internet, a channel list for cable. */
 function describePlanDetails(plan: Plan): string {
@@ -74,11 +149,22 @@ export function PlanManagementPage(): ReactNode {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [form, setForm] = useState<PlanFormState>(emptyPlanForm);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const canCreate = user !== null && roleHasPermission(user.role, "plans:create");
   const canUpdate = user !== null && roleHasPermission(user.role, "plans:update");
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<PlanFormValues>({
+    resolver: formResolver(planFormSchema),
+    defaultValues: emptyPlanForm,
+  });
+
+  const serviceType = watch("serviceType");
 
   const loadPlans = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -101,35 +187,23 @@ export function PlanManagementPage(): ReactNode {
   }, [loadPlans]);
 
   function openForm(): void {
-    setForm(emptyPlanForm);
+    reset(emptyPlanForm);
     setErrorMessage(null);
     setIsFormOpen(true);
   }
 
-  async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    setIsSubmitting(true);
+  const onSubmit = handleSubmit(async (values) => {
     setErrorMessage(null);
 
     try {
-      await createPlan({
-        name: form.name,
-        serviceType: form.serviceType,
-        speedMbps: form.speedMbps === "" ? undefined : Number.parseInt(form.speedMbps, 10),
-        cablePackageDescription:
-          form.cablePackageDescription === "" ? undefined : form.cablePackageDescription,
-        monthlyRateCentavos: pesosToCentavos(form.monthlyRatePesos),
-        reconnectionFeeCentavos:
-          form.reconnectionFeePesos === "" ? 0 : pesosToCentavos(form.reconnectionFeePesos),
-      });
+      await createPlan(buildPlanPayload(values));
       setIsFormOpen(false);
       await loadPlans();
     } catch (error) {
+      // A duplicate plan name is the server's answer to a valid-looking form.
       setErrorMessage(extractApiErrorMessage(error));
-    } finally {
-      setIsSubmitting(false);
     }
-  }
+  });
 
   const handleRetire = useCallback(
     async (plan: Plan): Promise<void> => {
@@ -209,9 +283,6 @@ export function PlanManagementPage(): ReactNode {
     [canUpdate, handleRetire]
   );
 
-  const fieldClass =
-    "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
-
   return (
     <AppShell
       pageTitle="Subscription Plans"
@@ -251,82 +322,72 @@ export function PlanManagementPage(): ReactNode {
         title="Add Plan"
         description="New plans start active; price changes are a new plan, never an edit."
       >
-        <form onSubmit={handleCreate} className="space-y-4 p-6">
-          <label className="block space-y-1.5">
-            <span className="text-xs font-medium text-content-secondary">Plan Name</span>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(event) => setForm({ ...form, name: event.target.value })}
-              required
-              autoFocus
-              className={fieldClass}
+        <form
+          noValidate
+          onSubmit={(event) => void onSubmit(event)}
+          className="space-y-4 p-6"
+        >
+          <TextField
+            id="planName"
+            label="Plan Name"
+            required
+            autoFocus
+            error={errors.name?.message}
+            {...register("name")}
+          />
+
+          <SelectField
+            id="planServiceType"
+            label="Service Type"
+            error={errors.serviceType?.message}
+            {...register("serviceType")}
+          >
+            {SERVICE_TYPES.map((serviceTypeOption) => (
+              <option key={serviceTypeOption} value={serviceTypeOption}>
+                {SERVICE_TYPE_LABELS[serviceTypeOption]}
+              </option>
+            ))}
+          </SelectField>
+
+          {serviceType === "internet" || serviceType === "bundle" ? (
+            <TextField
+              id="planSpeedMbps"
+              label="Speed (Mbps)"
+              type="number"
+              min={1}
+              error={errors.speedMbps?.message}
+              {...register("speedMbps")}
             />
-          </label>
-
-          <label className="block space-y-1.5">
-            <span className="text-xs font-medium text-content-secondary">Service Type</span>
-            <select
-              value={form.serviceType}
-              onChange={(event) => setForm({ ...form, serviceType: event.target.value as ServiceType })}
-              className={fieldClass}
-            >
-              {SERVICE_TYPES.map((serviceType) => (
-                <option key={serviceType} value={serviceType}>
-                  {SERVICE_TYPE_LABELS[serviceType]}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {form.serviceType === "internet" || form.serviceType === "bundle" ? (
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-content-secondary">Speed (Mbps)</span>
-              <input
-                type="number"
-                min={1}
-                value={form.speedMbps}
-                onChange={(event) => setForm({ ...form, speedMbps: event.target.value })}
-                className={fieldClass}
-              />
-            </label>
           ) : (
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-content-secondary">Package Description</span>
-              <input
-                type="text"
-                value={form.cablePackageDescription}
-                onChange={(event) => setForm({ ...form, cablePackageDescription: event.target.value })}
-                placeholder="e.g. 40 channels"
-                className={fieldClass}
-              />
-            </label>
+            <TextField
+              id="planPackageDescription"
+              label="Package Description"
+              placeholder="e.g. 40 channels"
+              error={errors.cablePackageDescription?.message}
+              {...register("cablePackageDescription")}
+            />
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-content-secondary">Monthly Rate (₱)</span>
-              <input
-                type="number"
-                step="0.01"
-                min={0}
-                value={form.monthlyRatePesos}
-                onChange={(event) => setForm({ ...form, monthlyRatePesos: event.target.value })}
-                required
-                className={fieldClass}
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-content-secondary">Reconnection Fee (₱)</span>
-              <input
-                type="number"
-                step="0.01"
-                min={0}
-                value={form.reconnectionFeePesos}
-                onChange={(event) => setForm({ ...form, reconnectionFeePesos: event.target.value })}
-                className={fieldClass}
-              />
-            </label>
+            <TextField
+              id="planMonthlyRate"
+              label="Monthly Rate (₱)"
+              type="number"
+              step="0.01"
+              min={0}
+              required
+              error={errors.monthlyRatePesos?.message}
+              {...register("monthlyRatePesos")}
+            />
+            <TextField
+              id="planReconnectionFee"
+              label="Reconnection Fee (₱)"
+              type="number"
+              step="0.01"
+              min={0}
+              error={errors.reconnectionFeePesos?.message}
+              {...register("reconnectionFeePesos")}
+            />
           </div>
 
           <p className="text-xs text-content-secondary">

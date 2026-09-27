@@ -1,8 +1,15 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
-import { PAYMENT_METHOD_LABELS, type PostablePaymentMethod } from "@bcis/shared";
+import {
+  PAYMENT_METHOD_LABELS,
+  POSTABLE_PAYMENT_METHODS,
+  gcashPaymentDetailsSchema,
+  postPaymentSchema,
+} from "@bcis/shared";
 import {
   extractApiErrorMessage,
   getServiceAccountPaymentSummary,
@@ -10,10 +17,15 @@ import {
   searchSubscribers,
   uploadGcashScreenshot,
   type OutstandingInvoiceSummary,
+  type PostPaymentInput,
   type PostPaymentResult,
   type ServiceAccountPaymentSummary,
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly, parsePesosToCentavos } from "../lib/format";
+import { TextField } from "../components/form/TextField";
+import { TextareaField } from "../components/form/TextareaField";
+import { formResolver } from "../components/form/form-resolver";
+import { normalizeOptionalText } from "../components/form/form-values";
 
 interface ServiceAccountChoice {
   serviceAccountId: string;
@@ -31,6 +43,149 @@ interface ScreenshotUpload {
   fileName: string;
   contentType: string;
   dataBase64: string;
+}
+
+// The server's own field rules, read straight out of the schema it validates a
+// payment body with. `postPaymentSchema` wraps its object in a refinement (the
+// GCash rule), so `innerType()` is how you reach the individual fields. Reusing
+// them means the client cannot accept an amount or a reference the server refuses.
+const serverPaymentRules = postPaymentSchema.innerType().shape;
+
+/**
+ * Reads the typed peso amount and reports what is wrong with it.
+ *
+ * `parsePesosToCentavos` does the conversion with integer arithmetic only and
+ * refuses anything that is not digits with at most two decimal places, so a
+ * negative, non-numeric or over-precise entry never reaches the check below.
+ * Zero does reach it — and is refused by `amountCentavos`, the rule the server
+ * applies, which is why a zero amount is reported in the server's own words.
+ */
+function checkPaymentAmount(text: string, ctx: z.RefinementCtx): void {
+  const centavos = parsePesosToCentavos(text);
+
+  if (centavos === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Enter a peso amount in digits with at most two decimal places — for example 999.00",
+    });
+    return;
+  }
+
+  const fromServer = serverPaymentRules.amountCentavos.safeParse(centavos);
+  if (!fromServer.success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: fromServer.error.issues[0]?.message ?? "The amount was rejected",
+    });
+  }
+}
+
+/**
+ * The fields the payment form captures.
+ *
+ * The amount, the payment date and the GCash details are the server's own field
+ * rulers taken straight from `postPaymentSchema`, so the client cannot accept an
+ * amount or a reference the server would refuse. The GCash reference is the one
+ * exception: it is optional overall — it is required only for a GCash payment —
+ * so its rule is applied by the refinement below rather than to the field.
+ */
+const paymentFormFields = z.object({
+  paymentMethod: serverPaymentRules.paymentMethod,
+  amountText: z.string().trim().min(1, "Enter the amount").superRefine(checkPaymentAmount),
+  paymentDate: serverPaymentRules.paymentDate,
+  notes: serverPaymentRules.notes,
+  gcashReference: z.string().trim(),
+  gcashSenderName: gcashPaymentDetailsSchema.shape.senderName,
+  gcashSenderNumber: gcashPaymentDetailsSchema.shape.senderGcashNumber,
+});
+
+type PaymentFormValues = z.input<typeof paymentFormFields>;
+type PaymentFormFields = z.output<typeof paymentFormFields>;
+
+/**
+ * A GCash reference number is required only when the method is GCash — the same
+ * condition, and the same rule and message, as `postPaymentSchema`'s own
+ * refinement. The issue is aimed at the reference field so it can be shown beside
+ * it instead of on the GCash group as a whole.
+ */
+function checkGcashReference(values: PaymentFormFields, ctx: z.RefinementCtx): void {
+  if (values.paymentMethod !== "gcash") {
+    return;
+  }
+
+  const fromServer = gcashPaymentDetailsSchema.shape.referenceNumber.safeParse(
+    values.gcashReference
+  );
+  if (!fromServer.success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["gcashReference"],
+      message: fromServer.error.issues[0]?.message ?? "Enter the GCash reference number",
+    });
+  }
+}
+
+/**
+ * The Post Payment rules.
+ *
+ * The clerk types pesos and the API takes whole centavos, so this cannot be
+ * `postPaymentSchema` itself. It reuses that schema's rules and mirrors none: the
+ * amount rule is applied to the parsed centavos, and the transform below hands
+ * the submit handler the integer the API is sent.
+ */
+const paymentFormSchema = paymentFormFields
+  .superRefine(checkGcashReference)
+  .transform((values) => ({
+    ...values,
+    // The amount rule has already refused any text `parsePesosToCentavos` cannot
+    // read, so this fallback is unreachable; it keeps the transform total.
+    amountCentavos: parsePesosToCentavos(values.amountText) ?? 0,
+  }));
+
+type PaymentFormPayload = z.output<typeof paymentFormSchema>;
+
+/** The form as it opens: cash, today, and nothing typed in yet. */
+function emptyPaymentForm(): PaymentFormValues {
+  return {
+    paymentMethod: "cash",
+    amountText: "",
+    paymentDate: new Date().toISOString().slice(0, 10),
+    notes: undefined,
+    gcashReference: "",
+    gcashSenderName: undefined,
+    gcashSenderNumber: undefined,
+  };
+}
+
+/**
+ * Builds the request body.
+ *
+ * This is the one place the form becomes a payload, and it is the shape the screen
+ * has always sent: the amount is the integer centavos of the typed pesos, the
+ * optional text is trimmed and left out when it is blank, and the GCash block is
+ * present only for a GCash payment.
+ */
+function buildPaymentPayload(
+  values: PaymentFormPayload,
+  serviceAccountId: string,
+  screenshotFilePath: string | null
+): PostPaymentInput {
+  return {
+    serviceAccountId,
+    paymentMethod: values.paymentMethod,
+    amountCentavos: values.amountCentavos,
+    paymentDate: values.paymentDate,
+    notes: normalizeOptionalText(values.notes),
+    gcash:
+      values.paymentMethod === "gcash"
+        ? {
+            referenceNumber: values.gcashReference,
+            senderName: normalizeOptionalText(values.gcashSenderName),
+            senderGcashNumber: normalizeOptionalText(values.gcashSenderNumber),
+            screenshotFilePath: screenshotFilePath ?? undefined,
+          }
+        : undefined,
+  };
 }
 
 /**
@@ -95,22 +250,28 @@ export function PostPaymentPage(): ReactNode {
   const [selectedAccount, setSelectedAccount] = useState<ServiceAccountChoice | null>(null);
   const [summary, setSummary] = useState<ServiceAccountPaymentSummary | null>(null);
 
-  const [amountText, setAmountText] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PostablePaymentMethod>("cash");
-  const [notes, setNotes] = useState("");
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
-
-  const [gcashReference, setGcashReference] = useState("");
-  const [gcashSenderName, setGcashSenderName] = useState("");
-  const [gcashSenderNumber, setGcashSenderNumber] = useState("");
   const [screenshot, setScreenshot] = useState<ScreenshotUpload | null>(null);
   const [screenshotPath, setScreenshotPath] = useState<string | null>(null);
 
-  const [isPosting, setIsPosting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [result, setResult] = useState<PostPaymentResult | null>(null);
 
-  const amountCentavos = parsePesosToCentavos(amountText);
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    reset,
+    getValues,
+    formState: { errors, isSubmitting },
+  } = useForm<PaymentFormValues, unknown, PaymentFormPayload>({
+    resolver: formResolver(paymentFormSchema),
+    defaultValues: emptyPaymentForm(),
+  });
+
+  const paymentMethod = watch("paymentMethod");
+  const amountCentavos = parsePesosToCentavos(watch("amountText"));
+
   const preview =
     amountCentavos !== null && summary !== null
       ? previewAllocation(amountCentavos, summary.outstandingInvoices)
@@ -178,59 +339,80 @@ export function PostPaymentPage(): ReactNode {
     }
   }
 
-  async function submitPayment(): Promise<void> {
-    if (selectedAccount === null || amountCentavos === null || amountCentavos <= 0) {
-      setErrorMessage("Select a service account and enter an amount greater than zero.");
-      return;
-    }
-    if (paymentMethod === "gcash" && gcashReference.trim() === "") {
-      setErrorMessage("Enter the GCash reference number.");
+  const onSubmit = handleSubmit(async (values) => {
+    setErrorMessage(null);
+
+    if (selectedAccount === null) {
+      // Not a field: the account is chosen by search, not typed into the form.
+      setErrorMessage("Select a service account first.");
       return;
     }
 
-    setIsPosting(true);
-    setErrorMessage(null);
     try {
-      const posted = await postPayment({
-        serviceAccountId: selectedAccount.serviceAccountId,
-        paymentMethod,
-        amountCentavos,
-        paymentDate,
-        notes: notes.trim() === "" ? undefined : notes.trim(),
-        gcash:
-          paymentMethod === "gcash"
-            ? {
-                referenceNumber: gcashReference.trim(),
-                senderName: gcashSenderName.trim() === "" ? undefined : gcashSenderName.trim(),
-                senderGcashNumber:
-                  gcashSenderNumber.trim() === "" ? undefined : gcashSenderNumber.trim(),
-                screenshotFilePath: screenshotPath ?? undefined,
-              }
-            : undefined,
-      });
+      const posted = await postPayment(
+        buildPaymentPayload(values, selectedAccount.serviceAccountId, screenshotPath)
+      );
       setResult(posted);
     } catch (error) {
+      // A duplicate GCash reference or a closed period is the server's answer to a
+      // form the client had every reason to accept.
       setErrorMessage(extractApiErrorMessage(error));
-    } finally {
-      setIsPosting(false);
     }
+  });
+
+  function startAnotherPayment(): void {
+    setResult(null);
+    setSummary(null);
+    setSelectedAccount(null);
+    // Only what the screen cleared before: the amount and the reference.
+    reset({ ...getValues(), amountText: "", gcashReference: "" });
+    setScreenshot(null);
+    setScreenshotPath(null);
   }
 
   if (result !== null) {
+    // A GCash payment is recorded as claimed, not received: the server returns it
+    // in `pending_verification` with no allocation and no ledger entry, so the
+    // screen must not tell the cashier the account has been settled. The returned
+    // status is the authority, not the method that was selected.
+    const isAwaitingVerification = result.payment.status === "pending_verification";
+
     return (
       <main className="mx-auto max-w-3xl space-y-6 p-8">
         <header className="space-y-1">
-          <h1 className="text-2xl font-semibold">Payment posted</h1>
+          <h1 className="text-2xl font-semibold">
+            {isAwaitingVerification ? "GCash payment awaiting verification" : "Payment posted"}
+          </h1>
           <p className="text-sm text-content-secondary tabular-nums">
             Receipt <span className="font-mono">{result.payment.receiptNumber}</span> was issued for{" "}
             {formatCentavos(result.payment.amountCentavos)}.
           </p>
         </header>
 
+        {isAwaitingVerification && (
+          <p
+            role="status"
+            className="rounded-xl border border-warning-line bg-warning-soft px-4 py-3 text-sm text-warning-strong"
+          >
+            Nothing has been applied to the account. A verifier must confirm the GCash transfer
+            before this payment is posted; until then the outstanding balance stands as it was.
+          </p>
+        )}
+
         <section className="space-y-2 rounded-lg border border-line bg-surface p-5 text-sm shadow-sm">
-          <h2 className="text-base font-medium">Allocation</h2>
-          {result.allocations.length === 0 && result.advanceCreditCentavos === 0 && (
-            <p className="text-content-secondary">No invoices were outstanding.</p>
+          <h2 className="text-base font-medium">
+            {isAwaitingVerification ? "Allocation once verified" : "Allocation"}
+          </h2>
+          {isAwaitingVerification ? (
+            <p className="text-content-secondary">
+              No invoice balance has moved. The payment is applied oldest invoice first when it is
+              verified.
+            </p>
+          ) : (
+            result.allocations.length === 0 &&
+            result.advanceCreditCentavos === 0 && (
+              <p className="text-content-secondary">No invoices were outstanding.</p>
+            )
           )}
           {result.allocations.map((allocation) => (
             <div key={allocation.invoiceId} className="flex justify-between border-t border-line pt-2">
@@ -258,15 +440,7 @@ export function PostPaymentPage(): ReactNode {
           </button>
           <button
             type="button"
-            onClick={() => {
-              setResult(null);
-              setSummary(null);
-              setSelectedAccount(null);
-              setAmountText("");
-              setGcashReference("");
-              setScreenshot(null);
-              setScreenshotPath(null);
-            }}
+            onClick={startAnotherPayment}
             className="rounded border border-line-strong px-4 py-2 text-sm font-medium"
           >
             Post another payment
@@ -383,44 +557,45 @@ export function PostPaymentPage(): ReactNode {
       )}
 
       {summary !== null && (
-        <section className="space-y-4 rounded-lg border border-line bg-surface p-5 shadow-sm">
+        <form
+          noValidate
+          onSubmit={(event) => void onSubmit(event)}
+          className="space-y-4 rounded-lg border border-line bg-surface p-5 shadow-sm"
+        >
           <h2 className="text-base font-medium">3. Payment</h2>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-content-primary">Amount (₱)</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={amountText}
-                onChange={(event) => setAmountText(event.target.value)}
-                placeholder="999.00"
-                className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-              />
-              {amountCentavos !== null && (
-                <span className="text-xs text-content-secondary tabular-nums">
-                  {formatCentavos(amountCentavos)}
-                </span>
-              )}
-            </label>
+            <TextField
+              id="paymentAmount"
+              label="Amount (₱)"
+              inputMode="decimal"
+              placeholder="999.00"
+              hint={
+                amountCentavos === null ? undefined : (
+                  <span className="tabular-nums">{formatCentavos(amountCentavos)}</span>
+                )
+              }
+              error={errors.amountText?.message}
+              {...register("amountText")}
+            />
 
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-content-primary">Payment date</span>
-              <input
-                type="date"
-                value={paymentDate}
-                onChange={(event) => setPaymentDate(event.target.value)}
-                className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-              />
-            </label>
+            <TextField
+              id="paymentDate"
+              label="Payment date"
+              type="date"
+              error={errors.paymentDate?.message}
+              {...register("paymentDate")}
+            />
           </div>
 
-          <div className="flex gap-2">
-            {(["cash", "gcash"] as const).map((method) => (
+          <div className="flex flex-wrap gap-2">
+            {/* Driven by the shared list, so a method the API accepts can never be
+                missing from the counter (S3-1). */}
+            {POSTABLE_PAYMENT_METHODS.map((method) => (
               <button
                 key={method}
                 type="button"
-                onClick={() => setPaymentMethod(method)}
+                onClick={() => setValue("paymentMethod", method)}
                 className={`rounded border px-4 py-2 text-sm font-medium ${
                   paymentMethod === method
                     ? "border-navy bg-navy text-surface"
@@ -435,40 +610,31 @@ export function PostPaymentPage(): ReactNode {
           {paymentMethod === "gcash" && (
             <div className="space-y-3 rounded border border-line bg-canvas p-4">
               <div className="grid gap-3 sm:grid-cols-2">
+                <TextField
+                  id="gcashReference"
+                  label="Reference number"
+                  error={errors.gcashReference?.message}
+                  {...register("gcashReference")}
+                />
+                <TextField
+                  id="gcashSenderName"
+                  label="Sender name"
+                  error={errors.gcashSenderName?.message}
+                  {...register("gcashSenderName")}
+                />
+                <TextField
+                  id="gcashSenderNumber"
+                  label="Sender GCash number"
+                  error={errors.gcashSenderNumber?.message}
+                  {...register("gcashSenderNumber")}
+                />
                 <label className="block space-y-1">
-                  <span className="text-sm font-medium text-content-primary">Reference number</span>
-                  <input
-                    type="text"
-                    value={gcashReference}
-                    onChange={(event) => setGcashReference(event.target.value)}
-                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-content-primary">Sender name</span>
-                  <input
-                    type="text"
-                    value={gcashSenderName}
-                    onChange={(event) => setGcashSenderName(event.target.value)}
-                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-content-primary">Sender GCash number</span>
-                  <input
-                    type="text"
-                    value={gcashSenderNumber}
-                    onChange={(event) => setGcashSenderNumber(event.target.value)}
-                    className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-content-primary">Screenshot proof</span>
+                  <span className="text-xs font-medium text-content-secondary">Screenshot proof</span>
                   <input
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
                     onChange={(event) => void handleScreenshotChosen(event.target.files?.[0])}
-                    className="w-full text-sm"
+                    className="w-full text-sm text-content-primary"
                   />
                   {screenshot !== null && (
                     <span className="text-xs text-success-strong">Uploaded {screenshot.fileName}</span>
@@ -478,19 +644,21 @@ export function PostPaymentPage(): ReactNode {
             </div>
           )}
 
-          <label className="block space-y-1">
-            <span className="text-sm font-medium text-content-primary">Notes (optional)</span>
-            <textarea
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              rows={2}
-              className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-            />
-          </label>
+          <TextareaField
+            id="paymentNotes"
+            label="Notes (optional)"
+            rows={2}
+            error={errors.notes?.message}
+            {...register("notes")}
+          />
 
           {preview.length > 0 && (
             <div className="rounded border border-line bg-surface p-3 text-sm">
-              <p className="font-medium">This payment will be applied as follows:</p>
+              <p className="font-medium">
+                {paymentMethod === "gcash"
+                  ? "Once a verifier confirms the transfer, this payment will be applied as follows:"
+                  : "This payment will be applied as follows:"}
+              </p>
               {preview.map((line) => (
                 <div key={line.label} className="flex justify-between border-t border-line pt-1">
                   <span>{line.label}</span>
@@ -500,15 +668,17 @@ export function PostPaymentPage(): ReactNode {
             </div>
           )}
 
+          {/* The button stays live while the amount is wrong: the message under the
+              field is what tells the clerk why, and the resolver still refuses to
+              post anything the server would reject. */}
           <button
-            type="button"
-            onClick={() => void submitPayment()}
-            disabled={isPosting || amountCentavos === null || amountCentavos <= 0}
+            type="submit"
+            disabled={isSubmitting}
             className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong disabled:opacity-50"
           >
-            {isPosting ? "Posting…" : "Post Payment"}
+            {isSubmitting ? "Posting…" : "Post Payment"}
           </button>
-        </section>
+        </form>
       )}
     </main>
   );

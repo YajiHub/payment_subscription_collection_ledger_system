@@ -1,9 +1,28 @@
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
+import { z } from "zod";
 
 import { extractApiErrorMessage, login } from "../lib/api-client";
 import { useAuthStore } from "../stores/auth.store";
+import { TextField } from "../components/form/TextField";
+import { formResolver } from "../components/form/form-resolver";
+
+/**
+ * The sign-in rules.
+ *
+ * The server validates the login body with a schema of its own
+ * (`apps/server/src/modules/auth/auth.handler.ts`, `loginBodySchema`) which is not
+ * exported from `@bcis/shared`, so this mirrors it rule for rule and message for
+ * message. Keep the two in step.
+ */
+const loginFormSchema = z.object({
+  username: z.string().trim().min(1, "Username is required"),
+  password: z.string().min(1, "Password is required"),
+});
+
+type LoginFormValues = z.input<typeof loginFormSchema>;
 
 /**
  * The sign-in screen.
@@ -13,31 +32,37 @@ export function LoginPage(): ReactNode {
   const navigate = useNavigate();
   const setSession = useAuthStore((state) => state.login);
 
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginFormValues>({
+    resolver: formResolver(loginFormSchema),
+    defaultValues: { username: "", password: "" },
+  });
+
+  // What the server rejects — a wrong password, a locked account — is not a field
+  // error the client could have predicted, so it stays a banner above the button.
+  const onSubmit = handleSubmit(async (values) => {
     setErrorMessage(null);
-    setIsSubmitting(true);
-
     try {
-      const result = await login(username, password);
+      const result = await login(values.username, values.password);
       setSession(result.token, result.user);
       navigate("/", { replace: true });
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
-    } finally {
-      setIsSubmitting(false);
     }
-  }
+  });
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-canvas p-8">
       <form
-        onSubmit={handleSubmit}
+        // The browser's own bubble is replaced by this screen's field messages,
+        // so native validation is switched off and Zod decides.
+        noValidate
+        onSubmit={(event) => void onSubmit(event)}
         className="w-full max-w-sm space-y-5 rounded-lg border border-line bg-surface p-8 shadow-sm"
       >
         <header className="space-y-1">
@@ -45,29 +70,24 @@ export function LoginPage(): ReactNode {
           <p className="text-sm text-content-secondary">Enter your office credentials to continue.</p>
         </header>
 
-        <label className="block space-y-1">
-          <span className="text-sm font-medium text-content-primary">Username</span>
-          <input
-            type="text"
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="username"
-            required
-            className="w-full rounded border border-line-strong px-3 py-2 text-sm focus:border-accent focus:outline-none"
-          />
-        </label>
+        <TextField
+          id="username"
+          label="Username"
+          required
+          autoComplete="username"
+          error={errors.username?.message}
+          {...register("username")}
+        />
 
-        <label className="block space-y-1">
-          <span className="text-sm font-medium text-content-primary">Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
-            required
-            className="w-full rounded border border-line-strong px-3 py-2 text-sm focus:border-accent focus:outline-none"
-          />
-        </label>
+        <TextField
+          id="password"
+          label="Password"
+          type="password"
+          required
+          autoComplete="current-password"
+          error={errors.password?.message}
+          {...register("password")}
+        />
 
         {errorMessage !== null && (
           <p

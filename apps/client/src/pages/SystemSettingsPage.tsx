@@ -1,17 +1,52 @@
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 import type { SystemSetting } from "@bcis/shared";
 import { extractApiErrorMessage, getSystemSettings, updateSystemSettings } from "../lib/api-client";
 import { AppShell } from "../components/layout/AppShell";
+import { TextField } from "../components/form/TextField";
+import { formResolver } from "../components/form/form-resolver";
 import { Button } from "../components/ui/Button";
 import { Card, CardContent } from "../components/ui/Card";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
 import { Skeleton } from "../components/ui/Skeleton";
 
-const fieldClass =
-  "h-9 w-full rounded-lg border border-line-strong bg-surface px-3 font-mono text-sm text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
+/**
+ * The settings rules.
+ *
+ * `PUT /api/system/settings` validates `{ settings: [{ key, value }] }` against a
+ * handler-local schema (`apps/server/src/modules/system/system.handler.ts`,
+ * `updateSystemSettingsBodySchema`), which is not exported from `@bcis/shared`.
+ * The only rule it puts on a value is a length cap, mirrored here; the rest of the
+ * schema describes the envelope this screen builds from the rows it was given.
+ *
+ * Every key is recorded as a field of its own, so a value the server would refuse
+ * is reported under the box it was typed into. Setting keys are snake_case, which
+ * makes them safe React Hook Form field names.
+ */
+const settingsFormSchema = z.record(
+  z.string().max(1000, "A setting value is at most 1000 characters")
+);
+
+type SettingsFormValues = z.infer<typeof settingsFormSchema>;
+
+/**
+ * The rows the administrator actually changed, in the shape the API expects.
+ *
+ * One function, so the button's disabled state and the request body can never
+ * disagree about whether there is anything to save.
+ */
+function collectChangedSettings(
+  settings: readonly SystemSetting[],
+  draftValues: Readonly<Record<string, string | undefined>>
+): { key: string; value: string }[] {
+  return settings
+    .filter((setting) => draftValues[setting.key] !== setting.value)
+    .map((setting) => ({ key: setting.key, value: draftValues[setting.key] ?? setting.value }));
+}
 
 /**
  * Admin-only system settings screen.
@@ -20,11 +55,23 @@ const fieldClass =
  */
 export function SystemSettingsPage(): ReactNode {
   const [settings, setSettings] = useState<SystemSetting[]>([]);
-  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors },
+  } = useForm<SettingsFormValues>({
+    resolver: formResolver(settingsFormSchema),
+    defaultValues: {},
+  });
+
+  const draftValues = watch();
 
   const loadSettings = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -32,44 +79,43 @@ export function SystemSettingsPage(): ReactNode {
     try {
       const items = await getSystemSettings();
       setSettings(items);
-      setDraftValues(Object.fromEntries(items.map((setting) => [setting.key, setting.value])));
+      reset(Object.fromEntries(items.map((setting) => [setting.key, setting.value])));
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [reset]);
 
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
 
-  const changedSettings = settings
-    .filter((setting) => draftValues[setting.key] !== setting.value)
-    .map((setting) => ({ key: setting.key, value: draftValues[setting.key] ?? setting.value }));
+  const changedSettings = collectChangedSettings(settings, draftValues);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  const onSubmit = handleSubmit(async (values) => {
     setErrorMessage(null);
     setSavedMessage(null);
 
-    if (changedSettings.length === 0) {
+    const changes = collectChangedSettings(settings, values);
+
+    if (changes.length === 0) {
       setSavedMessage("No changes to save.");
       return;
     }
 
     setIsSaving(true);
     try {
-      const updated = await updateSystemSettings(changedSettings);
+      const updated = await updateSystemSettings(changes);
       setSettings(updated);
-      setDraftValues(Object.fromEntries(updated.map((setting) => [setting.key, setting.value])));
-      setSavedMessage(`Saved ${changedSettings.length} setting(s).`);
+      reset(Object.fromEntries(updated.map((setting) => [setting.key, setting.value])));
+      setSavedMessage(`Saved ${changes.length} setting(s).`);
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsSaving(false);
     }
-  }
+  });
 
   return (
     <AppShell
@@ -99,7 +145,7 @@ export function SystemSettingsPage(): ReactNode {
 
         <Card>
           <CardContent>
-            <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+            <form noValidate className="space-y-4" onSubmit={(event) => void onSubmit(event)}>
               {isLoading ? (
                 <div className="space-y-4">
                   {Array.from({ length: 4 }).map((_, index) => (
@@ -112,17 +158,15 @@ export function SystemSettingsPage(): ReactNode {
                 </div>
               ) : (
                 settings.map((setting) => (
-                  <label key={setting.key} className="block space-y-1.5">
-                    <span className="text-xs font-medium text-content-secondary">{setting.key}</span>
-                    <input
-                      className={fieldClass}
-                      value={draftValues[setting.key] ?? ""}
-                      onChange={(event) =>
-                        setDraftValues({ ...draftValues, [setting.key]: event.target.value })
-                      }
-                    />
-                    <span className="block text-xs text-content-secondary">{setting.description}</span>
-                  </label>
+                  <TextField
+                    key={setting.key}
+                    id={`setting-${setting.key}`}
+                    label={setting.key}
+                    className="font-mono"
+                    hint={setting.description}
+                    error={errors[setting.key]?.message}
+                    {...register(setting.key)}
+                  />
                 ))
               )}
 
