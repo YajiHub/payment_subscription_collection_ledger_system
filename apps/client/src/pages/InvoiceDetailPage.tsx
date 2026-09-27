@@ -50,7 +50,11 @@ function periodLabel(invoice: InvoiceDetail): string {
 
 /** Whether voiding is legal from the invoice's current state. */
 function canVoidStatus(status: InvoiceStatus): boolean {
-  return status !== "void" && status !== "paid";
+  // A paid invoice has already been settled, and a credited one was settled by
+  // advance credit, so neither has a debit left for a void to reverse. The
+  // server refuses voiding either state (void-invoice.service.ts), so the
+  // action must not be offered here.
+  return status !== "void" && status !== "paid" && status !== "credited";
 }
 
 /**
