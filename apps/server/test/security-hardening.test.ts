@@ -32,6 +32,7 @@ import { config } from "../src/config";
 import { buildServer } from "../src/index.ts";
 import { users } from "../src/db/schema/users";
 import { subscribers } from "../src/db/schema/subscribers";
+import { registerHealthRoutes } from "../src/modules/health/health.routes";
 import { securityPlugin } from "../src/shared/plugins/security.plugin";
 import { fakeDatabase } from "./support/fake-database";
 import { authorizationHeader, signTestToken } from "./support/tokens";
@@ -410,6 +411,33 @@ describe("rate limiting and transport hardening", () => {
 
     expect([first.statusCode, second.statusCode]).toEqual([200, 200]);
     expect(third.statusCode).toBe(429);
+
+    await limited.close();
+  });
+
+  it("exempts the liveness probes from the general limit", async () => {
+    // The desktop client polls these on a timer. Charging them to the same per-IP
+    // budget spent a quarter of it on asking whether the server was up, so a busy
+    // screen could exhaust the budget and stall its own data behind a 429.
+    const limited = Fastify();
+    await securityPlugin(limited, { rateLimitMax: 1 });
+    await registerHealthRoutes(limited);
+    limited.get("/ping", async () => ({ ok: true }));
+    await limited.ready();
+
+    // The control route is limited, so the ceiling really is one request...
+    const control = await limited.inject({ method: "GET", url: "/ping" });
+    expect(control.statusCode).toBe(200);
+    const controlBlocked = await limited.inject({ method: "GET", url: "/ping" });
+    expect(controlBlocked.statusCode).toBe(429);
+
+    // ...while the probes answer however many times they are asked.
+    for (let poll = 1; poll <= 5; poll++) {
+      const response = await limited.inject({ method: "GET", url: "/health" });
+      expect(response.statusCode, `poll ${poll}`).toBe(200);
+    }
+    const databaseProbe = await limited.inject({ method: "GET", url: "/health/db" });
+    expect(databaseProbe.statusCode).toBe(200);
 
     await limited.close();
   });

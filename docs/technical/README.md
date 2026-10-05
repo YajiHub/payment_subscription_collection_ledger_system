@@ -756,7 +756,7 @@ stops the server immediately with a readable message instead of failing later.
 | `JWT_SECRET`            | *(required, ≥ 32 chars)*    | Signing key for session tokens. Generate a fresh random string    |
 | `CORS_ORIGIN`           | `http://localhost:5173`     | Comma-separated browser origins allowed to call the API           |
 | `BCRYPT_ROUNDS`         | `12`                        | Password hashing cost factor. Never lower it in production        |
-| `RATE_LIMIT_MAX`        | `100`                       | Requests per minute per client IP                                 |
+| `RATE_LIMIT_MAX`        | `600`                       | Requests per minute per client IP. A coarse backstop, not the brute-force control; `/health` and `/health/db` are exempt so the client's liveness polling cannot spend this budget |
 | `LOGIN_RATE_LIMIT_MAX`  | `10`                        | Stricter login limit per client IP, per 5 minutes                 |
 | `UPLOADS_DIR`           | `uploads`                   | Where GCash proof screenshots are written                         |
 | `SEED_ADMIN_USERNAME`   | `admin`                     | Username `pnpm db:seed` creates when it is absent                  |

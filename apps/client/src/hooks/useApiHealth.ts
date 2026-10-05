@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 
 import { fetchDatabaseHealth, fetchServiceHealth } from "../lib/api-client";
-import { HEALTH_CHECK_INTERVAL_MS } from "../lib/constants";
+import { DATABASE_HEALTH_EVERY_N_POLLS, HEALTH_CHECK_INTERVAL_MS } from "../lib/constants";
 import { useApiStatusStore } from "../stores/api-status.store";
 
 /**
@@ -26,6 +26,7 @@ export function useApiHealth(): void {
   useEffect(() => {
     let isCancelled = false;
     let consecutiveFailures = 0;
+    let pollCount = 0;
 
     async function checkApiHealth(): Promise<void> {
       try {
@@ -35,6 +36,14 @@ export function useApiHealth(): void {
         }
         consecutiveFailures = 0;
         markReachable(serviceHealth.version);
+
+        // The database probe is the heavier of the two and its answer changes far
+        // less often, so it runs on the first poll and then only every few polls.
+        // Probing both on every tick is what doubled the request volume.
+        pollCount += 1;
+        if (pollCount !== 1 && pollCount % DATABASE_HEALTH_EVERY_N_POLLS !== 0) {
+          return;
+        }
 
         try {
           const databaseHealth = await fetchDatabaseHealth();
@@ -61,12 +70,27 @@ export function useApiHealth(): void {
 
     void checkApiHealth();
     const intervalHandle = setInterval(() => {
+      // A hidden window is nobody's problem: the operator is not looking at the
+      // badge, and a minimised terminal should not keep spending the server's
+      // request budget on a status nobody can see.
+      if (document.visibilityState === "hidden") {
+        return;
+      }
       void checkApiHealth();
     }, HEALTH_CHECK_INTERVAL_MS);
+
+    // Returning to the window should not wait a whole interval for an answer.
+    function handleVisibilityChange(): void {
+      if (document.visibilityState === "visible") {
+        void checkApiHealth();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       isCancelled = true;
       clearInterval(intervalHandle);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [markReachable, markUnreachable, setDatabaseStatus]);
 }

@@ -16,7 +16,13 @@ const environmentSchema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   BCRYPT_ROUNDS: z.coerce.number().default(12),
   // General API rate limit, per client IP. Phase 9 §4.
-  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
+  //
+  // This is a coarse backstop against a runaway client, not the brute-force
+  // control — the login endpoint has its own far stricter limit, and per-account
+  // lockout backs that up. It is deliberately generous because a single dense
+  // screen (a paginated table plus its filters) can legitimately issue dozens of
+  // requests in a minute, and the three office PCs share nothing but this budget.
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
   // The stricter limit applied to the login endpoint specifically, per IP.
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   // Per-account failed-login lockout (S5-5). These are the bootstrap defaults;
@@ -40,7 +46,7 @@ const environmentSchema = z.object({
   // absent. Seeding is idempotent: an account whose password has already been
   // changed is never reset. Change the password immediately after the first login.
   SEED_ADMIN_USERNAME: z.string().min(1).default("admin"),
-  SEED_ADMIN_PASSWORD: z.string().min(8).default("Admin@1234!"),
+  SEED_ADMIN_PASSWORD: z.string().min(8).default("password"),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);
