@@ -108,7 +108,6 @@ describe("billing and invoice routes", () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
     fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice for the period
@@ -150,7 +149,6 @@ describe("billing and invoice routes", () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
     fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice for the period
@@ -279,12 +277,11 @@ describe("billing and invoice routes", () => {
     expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "credited" });
   });
 
-  it("is idempotent: re-running the same period returns the recorded run and writes nothing new", async () => {
+  it("is idempotent: re-running a billed period bills nobody twice and writes nothing new", async () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     // First run: no invoice exists yet, so one is generated.
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
     fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice
@@ -305,17 +302,13 @@ describe("billing and invoice routes", () => {
     expect(insertedInto(invoices)).toHaveLength(1);
     expect(insertedInto(billingRuns)).toHaveLength(1);
 
-    // Second run for the same month: a completed run is already recorded, so the
-    // job returns that outcome and generates nothing again.
+    // Second run for the same month: the account already has a live invoice, so it
+    // is skipped. The run reports that it did nothing rather than repeating the
+    // first run's numbers, which is what the operator needs to see.
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([
-      {
-        totalServiceAccountsProcessed: 1,
-        totalInvoicesGenerated: 1,
-        totalInvoicesSkipped: 0,
-        totalAmountBilledCentavos: 99900,
-      },
-    ]); // the completed run for the period
+    fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
+    fakeDatabase.queueSelectRows([]); // lock the account row
+    fakeDatabase.queueSelectRows([{ id: INVOICE_ID }]); // the invoice already exists
 
     const secondRun = await server.inject({
       method: "POST",
@@ -326,9 +319,9 @@ describe("billing and invoice routes", () => {
 
     expect(secondRun.statusCode).toBe(201);
     expect(secondRun.json().data).toMatchObject({
-      totalInvoicesGenerated: 1,
-      totalInvoicesSkipped: 0,
-      totalAmountBilledCentavos: 99900,
+      totalInvoicesGenerated: 0,
+      totalInvoicesSkipped: 1,
+      totalAmountBilledCentavos: 0,
     });
 
     // Still exactly one invoice and one run record: the second run added neither.
@@ -442,7 +435,6 @@ describe("billing and invoice routes", () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
     fakeDatabase.queueSelectRows([]); // authenticate
-    fakeDatabase.queueSelectRows([]); // no completed run for the period yet
     fakeDatabase.queueSelectRows([monthlyBillingCandidate()]); // active accounts
     fakeDatabase.queueSelectRows([]); // lock the account row
     fakeDatabase.queueSelectRows([]); // no existing invoice

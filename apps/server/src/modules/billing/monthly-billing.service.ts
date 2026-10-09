@@ -213,27 +213,6 @@ async function lockBillingPeriod(
   );
 }
 
-/** The completed run already recorded for a period, if any. */
-async function findCompletedBillingRun(
-  executor: DbExecutor,
-  year: number,
-  month: number
-): Promise<typeof billingRuns.$inferSelect | undefined> {
-  return executor
-    .select()
-    .from(billingRuns)
-    .where(
-      and(
-        eq(billingRuns.billingPeriodYear, year),
-        eq(billingRuns.billingPeriodMonth, month),
-        eq(billingRuns.status, "completed")
-      )
-    )
-    .orderBy(desc(billingRuns.ranAt))
-    .limit(1)
-    .then((rows) => rows[0]);
-}
-
 /**
  * Generates one draft invoice per active service account for a billing period.
  *
@@ -244,9 +223,14 @@ async function findCompletedBillingRun(
  * two concurrent runs for the same period are serialized rather than racing on
  * invoice numbers.
  *
- * The run is idempotent per period: if a completed run already exists, its
- * recorded outcome is returned and nothing is generated again. Re-running is safe
- * and produces the same result.
+ * The run is idempotent PER ACCOUNT, which is what "no duplicate billing" actually
+ * requires: an account that already has a live invoice for the period is skipped,
+ * so running the job twice can never bill anyone twice. It deliberately does NOT
+ * refuse to run again for a period it has seen before — a service account
+ * activated after the first run still gets its invoice for that period, which is
+ * what the preview promises the operator before they confirm. A re-run that
+ * generates nothing writes no run record, so a period that needed no work keeps
+ * the history it had.
  */
 export async function runMonthlyBilling(
   billingYear: number,
@@ -255,18 +239,6 @@ export async function runMonthlyBilling(
 ): Promise<BillingRunResult> {
   return db.transaction(async (tx) => {
     await lockBillingPeriod(tx, billingYear, billingMonth);
-
-    const completedRun = await findCompletedBillingRun(tx, billingYear, billingMonth);
-    if (completedRun !== undefined) {
-      return {
-        billingPeriodYear: billingYear,
-        billingPeriodMonth: billingMonth,
-        totalServiceAccountsProcessed: completedRun.totalServiceAccountsProcessed,
-        totalInvoicesGenerated: completedRun.totalInvoicesGenerated,
-        totalInvoicesSkipped: completedRun.totalInvoicesSkipped,
-        totalAmountBilledCentavos: completedRun.totalAmountBilledCentavos,
-      };
-    }
 
     const candidates = await loadActiveBillingCandidates(tx);
 
@@ -291,17 +263,21 @@ export async function runMonthlyBilling(
       }
     }
 
-    // Commits with every invoice generated above, or rolls back with them.
-    await tx.insert(billingRuns).values({
-      billingPeriodYear: billingYear,
-      billingPeriodMonth: billingMonth,
-      totalServiceAccountsProcessed: candidates.length,
-      totalInvoicesGenerated: generated,
-      totalInvoicesSkipped: skipped,
-      totalAmountBilledCentavos,
-      status: "completed",
-      ranBy: initiatedByUserId,
-    });
+    // Commits with every invoice generated above, or rolls back with them. A run
+    // that generated nothing is not recorded: it did no work, and the period's
+    // history should not gain an entry describing work that never happened.
+    if (generated > 0) {
+      await tx.insert(billingRuns).values({
+        billingPeriodYear: billingYear,
+        billingPeriodMonth: billingMonth,
+        totalServiceAccountsProcessed: candidates.length,
+        totalInvoicesGenerated: generated,
+        totalInvoicesSkipped: skipped,
+        totalAmountBilledCentavos,
+        status: "completed",
+        ranBy: initiatedByUserId,
+      });
+    }
 
     return {
       billingPeriodYear: billingYear,

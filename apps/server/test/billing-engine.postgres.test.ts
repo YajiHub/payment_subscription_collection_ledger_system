@@ -29,7 +29,7 @@ import {
 } from "../src/modules/billing/invoices.service";
 import { voidInvoice } from "../src/modules/billing/void-invoice.service";
 import { postPayment } from "../src/modules/payments/post-payment.service";
-import { runMonthlyBilling } from "../src/modules/billing/monthly-billing.service";
+import { previewMonthlyBilling, runMonthlyBilling } from "../src/modules/billing/monthly-billing.service";
 import { deleteAuditLogsForUsers } from "./support/audit-cleanup";
 import { deleteLedgerEntriesForServiceAccounts } from "./support/ledger-cleanup";
 
@@ -277,10 +277,12 @@ describe.skipIf(!databaseIsReachable)("WP2 billing engine against real PostgreSQ
     );
     expect(accountInvoices.rowCount).toBe(1);
 
-    // A re-run for the same period returns the recorded outcome and generates
-    // nothing again.
+    // AT-11: re-running must never bill the same account twice. It reports what it
+    // actually did — nothing — rather than repeating the first run's numbers back.
     const secondRun = await runMonthlyBilling(year, month, adminId);
-    expect(secondRun).toEqual(firstRun);
+    expect(secondRun.totalInvoicesGenerated).toBe(0);
+    expect(secondRun.totalInvoicesSkipped).toBe(firstRun.totalServiceAccountsProcessed);
+    expect(secondRun.totalAmountBilledCentavos).toBe(0);
 
     const invoicesAfter = await pool.query(
       `SELECT id FROM invoices WHERE service_account_id = $1 AND billing_period_year = $2 AND billing_period_month = $3`,
@@ -292,13 +294,52 @@ describe.skipIf(!databaseIsReachable)("WP2 billing engine against real PostgreSQ
       .select({ id: billingRuns.id })
       .from(billingRuns)
       .where(eq(billingRuns.billingPeriodYear, year));
-    // Exactly one run record exists for the period: the idempotent re-run added none.
     expect(runs.length).toBeGreaterThanOrEqual(1);
+    // A re-run that generated nothing is not recorded: the period's history is
+    // unchanged, so the run list never shows a run that did no work.
     const runCount = await pool.query(
       `SELECT count(*)::int AS count FROM billing_runs WHERE billing_period_year = $1 AND billing_period_month = $2`,
       [year, month]
     );
     expect(runCount.rows[0]?.count).toBe(1);
+  });
+
+  it("bills a service account activated after the period had already been run", async () => {
+    const year = 2032;
+    const month = 3;
+
+    const firstRun = await runMonthlyBilling(year, month, adminId);
+    expect(firstRun.totalInvoicesGenerated).toBeGreaterThanOrEqual(1);
+
+    // A subscriber is installed after the run went out, so the period is already
+    // billed for everyone who existed at the time.
+    const lateAccountId = await createActiveServiceAccount("LateJoiner");
+
+    // The preview behind the confirmation dialog promises this account will be
+    // billed, and the operator confirms on that basis.
+    const preview = await previewMonthlyBilling(year, month);
+    expect(preview.accountsToBill).toBe(1);
+    expect(preview.accountsAlreadyBilled).toBe(firstRun.totalServiceAccountsProcessed);
+
+    // Confirming must do what the preview promised. It used to answer with the
+    // first run's totals and bill nobody, so the account silently went unbilled.
+    const secondRun = await runMonthlyBilling(year, month, adminId);
+    expect(secondRun.totalInvoicesGenerated).toBe(1);
+    expect(secondRun.totalInvoicesSkipped).toBe(firstRun.totalServiceAccountsProcessed);
+    expect(secondRun.totalAmountBilledCentavos).toBeGreaterThan(0);
+
+    const lateInvoices = await pool.query(
+      `SELECT id FROM invoices WHERE service_account_id = $1 AND billing_period_year = $2 AND billing_period_month = $3`,
+      [lateAccountId, year, month]
+    );
+    expect(lateInvoices.rowCount).toBe(1);
+
+    // Both runs did work, so both are recorded.
+    const runCount = await pool.query(
+      `SELECT count(*)::int AS count FROM billing_runs WHERE billing_period_year = $1 AND billing_period_month = $2`,
+      [year, month]
+    );
+    expect(runCount.rows[0]?.count).toBe(2);
   });
 
   it("marks an invoice CREDITED when advance credit fully settles it", async () => {
@@ -696,14 +737,18 @@ describe.skipIf(!databaseIsReachable)("WP2 billing engine against real PostgreSQ
     const month = 4;
 
     // Two servers billing the same period at the same moment. The period advisory
-    // lock serializes them; the second finds the completed run and generates
-    // nothing, so the period is billed exactly once.
+    // lock serializes them, so whichever runs second finds every invoice already in
+    // place and generates nothing: the period is billed exactly once. Which of the
+    // two does the work is not deterministic, so assert on the pair.
     const [firstRun, secondRun] = await Promise.all([
       runMonthlyBilling(year, month, adminId),
       runMonthlyBilling(year, month, adminId),
     ]);
 
-    expect(firstRun).toEqual(secondRun);
+    expect(Math.min(firstRun.totalInvoicesGenerated, secondRun.totalInvoicesGenerated)).toBe(0);
+    expect(firstRun.totalInvoicesGenerated + secondRun.totalInvoicesGenerated).toBe(
+      firstRun.totalServiceAccountsProcessed
+    );
 
     const accountInvoices = await pool.query(
       `SELECT count(*)::int AS count FROM invoices
