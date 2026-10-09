@@ -8,6 +8,7 @@
 
 import { z } from "zod";
 
+import { queryNumber } from "./query-number";
 import {
   GCASH_REJECTION_REASON_MIN_LENGTH,
   GCASH_SCREENSHOT_MIME_TYPES,
@@ -123,12 +124,14 @@ export type RejectGcashPaymentFields = z.infer<typeof rejectGcashPaymentSchema>;
 /** The filters the payment history screen may apply. */
 export const listPaymentsQuerySchema = z.object({
   serviceAccountId: z.string().uuid().optional(),
+  // Filters the history to one subscriber's payments across all their accounts.
+  subscriberId: z.string().uuid().optional(),
   method: z.enum(PAYMENT_METHODS).optional(),
   status: z.enum(PAYMENT_STATUSES).optional(),
   dateFrom: z.string().date().optional(),
   dateTo: z.string().date().optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(200)).default(50),
 });
 export type ListPaymentsQuery = z.infer<typeof listPaymentsQuerySchema>;
 

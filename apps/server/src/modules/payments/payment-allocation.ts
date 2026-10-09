@@ -91,18 +91,42 @@ export interface InvoiceBalance {
   remainingBalanceCentavos: number;
 }
 
-export interface InvoiceBalanceUpdate {
-  paidAmountCentavos: number;
-  remainingBalanceCentavos: number;
-  status: "partial" | "paid";
+/** The three invoice_status values the money applied to an invoice can produce. */
+export type InvoicePaidStatus = "unpaid" | "partially_paid" | "paid";
+
+/**
+ * The invoice status implied by the money actually applied to it:
+ *
+ *   • nothing applied     → "unpaid"
+ *   • some, but not all   → "partially_paid"
+ *   • all of it           → "paid"
+ *
+ * This is the ONE place the rule lives. Posting a payment and reversing one both
+ * recompute an invoice's status; keeping the rule here is what stops a reversal
+ * from relabelling an invoice that still holds other payments as `unpaid`.
+ */
+export function toInvoiceStatusFromBalance(
+  paidAmountCentavos: number,
+  totalAmountCentavos: number
+): InvoicePaidStatus {
+  if (paidAmountCentavos <= 0) {
+    return "unpaid";
+  }
+
+  return paidAmountCentavos >= totalAmountCentavos ? "paid" : "partially_paid";
+}
+
+/** The invoice status after applying a payment, with the new balances. */
+export interface InvoiceBalanceUpdate extends InvoiceBalance {
+  status: InvoicePaidStatus;
 }
 
 /**
  * The new paid amount, remaining balance, and status after applying a payment.
  *
- * The status is deliberately returned as `"partial"` or `"paid"` rather than the
- * database values, so the caller maps it to the invoice_status enum explicitly
- * (partially_paid vs paid) and a new status cannot leak in silently.
+ * The status comes from `toInvoiceStatusFromBalance`, so an allocation and a
+ * reversal can never disagree about what a balance means. An applied amount is
+ * always positive, so the answer here is `paid` or `partially_paid`.
  */
 export function applyPaymentToInvoice(
   invoice: InvoiceBalance,
@@ -120,15 +144,11 @@ export function applyPaymentToInvoice(
   const remainingBalanceCentavos = invoice.totalAmountCentavos - paidAmountCentavos;
 
   return {
+    totalAmountCentavos: invoice.totalAmountCentavos,
     paidAmountCentavos,
     remainingBalanceCentavos,
-    status: remainingBalanceCentavos === 0 ? "paid" : "partial",
+    status: toInvoiceStatusFromBalance(paidAmountCentavos, invoice.totalAmountCentavos),
   };
-}
-
-/** Maps the allocation result's status to the invoice_status enum value. */
-export function toInvoiceStatus(update: InvoiceBalanceUpdate): "paid" | "partially_paid" {
-  return update.status === "paid" ? "paid" : "partially_paid";
 }
 
 // ─── Manual allocation (S3-5) ─────────────────────────────────────────────────

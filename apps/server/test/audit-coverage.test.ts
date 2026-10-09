@@ -170,6 +170,94 @@ describe("audit helpers for the previously unaudited operations", () => {
     expect(row?.newState).toMatchObject({ key: "late_fee_centavos", value: "7500" });
   });
 
+  it("records a PENDING GCash claim so it can never be read as a posted payment", async () => {
+    await audit.gcashClaimRecorded(
+      {
+        id: "pay-claim",
+        receiptNumber: "OR-2025-000042",
+        amountCentavos: 50000,
+        gcashReferenceNumber: "GC-777",
+      },
+      ACTOR
+    );
+
+    const row = auditRows()[0];
+    expect(row).toMatchObject({
+      action: "payment.gcash_claim_recorded",
+      entityType: "payment",
+      entityId: "pay-claim",
+      performedBy: ACTOR.userId,
+      previousState: null,
+    });
+    // The snapshot states the PENDING status, and the description says no money has
+    // been received — the row cannot be mistaken for `payment.posted`.
+    expect(row?.newState).toMatchObject({ status: "pending_verification" });
+    expect(String(row?.description)).toContain("no money received");
+  });
+
+  it("records a GCash screenshot upload with the actor and the stored file", async () => {
+    await audit.gcashScreenshotUploaded(
+      { filePath: "gcash-proofs/2025/03/gcash-x.png", sizeBytes: 2048, contentType: "image/png" },
+      ACTOR
+    );
+
+    const row = auditRows()[0];
+    expect(row).toMatchObject({
+      action: "payment.gcash_screenshot_uploaded",
+      entityType: "payment",
+      performedBy: ACTOR.userId,
+      newState: {
+        filePath: "gcash-proofs/2025/03/gcash-x.png",
+        sizeBytes: 2048,
+        contentType: "image/png",
+      },
+    });
+  });
+
+  it("records a PENDING GCash claim so it can never be read as a posted payment", async () => {
+    await audit.gcashClaimRecorded(
+      {
+        id: "pay-claim",
+        receiptNumber: "OR-2025-000042",
+        amountCentavos: 50000,
+        gcashReferenceNumber: "GC-777",
+      },
+      ACTOR
+    );
+
+    const row = auditRows()[0];
+    expect(row).toMatchObject({
+      action: "payment.gcash_claim_recorded",
+      entityType: "payment",
+      entityId: "pay-claim",
+      performedBy: ACTOR.userId,
+      previousState: null,
+    });
+    // The snapshot states the PENDING status, and the description says no money has
+    // been received — the row cannot be mistaken for `payment.posted`.
+    expect(row?.newState).toMatchObject({ status: "pending_verification" });
+    expect(String(row?.description)).toContain("no money received");
+  });
+
+  it("records a GCash screenshot upload with the actor and the stored file", async () => {
+    await audit.gcashScreenshotUploaded(
+      { filePath: "gcash-proofs/2025/03/gcash-x.png", sizeBytes: 2048, contentType: "image/png" },
+      ACTOR
+    );
+
+    const row = auditRows()[0];
+    expect(row).toMatchObject({
+      action: "payment.gcash_screenshot_uploaded",
+      entityType: "payment",
+      performedBy: ACTOR.userId,
+      newState: {
+        filePath: "gcash-proofs/2025/03/gcash-x.png",
+        sizeBytes: 2048,
+        contentType: "image/png",
+      },
+    });
+  });
+
   // S5-6: GCash verify and reject are wired by the payments package (S3-2). These
   // pin the helper contract the handlers call; the handler wiring itself is proved in
   // gcash-verification.test.ts.

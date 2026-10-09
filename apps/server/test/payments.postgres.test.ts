@@ -129,6 +129,8 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
       [created.serviceAccountIds]
     );
     // The ledger references both payments and invoices, so it is cleared first.
+    // `ledger_entries` is append-only, so the test-only helper disables the
+    // trigger for the duration of one transaction.
     await deleteLedgerEntriesForServiceAccounts(created.serviceAccountIds);
     await pool.query("DELETE FROM payments WHERE service_account_id = ANY($1::uuid[])", [
       created.serviceAccountIds,
@@ -252,12 +254,37 @@ describe.skipIf(!databaseIsReachable)("Phase 5 against real PostgreSQL", () => {
     expect(postResponse.statusCode).toBe(201);
     const posted = postResponse.json().data;
     expect(posted.payment.receiptNumber).toMatch(/^OR-\d{4}-\d{6}$/);
-    // Oldest invoice (50000) is filled first, then 50000 of the second.
+    // Oldest invoice (50000) is filled first, then 50000 of the second. The POST
+    // response carries the read-path allocation shape — invoice number and
+    // allocated amount — never the internal draft's bare `amountCentavos`.
     expect(posted.allocations).toEqual([
-      { invoiceId: oldestInvoiceId, amountCentavos: 50000 },
-      { invoiceId: newestInvoiceId, amountCentavos: 50000 },
+      {
+        invoiceId: oldestInvoiceId,
+        invoiceNumber: expect.stringMatching(/^INV-INT-/),
+        allocatedAmountCentavos: 50000,
+      },
+      {
+        invoiceId: newestInvoiceId,
+        invoiceNumber: expect.stringMatching(/^INV-INT-/),
+        allocatedAmountCentavos: 50000,
+      },
+    ]);
+    expect(Object.keys(posted.allocations[0]).sort()).toEqual([
+      "allocatedAmountCentavos",
+      "invoiceId",
+      "invoiceNumber",
     ]);
     expect(posted.allocatedCentavos + posted.advanceCreditCentavos).toBe(100000);
+
+    // The contract: the POST response's allocations are exactly what a read of the
+    // same payment returns. A client reading one shape is never handed another.
+    const detailResponse = await server.inject({
+      method: "GET",
+      url: `/api/payments/${posted.payment.id as string}`,
+      headers,
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json().data.allocations).toEqual(posted.allocations);
 
     // ── Verify the invoice statuses in the database ──────────────────────────
     expect(await invoiceState(oldestInvoiceId)).toMatchObject({

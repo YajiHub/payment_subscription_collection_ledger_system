@@ -149,7 +149,11 @@ describe("the five payment methods (S3-1)", () => {
       );
       expect(response.json().data.payment.status).toBe("posted");
       expect(response.json().data.allocations).toEqual([
-        { invoiceId: INVOICE_ID, amountCentavos: PAYMENT_AMOUNT_CENTAVOS },
+        {
+          invoiceId: INVOICE_ID,
+          invoiceNumber: "INV-2025-01-000001",
+          allocatedAmountCentavos: PAYMENT_AMOUNT_CENTAVOS,
+        },
       ]);
 
       const allocationRows = fakeDatabase.insertedRows.find(
@@ -246,7 +250,11 @@ describe("the five payment methods (S3-1)", () => {
       status: "posted",
     });
     expect(verified.json().data.allocations).toEqual([
-      { invoiceId: INVOICE_ID, amountCentavos: PAYMENT_AMOUNT_CENTAVOS },
+      {
+        invoiceId: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        allocatedAmountCentavos: PAYMENT_AMOUNT_CENTAVOS,
+      },
     ]);
     expect(fakeDatabase.updatedRows.find((row) => row.table === invoices)?.values).toMatchObject({
       remainingBalanceCentavos: 0,

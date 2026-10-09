@@ -72,6 +72,35 @@ export async function logAuditEntry(entry: AuditEntry): Promise<void> {
 /** The fields every audited document carries. A spread of any row satisfies it. */
 type AuditedDocument = { id: string } & Record<string, unknown>;
 
+/**
+ * The fields a void writes onto the invoice row. A void's "previous" snapshot must
+ * never carry them: the document handed to `invoiceVoided` has already been voided,
+ * so spreading it unchecked would present the void's own output as the state that
+ * preceded it (an invoice that was already void when it was voided).
+ */
+const VOID_WRITTEN_FIELDS = [
+  "voidedAt",
+  "voidedBy",
+  "voidedByTransactionId",
+  "notes",
+] as const;
+
+/**
+ * The invoice as it was BEFORE the void: the voided document with every field the
+ * void itself wrote removed, and the real prior status restored. Everything left is
+ * untouched by the void and is therefore a true before-image.
+ */
+function invoiceBeforeVoid(
+  document: AuditedDocument,
+  previousStatus: InvoiceStatus
+): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = { ...document, status: previousStatus };
+  for (const field of VOID_WRITTEN_FIELDS) {
+    delete snapshot[field];
+  }
+  return snapshot;
+}
+
 function actorFields(actor: AuditActor) {
   return {
     performedBy: actor.userId,
@@ -84,8 +113,22 @@ function actorFields(actor: AuditActor) {
 export function requestActor(request: FastifyRequest): AuditActor {
   return {
     userId: request.user?.id ?? null,
+    // The username travels on the verified token (see JwtPayload), so naming the
+    // actor costs nothing extra at write time. It stays null for a token minted
+    // before the username was added, rather than showing an anonymous "system".
+    username: request.user?.username ?? null,
     clientIpAddress: request.ip,
   };
+}
+
+/**
+ * The audit-row actor fields for an authenticated request.
+ *
+ * Callers that build an `AuditEntry` directly spread this, so a request never
+ * records a nameless actor just because it did not go through a named helper.
+ */
+export function requestActorFields(request: FastifyRequest) {
+  return actorFields(requestActor(request));
 }
 
 // ─── Named helpers for the actions the system records ────────────────────────
@@ -117,8 +160,10 @@ export const audit = {
       // The status the invoice actually held is passed in, because the document
       // handed to this helper has already been voided. A literal here would
       // misreport what the void changed (and `posted` stopped existing when
-      // migration 0020 renamed it to `unpaid`).
-      previousState: { ...document, status: previousStatus },
+      // migration 0020 renamed it to `unpaid`). The fields the void itself wrote
+      // are stripped, so the snapshot does not show a void that had already
+      // happened at the moment it was recorded.
+      previousState: invoiceBeforeVoid(document, previousStatus),
       newState: { ...document, status: "void" },
       description: `Invoice ${String(document.invoiceNumber)} voided. Reason: ${reason}`,
       ...actorFields(actor),
@@ -195,6 +240,21 @@ export const audit = {
       entityId: document.id,
       newState: document,
       description: `Service account ${String(document.serviceAccountNumber)} suspended. Reason: ${reason}`,
+      ...actorFields(actor),
+    });
+  },
+
+  serviceAccountActivated(
+    document: AuditedDocument,
+    reason: string,
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "service_account.activated",
+      entityType: "service_account",
+      entityId: document.id,
+      newState: document,
+      description: `Service account ${String(document.serviceAccountNumber)} activated. Reason: ${reason}`,
       ...actorFields(actor),
     });
   },
@@ -290,6 +350,62 @@ export const audit = {
   },
 
   // ─── GCash verification (S3-2, S5-6) ──────────────────────────────────────
+  /**
+   * Records that a GCash claim was entered as PENDING verification.
+   *
+   * This is money-adjacent but moves no balance, so the snapshot names the pending
+   * status explicitly and the description says no money has been received. An
+   * auditor reading the trail must never mistake this row for `payment.posted`.
+   */
+  gcashClaimRecorded(
+    document: {
+      id: string;
+      receiptNumber: string;
+      amountCentavos: number;
+      gcashReferenceNumber: string;
+    },
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "payment.gcash_claim_recorded",
+      entityType: "payment",
+      entityId: document.id,
+      // No prior row existed, so there is no previous state; the new state pins the
+      // PENDING status so the row can never be read as money received.
+      newState: {
+        id: document.id,
+        receiptNumber: document.receiptNumber,
+        status: "pending_verification",
+        gcashReferenceNumber: document.gcashReferenceNumber,
+        amountCentavos: document.amountCentavos,
+      },
+      description: `GCash claim ${document.gcashReferenceNumber} recorded as PENDING verification (${document.amountCentavos} centavos, receipt ${document.receiptNumber}) — no money received yet`,
+      ...actorFields(actor),
+    });
+  },
+
+  /**
+   * Records that a GCash proof screenshot was uploaded.
+   *
+   * The upload happens BEFORE the claim is recorded (the client attaches the file
+   * path to the payment it then creates), so there is no payment row to point at;
+   * the nil UUID is the conventional "no single entity" value. The stored, server
+   * generated file name is kept in the snapshot for attribution.
+   */
+  gcashScreenshotUploaded(
+    document: { filePath: string; sizeBytes: number; contentType: string },
+    actor: AuditActor
+  ): Promise<void> {
+    return logAuditEntry({
+      action: "payment.gcash_screenshot_uploaded",
+      entityType: "payment",
+      entityId: AUDIT_NO_ENTITY_ID,
+      newState: document,
+      description: `GCash proof screenshot ${document.filePath} uploaded (${document.contentType}, ${document.sizeBytes} bytes)`,
+      ...actorFields(actor),
+    });
+  },
+
   gcashPaymentVerified(
     paymentId: string,
     gcashReferenceNumber: string,

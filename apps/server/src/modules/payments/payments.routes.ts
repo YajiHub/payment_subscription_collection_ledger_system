@@ -3,8 +3,11 @@
 
 import type { FastifyInstance } from "fastify";
 
+import { GCASH_SCREENSHOT_MAX_REQUEST_BYTES } from "@bcis/shared";
+
 import { authenticate } from "../../shared/middleware/authenticate";
 import { authorize } from "../../shared/middleware/authorize";
+import { requireGcashProofViewer } from "./gcash-proof-access";
 import {
   downloadGcashScreenshotHandler,
   getPaymentByReceiptHandler,
@@ -29,6 +32,10 @@ export async function registerPaymentRoutes(server: FastifyInstance): Promise<vo
   // clerk who may record a GCash payment cannot also wave it through.
   const verifyGcash = { preHandler: [authenticate, authorize("payments:verify_gcash")] };
   const rejectGcash = { preHandler: [authenticate, authorize("payments:reject_gcash")] };
+  // A proof screenshot is customer evidence, so it is NOT readable under the
+  // general `payments:read`. Only whoever may act on the claim (verify/reject) or
+  // whoever recorded it may download the image — see gcash-proof-access.ts.
+  const gcashProofView = { preHandler: [authenticate, requireGcashProofViewer()] };
   // S3-5: directing a payment at chosen invoices is its own authority.
   const manualAllocation = {
     preHandler: [authenticate, authorize("payments:allocate_manually")],
@@ -37,8 +44,15 @@ export async function registerPaymentRoutes(server: FastifyInstance): Promise<vo
   // Static paths are declared first so a literal segment (receipt, gcash) is never
   // swallowed by the :id route.
   server.get("/api/payments/receipt/:receiptNumber", read, getPaymentByReceiptHandler);
-  server.post("/api/payments/gcash/upload-screenshot", post, uploadGcashScreenshotHandler);
-  server.get("/api/payments/gcash/screenshot/:paymentId", read, downloadGcashScreenshotHandler);
+  // The 1 MB general body limit is smaller than a 5 MB image once base64-encoded,
+  // so this one route raises its limit to let the upload reach the 5 MB size check
+  // that actually enforces the documented cap.
+  server.post(
+    "/api/payments/gcash/upload-screenshot",
+    { ...post, bodyLimit: GCASH_SCREENSHOT_MAX_REQUEST_BYTES },
+    uploadGcashScreenshotHandler
+  );
+  server.get("/api/payments/gcash/screenshot/:paymentId", gcashProofView, downloadGcashScreenshotHandler);
   server.get("/api/payments/gcash/pending", verifyGcash, listPendingGcashPaymentsHandler);
   server.post("/api/payments/gcash/:id/verify", verifyGcash, verifyGcashPaymentHandler);
   server.post("/api/payments/gcash/:id/reject", rejectGcash, rejectGcashPaymentHandler);

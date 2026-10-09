@@ -16,7 +16,7 @@ import {
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
-import { requestActor } from "../../shared/audit/audit-logger";
+import { audit, requestActor } from "../../shared/audit/audit-logger";
 import { postPayment } from "./post-payment.service";
 import { rejectGcashPayment, verifyGcashPayment } from "./verify-gcash-payment.service";
 import { reversePayment } from "./reverse-payment.service";
@@ -175,6 +175,7 @@ export async function listPaymentsHandler(
   const query = parseOrThrow(listPaymentsQuerySchema, request.query);
   const page = await listPayments({
     serviceAccountId: query.serviceAccountId,
+    subscriberId: query.subscriberId,
     method: query.method,
     status: query.status,
     dateFrom: query.dateFrom,
@@ -245,6 +246,13 @@ export async function uploadGcashScreenshotHandler(
     contentType: body.contentType,
     dataBase64: body.dataBase64,
   });
+
+  // Attaching evidence to a claim is attributable: the upload is recorded with the
+  // actor and the server-generated file name. The claim itself does not exist yet
+  // (its path is attached when the payment is posted), so the row carries the nil
+  // entity id used for events with no single row.
+  await audit.gcashScreenshotUploaded({ ...stored, contentType: body.contentType }, requestActor(request));
+
   return sendSuccess(reply, stored, 201);
 }
 

@@ -123,6 +123,8 @@ export interface ServiceAccountPaymentSummary {
 
 export interface ListPaymentsFilters {
   serviceAccountId?: string;
+  /** One subscriber's payments across every service account they hold. */
+  subscriberId?: string;
   method?: PaymentMethod;
   status?: PaymentStatus;
   dateFrom?: string;
@@ -232,6 +234,9 @@ export async function listPayments(
   if (filters.serviceAccountId !== undefined) {
     conditions.push(eq(payments.serviceAccountId, filters.serviceAccountId));
   }
+  if (filters.subscriberId !== undefined) {
+    conditions.push(eq(subscribers.id, filters.subscriberId));
+  }
   if (filters.method !== undefined) {
     conditions.push(eq(payments.paymentMethod, filters.method));
   }
@@ -319,6 +324,25 @@ export async function getPaymentById(paymentId: string): Promise<PaymentDetail> 
   }
 
   return withDetail(db, summary);
+}
+
+/**
+ * The id of the user who recorded a payment, or null when no such payment exists.
+ *
+ * Used by the GCash proof-access guard, which lets the person who recorded a claim
+ * view the proof they attached without granting that to every `payments:read`
+ * holder. A missing payment reads as null, so the guard refuses without revealing
+ * whether the row exists.
+ */
+export async function getPaymentRecorderId(paymentId: string): Promise<string | null> {
+  const row = await db
+    .select({ postedBy: payments.postedBy })
+    .from(payments)
+    .where(eq(payments.id, paymentId))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  return row?.postedBy ?? null;
 }
 
 /** Loads one payment by its Official Receipt number, for the receipt lookup. */

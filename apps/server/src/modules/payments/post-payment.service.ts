@@ -16,7 +16,7 @@
 // never leave a payment without its allocations, or an invoice balance updated
 // without the payment that changed it.
 
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import type { PostablePaymentMethod } from "@bcis/shared";
 import { db, type DbExecutor } from "../../db/connection";
@@ -38,13 +38,13 @@ import {
   allocatePayment,
   applyPaymentToInvoice,
   buildManualAllocation,
-  toInvoiceStatus,
   type AllocationResult,
   type ManualAllocationInput,
   type OutstandingInvoice,
   type PaymentAllocationDraft,
 } from "./payment-allocation";
 import { getNextReceiptNumber } from "./receipt-number.service";
+import type { PaymentAllocationSummary } from "./payments.service";
 
 export interface GcashDetailsInput {
   referenceNumber: string;
@@ -78,9 +78,39 @@ export interface PostPaymentInput {
 export interface PostPaymentResult {
   payment: Payment;
   gcash: GcashPayment | null;
-  allocations: PaymentAllocationDraft[];
+  allocations: PaymentAllocationSummary[];
   allocatedCentavos: number;
   advanceCreditCentavos: number;
+}
+
+/**
+ * Turns the allocation engine's internal persistence drafts into the allocation
+ * shape every read endpoint returns: `{ invoiceId, invoiceNumber,
+ * allocatedAmountCentavos }`.
+ *
+ * The draft (`PaymentAllocationDraft`) stays the persistence shape — it maps
+ * straight onto the `allocated_amount_centavos` column and has no invoice number
+ * to give. This function is the HTTP response boundary, so a client that reads one
+ * allocation shape is never handed another.
+ */
+export function toAllocationSummaries(
+  allocations: readonly PaymentAllocationDraft[],
+  outstandingInvoices: readonly OutstandingInvoice[]
+): PaymentAllocationSummary[] {
+  return allocations.map((draft) => {
+    const invoice = outstandingInvoices.find((candidate) => candidate.id === draft.invoiceId);
+    if (invoice === undefined) {
+      // Impossible: an allocation only ever names a loaded invoice. Failing loudly
+      // beats returning an empty invoice number the screen would render as blank.
+      throw new ValidationError("Allocation references an invoice that was not loaded");
+    }
+
+    return {
+      invoiceId: draft.invoiceId,
+      invoiceNumber: invoice.invoiceNumber,
+      allocatedAmountCentavos: draft.amountCentavos,
+    };
+  });
 }
 
 // A payment only settles invoices that are still owed. This is also what makes a
@@ -89,7 +119,29 @@ export interface PostPaymentResult {
 const OUTSTANDING_INVOICE_STATUSES = ["unpaid", "partially_paid", "overdue"] as const;
 
 /**
- * Loads the invoices this payment may settle, oldest first.
+ * When a debt's age starts.
+ *
+ * `invoice_date` is when the DOCUMENT was printed, not when the debt arose: one
+ * monthly billing run stamps the same date on every period it generates, so
+ * ordering by it (and then by a random invoice UUID) settles arbitrary periods and
+ * leaves genuinely older arrears untouched. The age of a monthly debt is when its
+ * billing period STARTED — the first day of `billing_period_year`/`billing_period_month`.
+ *
+ * A one-off charge (reconnection or installation fee) has no billing period; its
+ * age is its invoice date. COALESCE puts it at that true calendar position instead of
+ * at either extreme: a fee issued today sorts after every older period, and a fee
+ * issued before a later period sorts ahead of it. A NULL period never means "oldest".
+ *
+ * The UUID is only a stable tiebreaker, so two invoices of the same period order the
+ * same way on every run.
+ */
+const invoiceAgeKey = sql`coalesce(
+  make_date(${invoices.billingPeriodYear}, ${invoices.billingPeriodMonth}, 1),
+  ${invoices.invoiceDate}
+)`;
+
+/**
+ * Loads the invoices this payment may settle, oldest debt first.
  *
  * Rows are locked FOR UPDATE so a concurrent payment cannot read the same
  * remaining balances and both allocate against them.
@@ -114,7 +166,7 @@ export async function loadOutstandingInvoicesOldestFirst(
         gt(invoices.remainingBalanceCentavos, 0)
       )
     )
-    .orderBy(asc(invoices.invoiceDate), asc(invoices.id))
+    .orderBy(asc(invoiceAgeKey), asc(invoices.id))
     .for("update");
 }
 
@@ -160,7 +212,7 @@ export async function applyAllocationToInvoices(
       .set({
         paidAmountCentavos: update.paidAmountCentavos,
         remainingBalanceCentavos: update.remainingBalanceCentavos,
-        status: toInvoiceStatus(update),
+        status: update.status,
       })
       .where(eq(invoices.id, draft.invoiceId));
   }
@@ -281,6 +333,19 @@ async function recordGcashPaymentPendingVerification(
     referenceNumber: normalizedReferenceNumber,
   });
 
+  // Recording a claim is money-adjacent even though it moves no balance, so it is
+  // audited with the actor. The row names the PENDING status, so it is never read
+  // as money received.
+  await audit.gcashClaimRecorded(
+    {
+      id: insertedPayment.id,
+      receiptNumber: insertedPayment.receiptNumber,
+      amountCentavos: insertedPayment.amountCentavos,
+      gcashReferenceNumber: normalizedReferenceNumber,
+    },
+    input.actor ?? { userId: input.postedByUserId }
+  );
+
   return {
     payment: insertedPayment,
     gcash,
@@ -353,7 +418,7 @@ async function postAllocatedPayment(
   return {
     payment: insertedPayment,
     gcash: null,
-    allocations: allocation.allocations,
+    allocations: toAllocationSummaries(allocation.allocations, outstandingInvoices),
     allocatedCentavos: allocation.allocatedCentavos,
     advanceCreditCentavos: allocation.advanceCreditCentavos,
   };

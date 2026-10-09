@@ -29,14 +29,13 @@ import {
 import { audit, type AuditActor } from "../../shared/audit/audit-logger";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { recordPaymentPosted } from "../ledger/ledger.service";
-import {
-  allocatePayment,
-  type PaymentAllocationDraft,
-} from "./payment-allocation";
+import { allocatePayment } from "./payment-allocation";
 import {
   applyAllocationToInvoices,
   loadOutstandingInvoicesOldestFirst,
+  toAllocationSummaries,
 } from "./post-payment.service";
+import type { PaymentAllocationSummary } from "./payments.service";
 
 /**
  * The GCash verification result: the now-posted payment, its GCash detail row, and
@@ -45,7 +44,7 @@ import {
 export interface GcashVerificationResult {
   payment: Payment;
   gcash: GcashPayment;
-  allocations: PaymentAllocationDraft[];
+  allocations: PaymentAllocationSummary[];
   allocatedCentavos: number;
   advanceCreditCentavos: number;
 }
@@ -133,7 +132,7 @@ export async function verifyGcashPaymentWithinTransaction(
   return {
     payment: postedPayment,
     gcash: { ...gcashDetails, verifiedAt, verifiedBy: input.verifiedByUserId },
-    allocations: allocation.allocations,
+    allocations: toAllocationSummaries(allocation.allocations, outstandingInvoices),
     allocatedCentavos: allocation.allocatedCentavos,
     advanceCreditCentavos: allocation.advanceCreditCentavos,
   };

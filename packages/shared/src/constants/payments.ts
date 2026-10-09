@@ -115,3 +115,16 @@ export const REVERSAL_RECEIPT_PREFIX = "RV";
 export const GCASH_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
 export const GCASH_SCREENSHOT_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export type GcashScreenshotMimeType = (typeof GCASH_SCREENSHOT_MIME_TYPES)[number];
+
+/**
+ * The largest JSON request body the screenshot UPLOAD route accepts.
+ *
+ * The API's general body limit is 1 MB (Phase 9 §4), which is far below a 5 MB
+ * image once base64-encoded, so the 5 MB rule above could never be reached: a
+ * legitimate 900 KB screenshot was already refused with 413. This route's limit
+ * exists only so the request can REACH `validateGcashScreenshot`, which remains the
+ * rule that actually enforces the 5 MB cap and its message. It is the base64
+ * expansion of the cap (4 bytes per 3) plus a small allowance for the JSON envelope.
+ */
+export const GCASH_SCREENSHOT_MAX_REQUEST_BYTES =
+  Math.ceil((GCASH_SCREENSHOT_MAX_BYTES * 4) / 3) + 4096;

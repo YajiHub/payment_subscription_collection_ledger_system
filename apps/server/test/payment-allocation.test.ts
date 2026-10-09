@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import {
   allocatePayment,
   applyPaymentToInvoice,
-  toInvoiceStatus,
   type OutstandingInvoice,
 } from "../src/modules/payments/payment-allocation";
 
@@ -43,7 +42,7 @@ describe("payment allocation", () => {
       40000
     );
     expect(update.remainingBalanceCentavos).toBe(59900);
-    expect(toInvoiceStatus(update)).toBe("partially_paid");
+    expect(update.status).toBe("partially_paid");
   });
 
   it("fills the oldest invoice first, then the next", () => {
@@ -127,13 +126,13 @@ describe("payment allocation", () => {
       99900
     );
     expect(fullyCovered.remainingBalanceCentavos).toBe(0);
-    expect(toInvoiceStatus(fullyCovered)).toBe("paid");
+    expect(fullyCovered.status).toBe("paid");
 
     const partial = applyPaymentToInvoice(
       { totalAmountCentavos: 99900, paidAmountCentavos: 50000, remainingBalanceCentavos: 49900 },
       10000
     );
     expect(partial.remainingBalanceCentavos).toBe(39900);
-    expect(toInvoiceStatus(partial)).toBe("partially_paid");
+    expect(partial.status).toBe("partially_paid");
   });
 });

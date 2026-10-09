@@ -182,9 +182,25 @@ describe("payment routes", () => {
 
     expect(response.statusCode).toBe(201);
     const data = response.json().data;
+    // The response carries the SAME allocation shape the read endpoints return —
+    // `invoiceNumber` and `allocatedAmountCentavos`, never the internal persistence
+    // draft's `amountCentavos`, which the screen would render as ₱NaN.NaN.
     expect(data.allocations).toEqual([
-      { invoiceId: oldest.id, amountCentavos: 50000 },
-      { invoiceId: newest.id, amountCentavos: 50000 },
+      {
+        invoiceId: oldest.id,
+        invoiceNumber: "INV-2025-01-000001",
+        allocatedAmountCentavos: 50000,
+      },
+      {
+        invoiceId: newest.id,
+        invoiceNumber: "INV-2025-02-000001",
+        allocatedAmountCentavos: 50000,
+      },
+    ]);
+    expect(Object.keys(data.allocations[0]).sort()).toEqual([
+      "allocatedAmountCentavos",
+      "invoiceId",
+      "invoiceNumber",
     ]);
     expect(data.allocatedCentavos).toBe(100000);
     expect(data.advanceCreditCentavos).toBe(0);
@@ -457,7 +473,8 @@ describe("payment routes", () => {
   });
 
   it("reverses a payment: the original row is kept, a reversal is recorded, a debit cancels the credit", async () => {
-    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID });
+    const operatorUsername = "demo.admin";
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID, username: operatorUsername });
     const invoiceId = randomUUID();
     const year = new Date().getFullYear();
     const expectedReversalReceipt = `RV-${year}-000001`;
@@ -522,10 +539,14 @@ describe("payment routes", () => {
       })
     );
 
-    // The trail records the status the payment really held, not a guess.
+    // The trail records the status the payment really held, not a guess, and it
+    // names the operator who reversed it (D1) — the demo step 9 screen must not
+    // read "system" for the person at the keyboard.
     expect(auditWrites().find((row) => row.action === "payment.reversed")).toMatchObject({
       entityType: "payment",
       entityId: PAYMENT_ID,
+      performedBy: ADMIN_ID,
+      performedByUsername: operatorUsername,
       previousState: { id: PAYMENT_ID, status: "posted" },
       newState: { id: PAYMENT_ID, status: "reversed" },
     });

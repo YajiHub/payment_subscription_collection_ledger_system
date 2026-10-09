@@ -185,7 +185,11 @@ describe("GCash verification (S3-2, S3-3)", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data.payment.status).toBe("posted");
     expect(response.json().data.allocations).toEqual([
-      { invoiceId: INVOICE_ID, amountCentavos: 50000 },
+      {
+        invoiceId: INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        allocatedAmountCentavos: 50000,
+      },
     ]);
 
     // The payment row is posted, not re-inserted.

@@ -24,6 +24,7 @@ import { getMonthYearLabel, type LedgerEntryType } from "@bcis/shared";
 import { db, type DbExecutor } from "../../db/connection";
 import { DEBIT_ENTRY_TYPES, ledgerEntries } from "../../db/schema/ledger";
 import type { NewLedgerEntry } from "../../db/schema/ledger";
+import { payments } from "../../db/schema/payments";
 import { computeRunningBalanceCentavos, verifyLedgerChain } from "./ledger-integrity";
 import type { LedgerIntegrityResult } from "./ledger-integrity";
 
@@ -173,8 +174,15 @@ export interface AdvanceCreditSource {
  * An advance credit is written when a payment exceeds every outstanding invoice.
  * Applying it to a later invoice writes an `advance_credit_applied` debit; the two
  * cancel, so the credit still available is the credits minus the debits, consumed
- * oldest first. A credit with no payment (a manual credit) is skipped: it cannot be
- * attributed to the payment that created it.
+ * oldest first.
+ *
+ * Only a POSTED payment's credit is a source. A reversed payment still has its
+ * `advance_credit` row (ledger entries are never deleted) and a `payment_reversal`
+ * debit that already cancelled it, so offering it as a source would credit the
+ * reversed payment with funding an invoice the surviving money paid for. Joining
+ * `payments` and requiring `status = 'posted'` drops exactly those rows — and every
+ * credit a non-posted status cannot create in the first place — while a credit with
+ * no payment at all (which could never be attributed to one) is skipped as before.
  */
 export async function getUnappliedAdvanceCreditSources(
   executor: DbExecutor,
@@ -191,10 +199,12 @@ export async function getUnappliedAdvanceCreditSources(
       amountCentavos: ledgerEntries.amountCentavos,
     })
     .from(ledgerEntries)
+    .innerJoin(payments, eq(payments.id, ledgerEntries.paymentId))
     .where(
       and(
         eq(ledgerEntries.serviceAccountId, serviceAccountId),
-        eq(ledgerEntries.entryType, "advance_credit")
+        eq(ledgerEntries.entryType, "advance_credit"),
+        eq(payments.status, "posted")
       )
     )
     .orderBy(asc(ledgerEntries.sequenceNumber), asc(ledgerEntries.id));

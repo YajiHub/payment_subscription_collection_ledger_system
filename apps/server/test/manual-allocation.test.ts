@@ -142,8 +142,16 @@ describe("manual allocation (S3-5)", () => {
     // The operator's order and amounts were used, not the oldest-first sweep (which
     // would have put 50000 on the oldest invoice).
     expect(response.json().data.allocations).toEqual([
-      { invoiceId: NEWEST_INVOICE_ID, amountCentavos: 40000 },
-      { invoiceId: OLDEST_INVOICE_ID, amountCentavos: 10000 },
+      {
+        invoiceId: NEWEST_INVOICE_ID,
+        invoiceNumber: "INV-2025-02-000001",
+        allocatedAmountCentavos: 40000,
+      },
+      {
+        invoiceId: OLDEST_INVOICE_ID,
+        invoiceNumber: "INV-2025-01-000001",
+        allocatedAmountCentavos: 10000,
+      },
     ]);
     expect(response.json().data.allocatedCentavos).toBe(50000);
     expect(response.json().data.advanceCreditCentavos).toBe(50000);

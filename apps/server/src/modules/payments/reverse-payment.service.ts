@@ -26,6 +26,7 @@ import { paymentAllocations, paymentReversals, payments } from "../../db/schema/
 import { audit, type AuditActor } from "../../shared/audit/audit-logger";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors";
 import { recordPaymentReversed } from "../ledger/ledger.service";
+import { toInvoiceStatusFromBalance } from "./payment-allocation";
 import { getNextReversalReceiptNumber } from "./receipt-number.service";
 
 export interface ReversePaymentResult {
@@ -139,7 +140,9 @@ export async function reversePaymentWithinTransaction(
  *
  * Each invoice's paid amount drops by exactly what this payment applied, so the
  * remaining balance returns to what it was and the net effect on the invoice is
- * zero. An invoice that still has other payments keeps its partially-paid status.
+ * zero. The status is then derived from the money still applied — the shared
+ * `toInvoiceStatusFromBalance` rule — so an invoice that still holds other payments
+ * stays `partially_paid` instead of being relabelled `unpaid`.
  */
 async function restoreInvoiceBalances(executor: DbExecutor, paymentId: string): Promise<void> {
   const allocations = await executor
@@ -175,7 +178,7 @@ async function restoreInvoiceBalances(executor: DbExecutor, paymentId: string): 
       .set({
         paidAmountCentavos: restoredPaid,
         remainingBalanceCentavos: restoredRemaining,
-        status: restoredRemaining === 0 ? "paid" : "unpaid",
+        status: toInvoiceStatusFromBalance(restoredPaid, invoice.totalAmountCentavos),
       })
       .where(eq(invoices.id, allocation.invoiceId));
   }
