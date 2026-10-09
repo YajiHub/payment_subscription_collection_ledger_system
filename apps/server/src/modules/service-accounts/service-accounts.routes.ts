@@ -10,9 +10,11 @@ import { authenticate } from "../../shared/middleware/authenticate";
 import { authorize } from "../../shared/middleware/authorize";
 import {
   getServiceAccount,
+  getServiceAccounts,
   getSuspensionCandidates,
   postServiceAccount,
   postSuspensionRun,
+  putServiceAccountActivated,
   putServiceAccountCollector,
   putServiceAccountPlan,
   putServiceAccountReconnected,
@@ -42,12 +44,17 @@ export async function registerServiceAccountRoutes(server: FastifyInstance): Pro
     postSuspensionRun
   );
 
+  // S3.2: the account list and its search. Registered before the ":id" route for
+  // readability; Fastify prefers a static segment regardless.
+  server.get("/api/service-accounts", read, getServiceAccounts);
+
   server.get("/api/service-accounts/:id", read, getServiceAccount);
 
   // Adding a service to an existing subscriber is a subscriber-creation action.
   server.post("/api/subscribers/:id/service-accounts", create, postServiceAccount);
 
   server.put("/api/service-accounts/:id/suspend", suspend, putServiceAccountSuspended);
+  server.put("/api/service-accounts/:id/activate", suspend, putServiceAccountActivated);
   server.put("/api/service-accounts/:id/reconnect", reconnect, putServiceAccountReconnected);
   server.put("/api/service-accounts/:id/terminate", suspend, putServiceAccountTerminated);
   server.put("/api/service-accounts/:id/plan", update, putServiceAccountPlan);

@@ -21,7 +21,6 @@ import {
   type CollectionResult,
   type CollectedMethod,
   type CollectorBatchStatus,
-  type UserRole,
   isAllowedCollectorBatchTransition,
   isMoneyCollectionResult,
 } from "@bcis/shared";
@@ -47,7 +46,21 @@ import { reversePaymentWithinTransaction } from "../payments/reverse-payment.ser
 /** The authenticated caller, reduced to what the batch services need. */
 export interface BatchActor {
   id: string;
-  role: UserRole;
+  /**
+   * Whether this caller may see and act on EVERY collector's batch.
+   *
+   * Decided once, at the HTTP edge, by `callerSeesEveryCollectorBatch` — the same
+   * resolved authority the route guards use. It is REQUIRED so a new caller cannot
+   * quietly fall back to the legacy JWT role, which is what let a batch be created
+   * into a state its creator could not see.
+   */
+  seesEveryCollectorBatch: boolean;
+  /**
+   * The caller's username at the time of action, carried into the audit trail so a
+   * batch event names a person rather than an anonymous id (D4). Optional because
+   * a non-HTTP caller may only know the id.
+   */
+  username?: string | null;
   /** Where the caller connected from, carried through to the audit trail. */
   clientIpAddress?: string;
 }
@@ -59,7 +72,11 @@ export interface BatchActor {
  * non-HTTP caller may not know it.
  */
 function actorForAudit(actor: BatchActor): AuditActor {
-  return { userId: actor.id, clientIpAddress: actor.clientIpAddress ?? null };
+  return {
+    userId: actor.id,
+    username: actor.username ?? null,
+    clientIpAddress: actor.clientIpAddress ?? null,
+  };
 }
 
 /** A batch as the list and header screens show it. */
@@ -151,14 +168,14 @@ export interface CreateCollectorBatchInput {
 const OUTSTANDING_INVOICE_STATUSES = ["unpaid", "partially_paid", "overdue"] as const;
 
 /**
- * Rejects a batch a Collector does not own, by pretending it does not exist.
+ * Rejects a batch a caller may not see, by pretending it does not exist.
  *
- * A 404 (rather than 403) keeps one collector from learning that another
- * collector's batch exists at all. Office roles (Admin, Billing Clerk, Cashier,
- * Manager) are not restricted here.
+ * A 404 (rather than 403) keeps one field collector from learning that another
+ * collector's batch exists at all. A caller who may work on any batch — office
+ * staff and supervisors — is not restricted here.
  */
 function assertBatchIsVisible(batch: { collectorId: string }, actor: BatchActor): void {
-  if (actor.role === "collector" && batch.collectorId !== actor.id) {
+  if (!actor.seesEveryCollectorBatch && batch.collectorId !== actor.id) {
     throw new NotFoundError("Collector batch not found");
   }
 }
@@ -365,6 +382,16 @@ export async function createCollectorBatch(
   input: CreateCollectorBatchInput,
   actor: BatchActor
 ): Promise<CollectorBatchDetail> {
+  // A batch must never be created into a state its creator cannot see. A caller
+  // scoped to their own batches may only create one for themselves; the collector
+  // picker never offers them anyone else in the first place, so this only refuses
+  // a hand-crafted request.
+  if (!actor.seesEveryCollectorBatch && input.collectorId !== actor.id) {
+    throw new ValidationError(
+      "You can only create a batch for yourself. Choose your own name as the collector."
+    );
+  }
+
   const uniqueAccountIds = [...new Set(input.serviceAccountIds)];
 
   return db.transaction(async (tx) => {
@@ -1167,24 +1194,37 @@ export interface AssignableCollector {
 }
 
 /**
- * Every active collector, for the "which collector is this batch for?" picker.
+ * The active collectors this caller may create a batch for.
  *
  * It lives here rather than on the user-management screen because a Billing Clerk
  * creates batches but holds no `users:read` permission.
+ *
+ * A caller who cannot see another collector's batches is offered nobody but
+ * themselves: the picker and the create guard must agree, or the form offers a
+ * choice the server will refuse — and, before the guard existed, a batch the
+ * creator could never open again.
  */
-export async function listAssignableCollectors(): Promise<AssignableCollector[]> {
+export async function listAssignableCollectors(
+  actor: BatchActor
+): Promise<AssignableCollector[]> {
+  const conditions = [eq(users.role, "collector"), eq(users.isActive, true)];
+  if (!actor.seesEveryCollectorBatch) {
+    conditions.push(eq(users.id, actor.id));
+  }
+
   return db
     .select({ id: users.id, fullName: users.fullName, isActive: users.isActive })
     .from(users)
-    .where(and(eq(users.role, "collector"), eq(users.isActive, true)))
+    .where(and(...conditions))
     .orderBy(asc(users.fullName));
 }
 
 /**
  * Lists batches, newest field date first.
  *
- * A Collector only ever sees their own batches: their id is forced into the filter
- * here, on the server, so a hand-crafted request cannot read another collector's run.
+ * A field collector only ever sees their own batches: their id is forced into the
+ * filter here, on the server, so a hand-crafted request cannot read another
+ * collector's run. Everyone else may narrow the list to one collector.
  */
 export async function listCollectorBatches(
   filters: ListCollectorBatchesFilters,
@@ -1192,7 +1232,7 @@ export async function listCollectorBatches(
 ): Promise<ListCollectorBatchesResult> {
   const conditions = [];
 
-  if (actor.role === "collector") {
+  if (!actor.seesEveryCollectorBatch) {
     conditions.push(eq(collectorBatches.collectorId, actor.id));
   } else if (filters.collectorId !== undefined) {
     conditions.push(eq(collectorBatches.collectorId, filters.collectorId));

@@ -18,7 +18,8 @@ import {
   voidCollectionSchema,
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
-import { audit, logAuditEntry, requestActor } from "../../shared/audit/audit-logger";
+import { UnauthorizedError } from "../../shared/errors";
+import { audit, logAuditEntry, requestActor, requestActorFields } from "../../shared/audit/audit-logger";
 import { parseOrThrow } from "../../shared/validate";
 import { generateReportPdf } from "../../shared/pdf/report-generator";
 import { generateReportXlsx } from "../../shared/xlsx/report-generator";
@@ -42,12 +43,26 @@ import {
   voidCollection,
   type BatchActor,
 } from "./collector-batches.service";
+import { callerSeesEveryCollectorBatch } from "./collector-batch-visibility";
 
-/** The caller reduced to what the batch services need. */
-function callerAsActor(request: FastifyRequest): BatchActor {
+/**
+ * The caller reduced to what the batch services need.
+ *
+ * The visibility scope is resolved here — once, at the edge — from the same RBAC
+ * grants the route guards read, so the service never has to know a legacy role.
+ */
+async function callerAsActor(request: FastifyRequest): Promise<BatchActor> {
+  const user = request.user;
+  if (user === undefined) {
+    // `authenticate` runs before every one of these routes, so a missing caller is
+    // a misconfigured route; answering 401 is safer than inventing one.
+    throw new UnauthorizedError();
+  }
+
   return {
-    id: request.user?.id ?? "",
-    role: request.user?.role ?? "collector",
+    id: user.id,
+    username: user.username,
+    seesEveryCollectorBatch: await callerSeesEveryCollectorBatch(user.id, user.role),
     clientIpAddress: request.ip,
   };
 }
@@ -63,12 +78,14 @@ const batchAssignmentParamsSchema = z.object({
   serviceAccountId: z.string().uuid("A valid service account id is required"),
 });
 
-/** GET /api/collector-batches/collectors — the active collectors a batch can be for. */
+/** GET /api/collector-batches/collectors — the collectors this caller may batch for. */
 export async function getAssignableCollectors(
-  _request: FastifyRequest,
+  request: FastifyRequest,
   reply: FastifyReply
 ): Promise<FastifyReply> {
-  return sendSuccess(reply, { items: await listAssignableCollectors() });
+  return sendSuccess(reply, {
+    items: await listAssignableCollectors(await callerAsActor(request)),
+  });
 }
 
 /** GET /api/collector-batches — the batch list, filtered and scoped to the caller. */
@@ -86,7 +103,7 @@ export async function getCollectorBatches(
       page: query.page,
       pageSize: query.pageSize,
     },
-    callerAsActor(request)
+    await callerAsActor(request)
   );
   return sendSuccess(reply, result);
 }
@@ -97,7 +114,7 @@ export async function postCollectorBatch(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const body = parseOrThrow(createCollectorBatchSchema, request.body);
-  const batch = await createCollectorBatch(body, callerAsActor(request));
+  const batch = await createCollectorBatch(body, await callerAsActor(request));
   await audit.collectorBatchCreated({ ...batch }, batch.assignmentCount, requestActor(request));
   return sendSuccess(reply, batch, 201);
 }
@@ -108,7 +125,7 @@ export async function getCollectorBatch(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
-  return sendSuccess(reply, await getCollectorBatchDetail(id, callerAsActor(request)));
+  return sendSuccess(reply, await getCollectorBatchDetail(id, await callerAsActor(request)));
 }
 
 /** POST /api/collector-batches/:id/assignments — adds accounts to an open batch. */
@@ -118,7 +135,7 @@ export async function postBatchAssignments(
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
   const body = parseOrThrow(addBatchAssignmentsSchema, request.body);
-  const batch = await addBatchAssignments(id, body.serviceAccountIds, callerAsActor(request));
+  const batch = await addBatchAssignments(id, body.serviceAccountIds, await callerAsActor(request));
   return sendSuccess(reply, batch, 201);
 }
 
@@ -140,7 +157,7 @@ export async function putCollectionResult(
       collectorNotes: body.collectorNotes,
       gcash: body.gcash,
     },
-    callerAsActor(request)
+    await callerAsActor(request)
   );
 
   return sendSuccess(reply, result);
@@ -161,7 +178,7 @@ export async function putCollectionVoided(
     params.id,
     params.serviceAccountId,
     body.reason,
-    callerAsActor(request)
+    await callerAsActor(request)
   );
 
   return sendSuccess(reply, result);
@@ -175,7 +192,7 @@ export async function postBatchSubmitted(
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
   parseOrThrow(submitBatchSchema, request.body ?? {});
 
-  const result = await submitBatch(id, callerAsActor(request));
+  const result = await submitBatch(id, await callerAsActor(request));
   await audit.collectorBatchSubmitted(
     {
       batchId: result.batchId,
@@ -210,7 +227,7 @@ export async function postBatchRemitted(
       gcashAmountCentavos: body.gcashAmountCentavos,
       notes: body.notes,
     },
-    callerAsActor(request)
+    await callerAsActor(request)
   );
 
   await audit.collectorBatchRemitted(
@@ -232,7 +249,7 @@ export async function getBatchRemittances(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
-  const items = await listBatchRemittances(id, callerAsActor(request));
+  const items = await listBatchRemittances(id, await callerAsActor(request));
   return sendSuccess(reply, { items });
 }
 
@@ -242,7 +259,7 @@ export async function getBatchRouteSheet(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
-  const sheet = await loadBatchRouteSheet(id, callerAsActor(request));
+  const sheet = await loadBatchRouteSheet(id, await callerAsActor(request));
   return sendSuccess(reply, sheet);
 }
 
@@ -265,7 +282,7 @@ export async function getBatchRouteSheetExport(
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
   const { format } = parseOrThrow(routeSheetExportQuerySchema, request.query ?? {});
 
-  const sheet = await loadBatchRouteSheet(id, callerAsActor(request));
+  const sheet = await loadBatchRouteSheet(id, await callerAsActor(request));
   const table = buildRouteSheetTable(sheet);
   const fileName = `route-sheet-${sheet.batchNumber}`;
 
@@ -295,7 +312,7 @@ export async function postBatchReconciled(
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
   const body = parseOrThrow(reconcileBatchSchema, request.body ?? {});
 
-  const result = await reconcileBatch(id, body.varianceNotes, callerAsActor(request));
+  const result = await reconcileBatch(id, body.varianceNotes, await callerAsActor(request));
   await audit.collectorBatchReconciled(
     result,
     result.previousStatus,
@@ -318,7 +335,7 @@ export async function postBatchClosed(
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
   const body = parseOrThrow(closeBatchSchema, request.body ?? {});
 
-  const result = await closeBatch(id, callerAsActor(request));
+  const result = await closeBatch(id, await callerAsActor(request));
   await audit.collectorBatchClosed(result, result.previousStatus, requestActor(request));
   if (body.notes !== undefined && body.notes.trim().length > 0) {
     await logAuditEntry({
@@ -326,8 +343,7 @@ export async function postBatchClosed(
       entityType: "collector_batch",
       entityId: result.batchId,
       description: `Close note: ${body.notes.trim()}`,
-      performedBy: request.user?.id ?? null,
-      clientIpAddress: request.ip,
+      ...requestActorFields(request),
     });
   }
   return sendSuccess(reply, result);
@@ -341,7 +357,7 @@ export async function postBatchCancelled(
   const { id } = parseOrThrow(batchIdParamsSchema, request.params);
   const body = parseOrThrow(cancelBatchSchema, request.body);
 
-  const batch = await cancelBatch(id, body.reason, callerAsActor(request));
+  const batch = await cancelBatch(id, body.reason, await callerAsActor(request));
   await audit.collectorBatchCancelled({ ...batch }, body.reason, requestActor(request));
   return sendSuccess(reply, batch);
 }

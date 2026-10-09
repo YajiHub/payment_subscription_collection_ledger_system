@@ -164,8 +164,8 @@ export function summarizeRouteSheet(rows: readonly RouteSheetRow[]): RouteSheetT
 /**
  * Loads a batch's route sheet.
  *
- * A Collector may only load their own batch; the same visibility rule the batch
- * detail uses (a 404 rather than a 403) applies here.
+ * A field collector may only load their own batch; the same visibility rule the
+ * batch detail uses (a 404 rather than a 403) applies here.
  */
 export async function loadBatchRouteSheet(
   batchId: string,
@@ -187,7 +187,7 @@ export async function loadBatchRouteSheet(
   if (batchRow === undefined) {
     throw new NotFoundError("Collector batch not found");
   }
-  if (actor.role === "collector" && batchRow.batch.collectorId !== actor.id) {
+  if (!actor.seesEveryCollectorBatch && batchRow.batch.collectorId !== actor.id) {
     throw new NotFoundError("Collector batch not found");
   }
 

@@ -23,6 +23,7 @@ import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
 import { OUTSTANDING_INVOICE_STATUSES, type PaymentMethod, type SystemRole } from "@bcis/shared";
 import { config } from "../../config";
 import { db } from "../connection";
+import type { DbExecutor } from "../connection";
 import { collectionAreas } from "../schema/areas";
 import { invoices } from "../schema/billing";
 import { collectorBatches } from "../schema/collections";
@@ -71,7 +72,7 @@ import {
   type DemoDatasetPlan,
   type DemoStep,
 } from "./demo-plan";
-import { DEMO_MARKER, DEMO_PASSWORD, DEMO_USERNAME_PREFIX, demoPhoneNumber } from "./synthetic-catalog";
+import { DEMO_MARKER, DEMO_USERNAME_PREFIX, demoPhoneNumber } from "./synthetic-catalog";
 
 /** The target database already holds data the generator refuses to add to. */
 export class DemoDatasetConflictError extends Error {
@@ -86,8 +87,12 @@ interface DemoReferenceData {
   actorUserId: string;
   ownerId: string;
   cashierId: string;
+  /** The username each id was created under, so the demo can name its audit actors (D4). */
+  cashierUsername: string;
+  ownerUsername: string;
   technicianId: string;
   collectorIds: string[];
+  collectorUsernames: string[];
   planIds: string[];
   subscriberIds: string[];
   serviceAccountIds: string[];
@@ -225,30 +230,45 @@ async function createReferenceData(plan: DemoDatasetPlan): Promise<DemoReference
   // ── Users ───────────────────────────────────────────────────────────────────
   const userIdByUsername = new Map<string, string>();
   for (const userDefinition of plan.users) {
-    const created = await createUser({
-      fullName: userDefinition.fullName,
-      username: userDefinition.username,
-      password: DEMO_PASSWORD,
-      role: userDefinition.legacyRole,
-      createdBy: actorUserId,
+    // The account, its mapped legacy-role grant, and the exact system-role set
+    // commit in ONE transaction per user. A concurrent reader therefore sees
+    // either the previous grants or the final ones, never the gap between the
+    // `user_roles` DELETE and the INSERTs that caused a flaky zero-grant read.
+    const created = await db.transaction(async (tx) => {
+      const user = await createUser(
+        {
+          fullName: userDefinition.fullName,
+          username: userDefinition.username,
+          password: config.SEED_DEMO_PASSWORD,
+          role: userDefinition.legacyRole,
+          createdBy: actorUserId,
+        },
+        tx
+      );
+
+      await replaceSystemRoles(tx, user.id, userDefinition.systemRoles, roleIdByCode, actorUserId);
+      return user;
     });
 
-    await replaceSystemRoles(created.id, userDefinition.systemRoles, roleIdByCode, actorUserId);
     userIdByUsername.set(userDefinition.username, created.id);
   }
 
-  const ownerId = requireUserId(userIdByUsername, `${DEMO_USERNAME_PREFIX}owner`);
-  const cashierId = requireUserId(userIdByUsername, `${DEMO_USERNAME_PREFIX}cashier`);
+  const ownerUsername = `${DEMO_USERNAME_PREFIX}owner`;
+  const cashierUsername = `${DEMO_USERNAME_PREFIX}cashier`;
+  const ownerId = requireUserId(userIdByUsername, ownerUsername);
+  const cashierId = requireUserId(userIdByUsername, cashierUsername);
   const technicianId = requireUserId(userIdByUsername, `${DEMO_USERNAME_PREFIX}technician`);
-  const collectorIds = plan.users
-    .filter((user) => user.legacyRole === "collector")
-    .map((user) => requireUserId(userIdByUsername, user.username));
+  const collectorUsers = plan.users.filter((user) => user.legacyRole === "collector");
+  const collectorIds = collectorUsers.map((user) => requireUserId(userIdByUsername, user.username));
+  const collectorUsernames = collectorUsers.map((user) => user.username);
 
   // ── Collection areas ────────────────────────────────────────────────────────
   // DIRECT WRITE: there is no areas service in the application yet (S1-5 shipped
   // the table and its readers, not a writer), so the demo creates the routes
   // directly. This is reference data with no financial consequence.
-  const areaIds = await insertDemoAreas(plan, ownerId);
+  // The three area rows commit together so a reader never sees a partial route
+  // set (e.g. two of the three areas) while the demo is being generated.
+  const areaIds = await db.transaction((tx) => insertDemoAreas(plan, ownerId, tx));
 
   // ── Plans ───────────────────────────────────────────────────────────────────
   const planIds: string[] = [];
@@ -265,32 +285,42 @@ async function createReferenceData(plan: DemoDatasetPlan): Promise<DemoReference
     planIds.push(created.id);
   }
 
-  // ── Subscribers ─────────────────────────────────────────────────────────────
+  // ── Subscribers ────────────────────────────────────────────────────────────
   const subscriberIds: string[] = [];
   for (const subscriberPlan of plan.subscribers) {
-    const created = await createSubscriber({
-      subscriber: {
-        firstName: subscriberPlan.firstName,
-        lastName: subscriberPlan.lastName,
-        middleName: subscriberPlan.middleName,
-        primaryPhone: subscriberPlan.primaryPhone,
-        secondaryPhone: subscriberPlan.secondaryPhone,
-        serviceAddress: subscriberPlan.serviceAddress,
-        serviceBarangay: subscriberPlan.serviceBarangay,
-        serviceMunicipality: subscriberPlan.serviceMunicipality,
-        serviceProvince: subscriberPlan.serviceProvince,
-        internalNotes: subscriberPlan.internalNotes,
-      },
-      createdBy: ownerId,
-    });
-    subscriberIds.push(created.id);
+    // The subscriber and its area assignment commit together, so a reader never
+    // sees the household before it is placed on a route (area_id null window).
+    const created = await db.transaction(async (tx) => {
+      const subscriber = await createSubscriber(
+        {
+          subscriber: {
+            firstName: subscriberPlan.firstName,
+            lastName: subscriberPlan.lastName,
+            middleName: subscriberPlan.middleName,
+            primaryPhone: subscriberPlan.primaryPhone,
+            secondaryPhone: subscriberPlan.secondaryPhone,
+            serviceAddress: subscriberPlan.serviceAddress,
+            serviceBarangay: subscriberPlan.serviceBarangay,
+            serviceMunicipality: subscriberPlan.serviceMunicipality,
+            serviceProvince: subscriberPlan.serviceProvince,
+            internalNotes: subscriberPlan.internalNotes,
+          },
+          createdBy: ownerId,
+        },
+        tx
+      );
 
-    // DIRECT WRITE: `subscribers.area_id` has no writer in the application yet, so
-    // the demo sets it directly. It is an assignment, not a financial row.
-    await db
-      .update(subscribers)
-      .set({ areaId: areaIds[subscriberPlan.areaIndex] ?? null })
-      .where(eq(subscribers.id, created.id));
+      // DIRECT WRITE: `subscribers.area_id` has no writer in the application yet,
+      // so the demo sets it directly. It is an assignment, not a financial row.
+      await tx
+        .update(subscribers)
+        .set({ areaId: areaIds[subscriberPlan.areaIndex] ?? null })
+        .where(eq(subscribers.id, subscriber.id));
+
+      return subscriber;
+    });
+
+    subscriberIds.push(created.id);
   }
 
   // ── Service accounts ────────────────────────────────────────────────────────
@@ -301,36 +331,46 @@ async function createReferenceData(plan: DemoDatasetPlan): Promise<DemoReference
     const subscriberId = requireIndex(subscriberIds, accountPlan.subscriberIndex, "subscriber");
     const planId = requireIndex(planIds, accountPlan.planIndex, "plan");
 
-    const account = await insertServiceAccount(
-      subscriberId,
-      {
-        planId,
-        activationDate: accountPlan.activationDate,
-        assignedCollectorId:
-          accountPlan.assignedCollectorIndex === null
-            ? undefined
-            : requireIndex(collectorIds, accountPlan.assignedCollectorIndex, "collector"),
-      },
-      ownerId
-    );
+    // The account and its area assignment commit together, matching the
+    // subscriber above so a reader never sees an unplaced account.
+    const account = await db.transaction(async (tx) => {
+      const created = await insertServiceAccount(
+        subscriberId,
+        {
+          planId,
+          activationDate: accountPlan.activationDate,
+          assignedCollectorId:
+            accountPlan.assignedCollectorIndex === null
+              ? undefined
+              : requireIndex(collectorIds, accountPlan.assignedCollectorIndex, "collector"),
+        },
+        ownerId,
+        tx
+      );
+
+      // DIRECT WRITE: `service_accounts.area_id` has no writer in the application
+      // yet; see the note on the subscriber above.
+      await tx
+        .update(serviceAccounts)
+        .set({ areaId: areaIds[accountPlan.areaIndex] ?? null })
+        .where(eq(serviceAccounts.id, created.id));
+
+      return created;
+    });
 
     serviceAccountIds.push(account.id);
     monthlyRateCentavosByAccountIndex.push(account.monthlyRateCentavos);
-
-    // DIRECT WRITE: `service_accounts.area_id` has no writer in the application
-    // yet; see the note on the subscriber update above.
-    await db
-      .update(serviceAccounts)
-      .set({ areaId: areaIds[accountPlan.areaIndex] ?? null })
-      .where(eq(serviceAccounts.id, account.id));
   }
 
   return {
     actorUserId,
     ownerId,
+    ownerUsername,
     cashierId,
+    cashierUsername,
     technicianId,
     collectorIds,
+    collectorUsernames,
     planIds,
     subscriberIds,
     serviceAccountIds,
@@ -339,10 +379,14 @@ async function createReferenceData(plan: DemoDatasetPlan): Promise<DemoReference
 }
 
 /** Inserts the three demo collection areas and returns their ids, in plan order. */
-async function insertDemoAreas(plan: DemoDatasetPlan, createdBy: string): Promise<string[]> {
+async function insertDemoAreas(
+  plan: DemoDatasetPlan,
+  createdBy: string,
+  executor: DbExecutor = db
+): Promise<string[]> {
   const ids: string[] = [];
   for (const area of plan.areas) {
-    const inserted = await db
+    const inserted = await executor
       .insert(collectionAreas)
       .values({
         code: area.code,
@@ -371,12 +415,16 @@ async function insertDemoAreas(plan: DemoDatasetPlan, createdBy: string): Promis
  * the grant is corrected here rather than by inventing a legacy enum value.
  */
 async function replaceSystemRoles(
+  executor: DbExecutor,
   userId: string,
   systemRoles: readonly SystemRole[],
   roleIdByCode: ReadonlyMap<string, string>,
   assignedBy: string
 ): Promise<void> {
-  await db.delete(userRoles).where(eq(userRoles.userId, userId));
+  // The DELETE and the re-INSERTs run on the caller's executor, so together they
+  // are one atomic unit: a concurrent reader sees the previous grant set or the
+  // final one, never an empty `user_roles` between the two statements.
+  await executor.delete(userRoles).where(eq(userRoles.userId, userId));
 
   for (const roleCode of systemRoles) {
     const roleId = roleIdByCode.get(roleCode);
@@ -385,7 +433,7 @@ async function replaceSystemRoles(
         `System role "${roleCode}" is not seeded. Apply the RBAC migration before seeding the demo dataset.`
       );
     }
-    await db.insert(userRoles).values({ userId, roleId, assignedBy });
+    await executor.insert(userRoles).values({ userId, roleId, assignedBy });
   }
 }
 
@@ -447,6 +495,7 @@ async function runStep(
         paymentDate: plan.referenceDate,
         notes: `Demo dataset — ${step.label}`,
         postedByUserId: reference.cashierId,
+        actor: { userId: reference.cashierId, username: reference.cashierUsername },
       });
       return;
     }
@@ -465,6 +514,7 @@ async function runStep(
         paymentDate: plan.referenceDate,
         notes: "Demo dataset — GCash claim",
         postedByUserId: reference.cashierId,
+        actor: { userId: reference.cashierId, username: reference.cashierUsername },
         gcash: {
           referenceNumber: step.reference,
           senderName: "Demo GCash Sender",
@@ -476,12 +526,14 @@ async function runStep(
         await verifyGcashPayment({
           paymentId: recorded.payment.id,
           verifiedByUserId: reference.cashierId,
+          actor: { userId: reference.cashierId, username: reference.cashierUsername },
         });
       } else if (step.disposition === "rejected") {
         await rejectGcashPayment({
           paymentId: recorded.payment.id,
           reason: "Demo rejection: the deposited amount did not match the claim",
           rejectedByUserId: reference.cashierId,
+          actor: { userId: reference.cashierId, username: reference.cashierUsername },
         });
       }
       return;
@@ -501,7 +553,10 @@ async function runStep(
         return; // nothing posted to reverse
       }
 
-      await reversePayment(postedPayment.id, step.reason, reference.ownerId);
+      await reversePayment(postedPayment.id, step.reason, reference.ownerId, {
+        userId: reference.ownerId,
+        username: reference.ownerUsername,
+      });
       return;
     }
 
@@ -545,8 +600,21 @@ async function runStep(
 
     case "collector_batch": {
       const collectorId = requireIndex(reference.collectorIds, step.collectorIndex, "collector");
-      const collectorActor: BatchActor = { id: collectorId, role: "collector" };
-      const officeActor: BatchActor = { id: reference.ownerId, role: "admin" };
+      const collectorUsername = requireIndex(
+        reference.collectorUsernames,
+        step.collectorIndex,
+        "collector"
+      );
+      const collectorActor: BatchActor = {
+        id: collectorId,
+        username: collectorUsername,
+        seesEveryCollectorBatch: false,
+      };
+      const officeActor: BatchActor = {
+        id: reference.ownerId,
+        username: reference.ownerUsername,
+        seesEveryCollectorBatch: true,
+      };
 
       const accountIds = step.stops.map((stop) => accountIdAt(reference, stop.accountIndex));
 

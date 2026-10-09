@@ -6,7 +6,7 @@
 //
 // Route handlers never touch the database directly — they call these functions.
 
-import { desc, eq, inArray, like } from "drizzle-orm";
+import { and, count, desc, eq, ilike, inArray, like, or, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import { db, type DbExecutor } from "../../db/connection";
@@ -75,6 +75,60 @@ export interface ServiceAccountSummary extends ServiceAccountRow {
 
 export interface ServiceAccountDetail extends ServiceAccountSummary {
   statusHistory: ServiceStatusHistorySummary[];
+}
+
+/**
+ * One row of the service account list (S3.2 fast search).
+ *
+ * The subscriber's own account number and name travel with the account number so a
+ * clerk holding any one of the four printed numbers can recognise the right account
+ * without opening each one.
+ */
+export interface ServiceAccountListItem {
+  id: string;
+  serviceAccountNumber: string;
+  subscriberId: string;
+  subscriberAccountNumber: string;
+  subscriberName: string;
+  planId: string;
+  planName: string;
+  serviceType: ServiceType;
+  status: ServiceAccountStatus;
+  areaId: string | null;
+  assignedCollectorId: string | null;
+  activationDate: string | null;
+  suspensionDate: string | null;
+  terminationDate: string | null;
+  consecutiveOverdueMonths: number;
+  /** Current balance from the ledger: positive owed, negative advance credit. */
+  balanceCentavos: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** The filters and page a caller sends to `GET /api/service-accounts`. */
+export interface ListServiceAccountsFilters {
+  /**
+   * Matched against the service account number AND the owning subscriber's name and
+   * account number — any number from a piece of paper should find the account.
+   */
+  search?: string;
+  status?: ServiceAccountStatus;
+  serviceType?: ServiceType;
+  planId?: string;
+  /** The collection area (route) the account belongs to. */
+  areaId?: string;
+  collectorId?: string;
+  page: number;
+  pageSize: number;
+}
+
+/** One page of service accounts, with the total so a caller can render the pages. */
+export interface PaginatedServiceAccounts {
+  items: ServiceAccountListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface ServiceStatusHistorySummary {
@@ -320,6 +374,132 @@ export async function getServiceAccountById(
   const balanceCentavos = await getCurrentBalanceCentavos(db, serviceAccountId);
 
   return { ...toServiceAccountSummary(account, plan, balanceCentavos), statusHistory };
+}
+
+const serviceAccountListColumns = {
+  id: serviceAccounts.id,
+  serviceAccountNumber: serviceAccounts.serviceAccountNumber,
+  subscriberId: subscribers.id,
+  subscriberAccountNumber: subscribers.accountNumber,
+  subscriberFirstName: subscribers.firstName,
+  subscriberLastName: subscribers.lastName,
+  planId: subscriptionPlans.id,
+  planName: subscriptionPlans.name,
+  serviceType: subscriptionPlans.serviceType,
+  status: serviceAccounts.status,
+  areaId: serviceAccounts.areaId,
+  assignedCollectorId: serviceAccounts.assignedCollectorId,
+  activationDate: serviceAccounts.activationDate,
+  suspensionDate: serviceAccounts.suspensionDate,
+  terminationDate: serviceAccounts.terminationDate,
+  consecutiveOverdueMonths: serviceAccounts.consecutiveOverdueMonths,
+  createdAt: serviceAccounts.createdAt,
+  updatedAt: serviceAccounts.updatedAt,
+};
+
+/**
+ * Translates the list filters into a WHERE clause.
+ *
+ * Every condition is an equality on an indexed column (status, area, collector) or
+ * a join key, so the filters narrow the scan rather than filtering after it.
+ */
+function buildServiceAccountConditions(filters: ListServiceAccountsFilters): SQL | undefined {
+  const conditions: SQL[] = [];
+
+  if (filters.status !== undefined) {
+    conditions.push(eq(serviceAccounts.status, filters.status));
+  }
+
+  if (filters.serviceType !== undefined) {
+    conditions.push(eq(subscriptionPlans.serviceType, filters.serviceType));
+  }
+
+  if (filters.planId !== undefined) {
+    conditions.push(eq(serviceAccounts.planId, filters.planId));
+  }
+
+  if (filters.areaId !== undefined) {
+    conditions.push(eq(serviceAccounts.areaId, filters.areaId));
+  }
+
+  if (filters.collectorId !== undefined) {
+    conditions.push(eq(serviceAccounts.assignedCollectorId, filters.collectorId));
+  }
+
+  if (filters.search !== undefined && filters.search.trim() !== "") {
+    const pattern = `%${filters.search.trim()}%`;
+    const searchCondition = or(
+      ilike(serviceAccounts.serviceAccountNumber, pattern),
+      ilike(subscribers.accountNumber, pattern),
+      ilike(subscribers.firstName, pattern),
+      ilike(subscribers.lastName, pattern)
+    );
+
+    if (searchCondition !== undefined) {
+      conditions.push(searchCondition);
+    }
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+/**
+ * Lists service accounts, newest first, ONE PAGE AT A TIME.
+ *
+ * The order is stable — `created_at` with the service account number as the
+ * tie-breaker — so a page boundary cannot drop or repeat a row between two requests.
+ * `total` is the count of everything the filters matched.
+ */
+export async function listServiceAccounts(
+  filters: ListServiceAccountsFilters
+): Promise<PaginatedServiceAccounts> {
+  const where = buildServiceAccountConditions(filters);
+
+  const rows = await db
+    .select(serviceAccountListColumns)
+    .from(serviceAccounts)
+    .innerJoin(subscribers, eq(serviceAccounts.subscriberId, subscribers.id))
+    .innerJoin(subscriptionPlans, eq(serviceAccounts.planId, subscriptionPlans.id))
+    .where(where)
+    .orderBy(desc(serviceAccounts.createdAt), desc(serviceAccounts.serviceAccountNumber))
+    .limit(filters.pageSize)
+    .offset((filters.page - 1) * filters.pageSize);
+
+  const total = await db
+    .select({ value: count() })
+    .from(serviceAccounts)
+    .innerJoin(subscribers, eq(serviceAccounts.subscriberId, subscribers.id))
+    .innerJoin(subscriptionPlans, eq(serviceAccounts.planId, subscriptionPlans.id))
+    .where(where)
+    .then((countRows) => countRows[0]?.value ?? 0);
+
+  const items: ServiceAccountListItem[] = [];
+
+  for (const row of rows) {
+    const balanceCentavos = await getCurrentBalanceCentavos(db, row.id);
+    items.push({
+      id: row.id,
+      serviceAccountNumber: row.serviceAccountNumber,
+      subscriberId: row.subscriberId,
+      subscriberAccountNumber: row.subscriberAccountNumber,
+      subscriberName: `${row.subscriberLastName}, ${row.subscriberFirstName}`,
+      planId: row.planId,
+      planName: row.planName,
+      serviceType: row.serviceType,
+      status: row.status,
+      areaId: row.areaId,
+      assignedCollectorId: row.assignedCollectorId,
+      activationDate: row.activationDate,
+      suspensionDate: row.suspensionDate,
+      terminationDate: row.terminationDate,
+      consecutiveOverdueMonths: row.consecutiveOverdueMonths,
+      balanceCentavos,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  }
+
+  return { items, page: filters.page, pageSize: filters.pageSize, total };
 }
 
 /** One entry in the status audit trail. */
@@ -585,6 +765,74 @@ export async function terminateServiceAccount(
       previousStatus: account.status,
       newStatus: "terminated",
       reason,
+      changedBy,
+    });
+
+    const balanceCentavos = await getCurrentBalanceCentavos(tx, serviceAccountId);
+
+    return toServiceAccountSummary(updated, plan, balanceCentavos);
+  });
+}
+
+/**
+ * Brings a pending account into service once installation is complete.
+ *
+ * A brand-new account with no activation date is created "pending" so that an
+ * unfinished installation is never billed. This is the only move that takes it
+ * out of pending: the status, its activation date and the history row commit
+ * together, so the account can never become active with no record of who did it.
+ */
+export async function activateServiceAccount(
+  serviceAccountId: string,
+  reason: string | undefined,
+  changedBy: string,
+  activationDate?: string
+): Promise<ServiceAccountSummary> {
+  // The status update and its audit row commit together, so the account can
+  // never end up active with no record of who activated it or why.
+  return db.transaction(async (tx) => {
+    const { account, plan } = await requireServiceAccountWithPlan(serviceAccountId, tx, {
+      forUpdate: true,
+    });
+
+    if (account.status === "terminated") {
+      throw new ConflictError("A terminated service account cannot be activated");
+    }
+
+    if (account.status === "active") {
+      throw new ConflictError("This service account is already active");
+    }
+
+    if (account.status === "suspended") {
+      // A suspended account was in service once; restoring it is a reconnection,
+      // not a first activation, and the reconnection fee must not be bypassed.
+      throw new ConflictError(
+        "A suspended service account cannot be activated; reconnect it instead"
+      );
+    }
+
+    const effectiveDate = activationDate ?? formatDateOnly(new Date());
+
+    const updated = await tx
+      .update(serviceAccounts)
+      .set({
+        status: "active",
+        activationDate: effectiveDate,
+        updatedAt: new Date(),
+      })
+      .where(eq(serviceAccounts.id, serviceAccountId))
+      .returning(serviceAccountColumns)
+      .then((rows) => rows[0]);
+
+    if (updated === undefined) {
+      throw new NotFoundError("Service account not found");
+    }
+
+    await recordStatusChange(tx, {
+      serviceAccountId,
+      previousStatus: account.status,
+      newStatus: "active",
+      reason: reason ?? `Activated — service starts ${effectiveDate}`,
       changedBy,
     });
 

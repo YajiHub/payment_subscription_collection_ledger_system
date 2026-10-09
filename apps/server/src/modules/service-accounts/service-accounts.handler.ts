@@ -5,9 +5,12 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import {
+  activateServiceAccountSchema,
   assignCollectorSchema,
   changeServiceAccountPlanSchema,
   createServiceAccountSchema,
+  listServiceAccountsQuerySchema,
+  queryNumber,
   reconnectServiceAccountSchema,
   suspendServiceAccountSchema,
   terminateServiceAccountSchema,
@@ -17,10 +20,12 @@ import { parseOrThrow } from "../../shared/validate";
 import { audit, logAuditEntry, requestActor } from "../../shared/audit/audit-logger";
 import { createReconnectionFeeInvoice } from "../billing/invoices.service";
 import {
+  activateServiceAccount,
   assignCollector,
   changeServiceAccountPlan,
   createServiceAccountForSubscriber,
   getServiceAccountById,
+  listServiceAccounts,
   recordReconnection,
   reconnectServiceAccount,
   suspendServiceAccount,
@@ -42,6 +47,22 @@ import {
 const subscriberIdParamsSchema = z.object({
   id: z.string().uuid("A valid subscriber id is required"),
 });
+
+/**
+ * GET /api/service-accounts — paginated, filterable list of service accounts.
+ *
+ * This is the account picker's data source (S3.2): a clerk with any one printed
+ * number, or a supervisor narrowing by route/plan/type/status/collector, gets a
+ * bounded page rather than the whole table.
+ */
+export async function getServiceAccounts(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const query = parseOrThrow(listServiceAccountsQuerySchema, request.query);
+  const page = await listServiceAccounts(query);
+  return sendSuccess(reply, page);
+}
 
 /** GET /api/service-accounts/:id — the account, its plan, and its status history. */
 export async function getServiceAccount(
@@ -152,6 +173,30 @@ export async function putServiceAccountTerminated(
   return sendSuccess(reply, terminated);
 }
 
+/**
+ * PUT /api/service-accounts/:id/activate — brings a pending account into service.
+ *
+ * The only move that takes a pending account to active. The reason is optional
+ * (activation is the expected outcome), and an explicit activation date may be
+ * given when the work actually finished earlier than today.
+ */
+export async function putServiceAccountActivated(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const { id } = parseOrThrow(serviceAccountIdParamsSchema, request.params);
+  const body = parseOrThrow(activateServiceAccountSchema, request.body);
+  const changedBy = request.user?.id ?? "";
+
+  const activated = await activateServiceAccount(id, body.reason, changedBy, body.activationDate);
+  await audit.serviceAccountActivated(
+    { ...activated },
+    body.reason ?? "Installation complete",
+    requestActor(request)
+  );
+  return sendSuccess(reply, activated);
+}
+
 /** PUT /api/service-accounts/:id/plan — moves the account onto another plan. */
 export async function putServiceAccountPlan(
   request: FastifyRequest,
@@ -178,7 +223,7 @@ export async function putServiceAccountCollector(
 
 /** The threshold override an on-demand run may carry (S4-7). */
 const suspensionRunSchema = z.object({
-  thresholdDays: z.coerce.number().int().min(1).max(3650).optional(),
+  thresholdDays: queryNumber("thresholdDays", (schema) => schema.int().min(1).max(3650)).optional(),
   reason: z.string().trim().min(10, "A suspension reason is required").max(500).optional(),
 });
 
