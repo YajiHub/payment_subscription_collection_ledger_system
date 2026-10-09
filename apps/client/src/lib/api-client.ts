@@ -2536,6 +2536,7 @@ export interface AuditLogFilters {
   entityType?: string;
   entityId?: string;
   performedBy?: string;
+  performedByUsername?: string;
 }
 
 /** GET /api/audit-logs — one page of the audit trail (Admin only). */

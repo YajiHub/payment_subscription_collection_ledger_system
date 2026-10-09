@@ -20,11 +20,16 @@ const fieldClass =
 interface AuditFilters {
   action: string;
   entityType: string;
-  performedBy: string;
+  performedByUsername: string;
   entityId: string;
 }
 
-const emptyFilters: AuditFilters = { action: "", entityType: "", performedBy: "", entityId: "" };
+const emptyFilters: AuditFilters = {
+  action: "",
+  entityType: "",
+  performedByUsername: "",
+  entityId: "",
+};
 
 /** A human label for an action, falling back to the raw value. */
 function actionLabel(action: string): string {
@@ -95,6 +100,11 @@ export function AuditLogPage(): ReactNode {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  // What has been TYPED and what has been APPLIED are kept apart: the trail is only
+  // re-queried when the operator asks for it. Querying on every keystroke sent a
+  // half-typed user id, and the server rightly refused it, so the operator was shown
+  // "A valid user id is required" while they were still typing.
+  const [draftFilters, setDraftFilters] = useState<AuditFilters>(emptyFilters);
   const [filters, setFilters] = useState<AuditFilters>(emptyFilters);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -108,7 +118,10 @@ export function AuditLogPage(): ReactNode {
         pageSize,
         action: filters.action.trim() === "" ? undefined : filters.action.trim(),
         entityType: filters.entityType.trim() === "" ? undefined : filters.entityType.trim(),
-        performedBy: filters.performedBy.trim() === "" ? undefined : filters.performedBy.trim(),
+        performedByUsername:
+          filters.performedByUsername.trim() === ""
+            ? undefined
+            : filters.performedByUsername.trim(),
         entityId: filters.entityId.trim() === "" ? undefined : filters.entityId.trim(),
       });
       setEntries(result.items);
@@ -126,8 +139,8 @@ export function AuditLogPage(): ReactNode {
 
   function handleFilterSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    setFilters(draftFilters);
     setPage(1);
-    void loadEntries();
   }
 
   return (
@@ -150,8 +163,8 @@ export function AuditLogPage(): ReactNode {
               <span className="text-xs font-medium text-content-secondary">Action</span>
               <input
                 className={fieldClass}
-                value={filters.action}
-                onChange={(event) => setFilters({ ...filters, action: event.target.value })}
+                value={draftFilters.action}
+                onChange={(event) => setDraftFilters({ ...draftFilters, action: event.target.value })}
                 placeholder="payment.reversed"
               />
             </label>
@@ -159,8 +172,8 @@ export function AuditLogPage(): ReactNode {
               <span className="text-xs font-medium text-content-secondary">Entity type</span>
               <select
                 className={fieldClass}
-                value={filters.entityType}
-                onChange={(event) => setFilters({ ...filters, entityType: event.target.value })}
+                value={draftFilters.entityType}
+                onChange={(event) => setDraftFilters({ ...draftFilters, entityType: event.target.value })}
               >
                 <option value="">All</option>
                 {AUDIT_ENTITY_TYPES.map((entityType) => (
@@ -174,18 +187,20 @@ export function AuditLogPage(): ReactNode {
               <span className="text-xs font-medium text-content-secondary">Entity id</span>
               <input
                 className={fieldClass}
-                value={filters.entityId}
-                onChange={(event) => setFilters({ ...filters, entityId: event.target.value })}
+                value={draftFilters.entityId}
+                onChange={(event) => setDraftFilters({ ...draftFilters, entityId: event.target.value })}
                 placeholder="UUID"
               />
             </label>
             <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-content-secondary">Performed by (user id)</span>
+              <span className="text-xs font-medium text-content-secondary">Performed by</span>
               <input
                 className={fieldClass}
-                value={filters.performedBy}
-                onChange={(event) => setFilters({ ...filters, performedBy: event.target.value })}
-                placeholder="UUID"
+                value={draftFilters.performedByUsername}
+                onChange={(event) =>
+                  setDraftFilters({ ...draftFilters, performedByUsername: event.target.value })
+                }
+                placeholder="username, e.g. demo.cashier"
               />
             </label>
             <div className="flex items-end gap-2">
@@ -197,6 +212,7 @@ export function AuditLogPage(): ReactNode {
                 variant="outline"
                 size="md"
                 onClick={() => {
+                  setDraftFilters(emptyFilters);
                   setFilters(emptyFilters);
                   setPage(1);
                 }}

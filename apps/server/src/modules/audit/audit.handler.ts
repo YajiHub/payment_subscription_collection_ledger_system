@@ -18,6 +18,9 @@ export const listAuditLogsQuerySchema = z.object({
   entityType: z.string().trim().max(50).optional(),
   entityId: z.string().uuid("A valid entity id is required").optional(),
   performedBy: z.string().uuid("A valid user id is required").optional(),
+  // What an operator actually has is a name, not a user id: the filter screens
+  // offer this rather than asking a person to type a UUID from memory.
+  performedByUsername: z.string().trim().min(1).max(50).optional(),
 });
 
 /** GET /api/audit-logs — one page of the audit trail, newest first. */
