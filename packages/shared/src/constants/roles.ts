@@ -45,6 +45,17 @@ export const SYSTEM_ROLE_LABELS = {
   read_only_viewer: "Read-only Viewer",
 } as const satisfies Record<SystemRole, string>;
 
+/** Helper to get human readable label for any role (SystemRole or UserRole). */
+export function getRoleLabel(role: string): string {
+  if (role in SYSTEM_ROLE_LABELS) {
+    return SYSTEM_ROLE_LABELS[role as SystemRole];
+  }
+  if (role in USER_ROLE_LABELS) {
+    return USER_ROLE_LABELS[role as UserRole];
+  }
+  return role.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 /** One-line description of what each stored role is for; printed on the roles screen. */
 export const SYSTEM_ROLE_DESCRIPTIONS = {
   owner: "Unrestricted access, including backups, settings and the audit trail",
@@ -62,7 +73,7 @@ export const SYSTEM_ROLE_DESCRIPTIONS = {
 // union of every legacy role that maps onto it (see SYSTEM_ROLE_PERMISSIONS).
 export const LEGACY_ROLE_TO_SYSTEM_ROLE = {
   admin: "administrator",
-  billing_clerk: "cashier",
+  billing_clerk: "administrator",
   cashier: "cashier",
   collector: "collection_supervisor",
   manager: "read_only_viewer",

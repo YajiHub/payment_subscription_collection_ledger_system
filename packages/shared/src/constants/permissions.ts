@@ -187,8 +187,14 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
 // An unknown role has NO permissions. A role can only reach here from a verified
 // JWT, so an unknown one means a token minted by an older build; denying it is the
 // safe answer, and it must be a denial rather than a crash while reading the matrix.
-export function roleHasPermission(role: UserRole, permission: Permission): boolean {
-  const grantedPermissions: readonly Permission[] | undefined = ROLE_PERMISSIONS[role];
+export function roleHasPermission(role: string, permission: Permission): boolean {
+  if (role in SYSTEM_ROLE_PERMISSIONS) {
+    const systemGranted = SYSTEM_ROLE_PERMISSIONS[role as SystemRole];
+    if (systemGranted !== undefined && systemGranted.includes(permission)) {
+      return true;
+    }
+  }
+  const grantedPermissions: readonly Permission[] | undefined = ROLE_PERMISSIONS[role as UserRole];
   return grantedPermissions !== undefined && grantedPermissions.includes(permission);
 }
 
@@ -289,18 +295,12 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRole, readonly Permission[]> 
 
   administrator: Object.keys(PERMISSION_DESCRIPTIONS) as readonly Permission[],
 
-  // Union of the legacy `billing_clerk` and `cashier` sets: the new Cashier keeps
-  // the counter work of both.
+  // Section 3.1 Cashier: counter payments, GCash verification, OR printing,
+  // daily collection report, view subscriber/invoice records, reconcile batches.
+  // Explicitly cannot generate billing, cannot reverse payments without authorization,
+  // cannot access audit logs.
   cashier: [
-    "subscribers:create",
     "subscribers:read",
-    "subscribers:update",
-    "subscribers:suspend",
-    "subscribers:reconnect",
-    "plans:create",
-    "plans:read",
-    "plans:update",
-    "invoices:generate",
     "invoices:read",
     "payments:post",
     "payments:read",
@@ -309,11 +309,9 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRole, readonly Permission[]> 
     "payments:reject_gcash",
     "payments:allocate_manually",
     "ledger:read",
-    "collector_batches:create",
     "collector_batches:read",
     "collector_batches:reconcile",
     "reports:view",
-    "reports:management_view",
   ],
 
   // Superset of the legacy `collector` set: the supervisor can also assemble a
@@ -346,7 +344,11 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRole, readonly Permission[]> 
     "audit:read",
   ],
 
-  technician: ["subscribers:read", "invoices:read", "collector_batches:read"],
+  technician: [
+    "subscribers:read",
+    "subscribers:suspend",
+    "subscribers:reconnect",
+  ],
 
   // Identical to the legacy `manager` set.
   read_only_viewer: [

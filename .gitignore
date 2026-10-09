@@ -43,6 +43,9 @@ Thumbs.db
 # Uploaded GCash proof screenshots live on the server, never in git
 uploads/
 
+# Scratch UI-verification harness and screenshots (see demo/shots/README.md)
+/demo/
+
 # Phase 10 artifacts — database backups and the assembled submission folder
 backups/
 submission/

@@ -175,25 +175,18 @@ FROM (VALUES
 	('administrator', 'system:backup'),
 	('administrator', 'system:settings'),
 	('administrator', 'audit:read'),
-	('cashier', 'subscribers:create'),
 	('cashier', 'subscribers:read'),
-	('cashier', 'subscribers:update'),
-	('cashier', 'subscribers:suspend'),
-	('cashier', 'subscribers:reconnect'),
-	('cashier', 'plans:create'),
-	('cashier', 'plans:read'),
-	('cashier', 'plans:update'),
-	('cashier', 'invoices:generate'),
 	('cashier', 'invoices:read'),
 	('cashier', 'payments:post'),
 	('cashier', 'payments:read'),
 	('cashier', 'receipts:print'),
+	('cashier', 'payments:verify_gcash'),
+	('cashier', 'payments:reject_gcash'),
+	('cashier', 'payments:allocate_manually'),
 	('cashier', 'ledger:read'),
-	('cashier', 'collector_batches:create'),
 	('cashier', 'collector_batches:read'),
 	('cashier', 'collector_batches:reconcile'),
 	('cashier', 'reports:view'),
-	('cashier', 'reports:management_view'),
 	('collection_supervisor', 'subscribers:read'),
 	('collection_supervisor', 'subscribers:update'),
 	('collection_supervisor', 'subscribers:suspend'),
@@ -217,8 +210,8 @@ FROM (VALUES
 	('accounting_auditor', 'reports:export'),
 	('accounting_auditor', 'audit:read'),
 	('technician', 'subscribers:read'),
-	('technician', 'invoices:read'),
-	('technician', 'collector_batches:read'),
+	('technician', 'subscribers:suspend'),
+	('technician', 'subscribers:reconnect'),
 	('read_only_viewer', 'subscribers:read'),
 	('read_only_viewer', 'plans:read'),
 	('read_only_viewer', 'invoices:read'),
@@ -246,7 +239,7 @@ SELECT user_row."id", role_row."id"
 FROM "users" AS user_row
 JOIN "roles" AS role_row ON role_row."code" = CASE user_row."role"
 	WHEN 'admin' THEN 'administrator'
-	WHEN 'billing_clerk' THEN 'cashier'
+	WHEN 'billing_clerk' THEN 'administrator'
 	WHEN 'cashier' THEN 'cashier'
 	WHEN 'collector' THEN 'collection_supervisor'
 	WHEN 'manager' THEN 'read_only_viewer'

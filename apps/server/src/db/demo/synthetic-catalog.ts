@@ -22,8 +22,9 @@ export const DEMO_MARKER = "DEMO-DATA";
 /** Demo user accounts are `demo.<role>`, which no real account is named. */
 export const DEMO_USERNAME_PREFIX = "demo.";
 
-/** The one password every demo account shares. It is published, so it is not a secret. */
-export const DEMO_PASSWORD = "DemoPassword1!";
+// The password every demo account shares is NOT defined here. It comes from
+// configuration (`SEED_DEMO_PASSWORD`, default `password`) so the demo seed, the
+// documented logins and `pnpm db:reset-passwords` all write the same value.
 
 /** Demo GCash references start with this, so they read as obviously synthetic. */
 export const DEMO_GCASH_REFERENCE_PREFIX = "DEMOGCASH";
@@ -59,7 +60,7 @@ export const DEMO_USERS: readonly DemoUserDefinition[] = [
     username: `${DEMO_USERNAME_PREFIX}supervisor`,
     fullName: "Sofia Supervisor (DEMO)",
     legacyRole: "manager",
-    systemRoles: ["collection_supervisor"],
+    systemRoles: ["collection_supervisor", "read_only_viewer"],
   },
   {
     username: `${DEMO_USERNAME_PREFIX}collector.one`,
@@ -83,7 +84,7 @@ export const DEMO_USERS: readonly DemoUserDefinition[] = [
     username: `${DEMO_USERNAME_PREFIX}technician`,
     fullName: "Tomas Technician (DEMO)",
     legacyRole: "manager",
-    systemRoles: ["technician"],
+    systemRoles: ["technician", "read_only_viewer"],
   },
 ] as const;
 
