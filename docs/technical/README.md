@@ -760,7 +760,8 @@ stops the server immediately with a readable message instead of failing later.
 | `LOGIN_RATE_LIMIT_MAX`  | `10`                        | Stricter login limit per client IP, per 5 minutes                 |
 | `UPLOADS_DIR`           | `uploads`                   | Where GCash proof screenshots are written                         |
 | `SEED_ADMIN_USERNAME`   | `admin`                     | Username `pnpm db:seed` creates when it is absent                  |
-| `SEED_ADMIN_PASSWORD`   | `Admin@1234!`               | Password for that account. **Change it after the first login**    |
+| `SEED_ADMIN_PASSWORD`   | `password`                  | Password for that account. Development default                   |
+| `SEED_DEMO_PASSWORD`    | `password`                  | Demo account password; also what `db:reset-passwords` writes     |
 | `VITE_API_BASE_URL`     | `http://localhost:3003`     | API URL compiled into the client; overridable per install (below) |
 
 The renderer's API URL is resolved in this order:
@@ -773,6 +774,33 @@ A config value that is not an absolute `http`/`https` URL is ignored, so a typo
 cannot point the app at nothing. See `docs/deployment/README.md`.
 
 `.env` is git-ignored; `.env.example` is committed and contains no real secrets.
+
+### Which database am I on?
+
+Three databases can hold divergent data on one machine (`bcis_db`, `bcis_demo`,
+`bcis_test`), so the server says which one it is using rather than leaving an
+operator to guess:
+
+- the **boot log** prints the database name and host on every start; and
+- `GET /health/db` returns a `database_name` field alongside its health result.
+
+Only the name and host are ever shown. The user and password inside
+`DATABASE_URL` are never logged and never sent over HTTP.
+
+### Development passwords
+
+Every development account — the bootstrap Administrator and every demo account —
+uses the password `password`, overridable with `SEED_ADMIN_PASSWORD` and
+`SEED_DEMO_PASSWORD`. To bring an existing database back to that value without
+dropping it:
+
+```bash
+pnpm db:reset-passwords -- --confirm
+```
+
+The script refuses to run without `--confirm`, refuses to run when
+`NODE_ENV=production`, writes only a bcrypt hash at the configured cost, and
+prints every account it changed. See `docs/known-limitations.md` §5.
 
 ---
 
@@ -794,7 +822,10 @@ The API answers two health endpoints:
 | Endpoint        | Meaning                                                             |
 | --------------- | ------------------------------------------------------------------- |
 | `GET /health`   | The process is alive                                                |
-| `GET /health/db`| PostgreSQL answered — or `503` when it did not, without crashing     |
+| `GET /health/db`| PostgreSQL answered, or `503` when it did not, without crashing     |
+
+`GET /health/db` also returns the name of the database it probed as
+`database_name`, so an operator can tell which database answered.
 
 ### Demo dataset (activity section 8)
 
@@ -812,7 +843,7 @@ What it produces (all of it deterministic from the seed):
 
 - 7 demo users covering Owner/Administrator, Cashier, Collection Supervisor,
   Accounting/Auditor, Read-only Viewer and Technician — all with the shared
-  password `DemoPassword1!` and usernames `demo.owner`, `demo.cashier`, …;
+  password `password` and usernames `demo.owner`, `demo.cashier`, …;
 - 7 plans (3 Internet + 2 Cable TV + 2 Combo), 3 collection areas, 2 collectors;
 - 50 subscribers and 60+ service accounts spread across all three service types;
 - five months of billing, with payments mixing Cash, GCash (verified, pending and

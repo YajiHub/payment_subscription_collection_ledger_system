@@ -32,8 +32,9 @@ pnpm db:seed                  # default settings + the first Administrator
 pnpm dev                      # starts the API server and the Electron client together
 ```
 
-The seed creates one Administrator (`admin` / `Admin@1234!` unless `SEED_ADMIN_PASSWORD`
-is set). **Change that password immediately after the first login.**
+The seed creates one Administrator (`admin` / `password` unless `SEED_ADMIN_PASSWORD`
+is set). **`password` is a development credential and is published in this guide —
+change it immediately after the first login on a real installation.**
 
 ## Commands
 

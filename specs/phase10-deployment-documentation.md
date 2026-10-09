@@ -155,9 +155,11 @@ Note the IPv4 address under "Ethernet adapter" (e.g., 192.168.1.100)
 
 Default admin account (created by seed):
   Username: admin
-  Password: Admin@1234!
+  Password: password
 
-⚠️  CHANGE THE ADMIN PASSWORD IMMEDIATELY after first login.
+⚠️  CHANGE THE ADMIN PASSWORD IMMEDIATELY after first login. `password` is a
+    development credential, published in this documentation, and it is the same
+    for every seeded account — never leave it in place on a real office PC.
 
 ## Firewall Configuration (if clients cannot reach the server)
 

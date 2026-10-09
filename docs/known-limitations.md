@@ -72,13 +72,22 @@ find them — the scripts run `pg_dump` and `pg_restore` by name.
 The PostgreSQL-backed Vitest suites also ran against a live database in this
 environment rather than skipping.
 
-## 5. The bootstrap Administrator password is a documented default
+## 5. The development password is `password`, and it must be changed before deployment
 
-`pnpm db:seed` creates `admin` / `Admin@1234!` (or whatever `SEED_ADMIN_PASSWORD`
-is set to) on a database with no such user. This is a documented bootstrap
-credential, not a stored secret, and it is identical on every fresh install until
-it is changed. **Change it immediately after the first login.** The seed never
-resets an existing account, so the change is permanent.
+Every account in this development/demo environment uses the password `password`: the
+bootstrap Administrator `pnpm db:seed` creates and every synthetic account
+`pnpm db:seed:demo` creates. It is overridable with `SEED_ADMIN_PASSWORD` and
+`SEED_DEMO_PASSWORD`, and `pnpm db:reset-passwords -- --confirm` rewrites every
+existing account back to it.
+
+This is a convenience for synthetic lab data and it is written down rather than
+implied: the value is published here and in the Deployment Guide, so it is not a
+secret and it grants access to every account to anyone who has read this file.
+**Change it — and the Administrator's own password — before any real deployment.**
+The reset script refuses to run when `NODE_ENV=production` for exactly this reason.
+
+The seed itself never resets an existing account: it only creates the Administrator
+when the username is absent, so a deliberate password change survives later seeds.
 
 ## 6. Session and configuration details worth knowing
 

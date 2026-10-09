@@ -48,7 +48,7 @@ of a loading skeleton.
 
 Environment overrides: `BCIS_UI_URL` (default `http://localhost:5173`),
 `BCIS_API_URL` (default `http://localhost:3003`), `BCIS_SHOT_DIR` (default this
-directory), `BCIS_OWNER_PASSWORD` (default the `DemoPassword1!` the seed prints).
+directory), `BCIS_OWNER_PASSWORD` (default the `password` the seed prints).
 
 The accounts and shared password are the synthetic demo logins
 `pnpm db:seed:demo` prints. No real credential is used or stored.

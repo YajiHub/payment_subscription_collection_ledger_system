@@ -197,15 +197,22 @@ machine. Before a real release, add an application icon at
 
 The seed script creates one Administrator account:
 
-```
+```text
 Username: admin
-Password: Admin@1234!      (or whatever SEED_ADMIN_PASSWORD was set to)
+Password: password      (the development default; SEED_ADMIN_PASSWORD overrides it)
 ```
 
 > **Change this password immediately** after the first login (Users → your
-> account → Change password). The bootstrap password is documented in this guide
-> and is therefore not a secret. If you prefer, set `SEED_ADMIN_PASSWORD` in
-> `.env` to your own value before running `pnpm db:seed` on a fresh database.
+> account → Change password). `password` is a development default, published in
+> this guide and in `docs/known-limitations.md`, so it is not a secret and it is
+> the same on every fresh install until someone changes it. Set
+> `SEED_ADMIN_PASSWORD` in `.env` to your own value before running `pnpm db:seed`
+> on a fresh database, or change the password in the app afterwards.
+>
+> `pnpm db:reset-passwords -- --confirm` rewrites every account back to the shared
+> development password. It is a development convenience only: it refuses to run
+> when `NODE_ENV=production`, because shipping this credential to a real office
+> database would give everyone who has read this file a working login.
 
 Then create the Billing Clerk, Cashier, Collector, and Manager accounts (see the
 User Manual §1.4).

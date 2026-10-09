@@ -27,12 +27,15 @@ there is a change.
    `pnpm start`.
 3. Leave that window open. The API must stay running for the other PCs to work.
 4. **[screenshot]** The server log should say the server is listening on
-   `http://0.0.0.0:3003`.
+   `http://0.0.0.0:3003`. It also prints which database it is using
+   (`Database connection target: "bcis_db" on localhost:5432`), so you can confirm
+   the app is pointed at your data before anyone signs in.
 
 ### 1.2 First login
 
 1. Open the BCIS app on your PC.
 2. Enter the Administrator username and password from the Deployment Guide.
+   In this development/demo environment that is **`admin` / `password`**.
 3. **[screenshot]** You should land on the Home screen with a green
    "API reachable" badge.
 
@@ -41,8 +44,9 @@ there is a change.
 1. Go to **Users**.
 2. Find your own account and choose **Change password**.
 3. Enter a new password of at least 12 characters and save.
-4. Do this immediately after the first login — the bootstrap password is printed
-   in the Deployment Guide and is not a secret.
+4. Do this immediately after the first login — `password` is a documented
+   development default, not a secret, and it is known to anyone who has read the
+   guide. A real deployment must never keep it.
 
 ### 1.4 Create the other users
 

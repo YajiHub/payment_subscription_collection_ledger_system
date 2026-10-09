@@ -21,6 +21,8 @@ export default tseslint.config(
       "**/.pi/**",
       ".agents/**",
       ".impeccable/**",
+      // Scratch UI-verification harness (untracked; see demo/shots/README.md).
+      "demo/**",
       "apps/server/src/db/migrations/**",
     ],
   },
