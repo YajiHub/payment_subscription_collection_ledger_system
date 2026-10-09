@@ -18,14 +18,14 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { config } from "../config";
+import { config, DATABASE_TARGET } from "../config";
 import { closeDatabaseConnection } from "./connection";
 import {
   DemoDatasetConflictError,
   generateDemoDataset,
   type DemoDatasetSummary,
 } from "./demo/demo-dataset";
-import { DEMO_PASSWORD, DEMO_USERS } from "./demo/synthetic-catalog";
+import { DEMO_USERS } from "./demo/synthetic-catalog";
 
 interface DemoScriptArguments {
   seed?: number;
@@ -106,7 +106,7 @@ function printSummary(summary: DemoDatasetSummary): void {
   console.log("");
   console.log("Demo logins (username / shared password):");
   for (const user of DEMO_USERS) {
-    console.log(`  ${user.username.padEnd(22)} ${DEMO_PASSWORD}   ${user.fullName}`);
+    console.log(`  ${user.username.padEnd(22)} ${config.SEED_DEMO_PASSWORD}   ${user.fullName}`);
   }
   console.log("");
   console.log("All of this data is synthetic. Do not use it in a real office database.");
@@ -118,10 +118,9 @@ const isEntryPoint =
 if (isEntryPoint) {
   void (async () => {
     const options = parseArguments(process.argv.slice(2));
-    // A plain string split, not `new URL()`: the database name is only printed,
-    // and a malformed URL must not throw before the guard gets a chance to run.
-    const target = config.DATABASE_URL.replace(/^.*\//, "").split("?")[0];
-    console.log(`Seeding the demo dataset into database "${target}"…`);
+    // The database name comes from config, which parses DATABASE_URL once and
+    // never carries the credentials into this line.
+    console.log(`Seeding the demo dataset into database "${DATABASE_TARGET.name}"…`);
 
     const summary = await generateDemoDataset({
       seed: options.seed,

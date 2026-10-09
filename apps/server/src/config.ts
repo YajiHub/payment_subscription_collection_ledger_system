@@ -47,6 +47,11 @@ const environmentSchema = z.object({
   // changed is never reset. Change the password immediately after the first login.
   SEED_ADMIN_USERNAME: z.string().min(1).default("admin"),
   SEED_ADMIN_PASSWORD: z.string().min(8).default("password"),
+  // The one password every account in the synthetic demo dataset shares. It is a
+  // development credential, published on purpose (see docs/known-limitations.md),
+  // and it is also what `pnpm db:reset-passwords` writes. Override it for a demo
+  // that should not use the documented value.
+  SEED_DEMO_PASSWORD: z.string().min(8).default("password"),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);
@@ -75,6 +80,43 @@ export function childProcessEnvironment(
 ): NodeJS.ProcessEnv {
   return { ...process.env, ...overrides };
 }
+
+/**
+ * The database this process is configured to talk to, parsed once from
+ * DATABASE_URL.
+ *
+ * Exposed so an operator can answer "is this my data?" without psql: the boot log
+ * and the database health endpoint print the name and host. It deliberately holds
+ * NO credentials — the user and password in the connection string never leave
+ * this file, so neither can leak into a log line or an API response.
+ */
+export interface DatabaseTarget {
+  /** The database name (the path segment of the connection string). */
+  name: string;
+  /** Host and port, e.g. `localhost:5432`. Never includes the user or password. */
+  host: string;
+}
+
+/**
+ * Splits a validated connection string into the two facts worth showing.
+ * The Zod schema above already rejected anything that is not a URL, so the
+ * `catch` is unreachable defensive code — it returns placeholders rather than the
+ * raw string, so a future mistake here can never leak credentials into a log.
+ */
+function describeDatabaseUrl(databaseUrl: string): DatabaseTarget {
+  try {
+    const parsed = new URL(databaseUrl);
+    return {
+      name: decodeURIComponent(parsed.pathname.replace(/^\//, "")),
+      host: parsed.host,
+    };
+  } catch {
+    return { name: "(unparseable DATABASE_URL)", host: "" };
+  }
+}
+
+/** Which database this process is pointed at. Name and host only, never a secret. */
+export const DATABASE_TARGET: DatabaseTarget = describeDatabaseUrl(config.DATABASE_URL);
 
 /** Reported by GET /health so a client can tell which build it is talking to. */
 export const SERVICE_VERSION = "0.1.0";

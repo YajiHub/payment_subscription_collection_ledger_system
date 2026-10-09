@@ -18,6 +18,13 @@ export default defineConfig({
     // invariants (e.g. AR aging grand total = sum of all outstanding invoices).
     // Running files in parallel lets one suite mutate balances between another
     // suite's snapshot and its raw-SQL re-sum, so the results are nondeterministic.
+    //
+    // The same serialization also keeps the suites that SEED AND CLEAN the shared
+    // database from overlapping: `demo-dataset.postgres.test.ts` writes the demo users
+    // and then removes them again, while `wp1-schema.postgres.test.ts` asserts
+    // whole-database invariants over `users` and `user_roles`. One file at a time means
+    // no suite ever reads the database while another is part-way through changing it.
+    // This orders the files without slowing the ones that never touch the database.
     fileParallelism: false,
     include: ["test/**/*.test.ts"],
     env: {

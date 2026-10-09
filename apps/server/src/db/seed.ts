@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 
 import { config } from "../config";
 import { closeDatabaseConnection, db } from "./connection";
+import { roles, userRoles } from "./schema/rbac";
 import { users } from "./schema/users";
 import { ensureSystemSettingsSeeded } from "../modules/system/system-settings.service";
 import { hashPassword } from "../shared/password";
@@ -41,25 +42,50 @@ export async function seedDatabase(): Promise<SeedResult> {
     .limit(1)
     .then((rows) => rows[0]);
 
-  if (existingAdministrator !== undefined) {
-    return {
-      administratorCreated: false,
-      administratorUsername: config.SEED_ADMIN_USERNAME,
-    };
+  let adminUserId = existingAdministrator?.id;
+  let administratorCreated = false;
+
+  if (adminUserId === undefined) {
+    // The plain password never leaves this function: only the bcrypt hash is stored.
+    const passwordHash = await hashPassword(config.SEED_ADMIN_PASSWORD);
+
+    const [created] = await db
+      .insert(users)
+      .values({
+        fullName: "System Administrator",
+        username: config.SEED_ADMIN_USERNAME,
+        passwordHash,
+        role: "admin",
+      })
+      .returning({ id: users.id });
+
+    adminUserId = created?.id;
+    administratorCreated = true;
   }
 
-  // The plain password never leaves this function: only the bcrypt hash is stored.
-  const passwordHash = await hashPassword(config.SEED_ADMIN_PASSWORD);
+  // Ensure the administrator holds the authoritative 'administrator' role in user_roles
+  if (adminUserId !== undefined) {
+    const adminRoleRow = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(eq(roles.code, "administrator"))
+      .limit(1)
+      .then((rows) => rows[0]);
 
-  await db.insert(users).values({
-    fullName: "System Administrator",
-    username: config.SEED_ADMIN_USERNAME,
-    passwordHash,
-    role: "admin",
-  });
+    if (adminRoleRow !== undefined) {
+      await db
+        .insert(userRoles)
+        .values({
+          userId: adminUserId,
+          roleId: adminRoleRow.id,
+          assignedBy: null,
+        })
+        .onConflictDoNothing();
+    }
+  }
 
   return {
-    administratorCreated: true,
+    administratorCreated,
     administratorUsername: config.SEED_ADMIN_USERNAME,
   };
 }

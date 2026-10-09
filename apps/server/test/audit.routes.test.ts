@@ -125,6 +125,41 @@ describe("GET /api/audit-logs", () => {
 
     expect(response.statusCode).toBe(403);
   });
+
+  it("records the username of the signed-in user who performed the action (D1)", async () => {
+    // Before the fix the row named only a user id, so the audit screen showed
+    // "system" for every action. The actor's username now travels on the token
+    // and lands on the audit row, with the id and client address kept alongside.
+    const operatorUsername = "demo.billing";
+    const { token } = signTestToken({ role: "admin", sub: ADMIN_ID, username: operatorUsername });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      {
+        key: "late_fee_centavos",
+        value: "5000",
+        description: "Late fee",
+        updatedAt: new Date(),
+        updatedBy: null,
+      },
+    ]); // getSystemSettingsMap (previous values)
+
+    const response = await server.inject({
+      method: "PUT",
+      url: "/api/system/settings",
+      headers: authorizationHeader(token),
+      payload: { settings: [{ key: "late_fee_centavos", value: "7500" }] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const auditRow = insertedAuditRows().find((row) => row.action === "system_setting.updated");
+    expect(auditRow).toMatchObject({
+      performedBy: ADMIN_ID,
+      performedByUsername: operatorUsername,
+    });
+    // The existing actor fields survive the change.
+    expect(auditRow?.clientIpAddress).toBeTruthy();
+  });
 });
 
 describe("audit logger", () => {
@@ -170,6 +205,45 @@ describe("audit logger", () => {
       expect(row?.previousState).toMatchObject({ status: previousStatus });
       expect(row?.newState).toMatchObject({ status: "void" });
     }
+  });
+
+  it("does not present the void's own write as the invoice's previous state", async () => {
+    // The document handed to the helper has already been voided, so its voidedAt,
+    // voidedBy, and notes were written BY the void. Spreading it unchecked would
+    // show an auditor an invoice that was already void at the moment it was voided.
+    // The reverse transaction id is the ledger entry the void itself created.
+    const reverseTransactionId = randomUUID();
+    const voidReason = "Verification test: void an unpaid invoice";
+
+    await audit.invoiceVoided(
+      {
+        id: randomUUID(),
+        invoiceNumber: "INV-2025-01-000042",
+        status: "void",
+        voidedAt: new Date("2026-10-09T00:06:22.791Z"),
+        voidedBy: ADMIN_ID,
+        voidedByTransactionId: reverseTransactionId,
+        notes: voidReason,
+      },
+      "unpaid",
+      voidReason,
+      { userId: ADMIN_ID, username: "admin", clientIpAddress: "10.0.0.5" }
+    );
+
+    const [row] = insertedAuditRows();
+    // The real prior status still survives (the earlier regression this must not break).
+    expect(row?.previousState).toMatchObject({ status: "unpaid" });
+    // Nothing the void wrote is passed off as the state BEFORE it.
+    expect(row?.previousState).not.toHaveProperty("voidedAt");
+    expect(row?.previousState).not.toHaveProperty("voidedBy");
+    expect(row?.previousState).not.toHaveProperty("voidedByTransactionId");
+    expect(row?.previousState).not.toHaveProperty("notes");
+    // The NEW state is the voided invoice, so it correctly carries them.
+    expect(row?.newState).toMatchObject({
+      status: "void",
+      voidedAt: new Date("2026-10-09T00:06:22.791Z"),
+      voidedByTransactionId: reverseTransactionId,
+    });
   });
 
   it("never writes a password hash into a user password-changed entry", async () => {

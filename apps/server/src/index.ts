@@ -12,7 +12,7 @@ import Fastify, {
   type FastifyServerOptions,
 } from "fastify";
 
-import { config } from "./config";
+import { config, DATABASE_TARGET } from "./config";
 import { closeDatabaseConnection } from "./db/connection";
 import { registerAuditRoutes } from "./modules/audit/audit.routes";
 import { registerAuthRoutes } from "./modules/auth/auth.routes";
@@ -125,6 +125,16 @@ export function buildServer(): FastifyInstance {
 
 async function startServer(): Promise<void> {
   const server = buildServer();
+
+  // Say which database this process is about to use, in the log, before any
+  // request is served. Three databases can hold divergent data on one machine
+  // (bcis_db, bcis_demo, bcis_test), so an operator staring at a screen needs a
+  // way to confirm "this is my data" without opening psql. Name and host only —
+  // the password inside DATABASE_URL is never logged.
+  server.log.info(
+    { database: DATABASE_TARGET.name, host: DATABASE_TARGET.host },
+    `Database connection target: "${DATABASE_TARGET.name}" on ${DATABASE_TARGET.host}`
+  );
 
   // Resolve the permission matrix from the RBAC tables (S1-2, S12-9) and AWAIT it
   // before the first request is served, so there is no boot window in which

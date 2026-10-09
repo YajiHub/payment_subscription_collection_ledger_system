@@ -2,8 +2,10 @@
 //
 // It answers the operational questions a support call needs: is the database
 // answering, how long has this process been up, and how much data is in each
-// table? It deliberately reports NO configuration values, so it cannot leak a
-// connection string or a secret through the API.
+// table? It deliberately reports NO secrets: no connection string, no password,
+// no key. The one configuration fact it DOES report is the database name and host
+// (`databaseTarget`), because an operator must be able to tell which database
+// answered; neither is a credential.
 
 import { count } from "drizzle-orm";
 
@@ -13,7 +15,7 @@ import { invoices } from "../../db/schema/billing";
 import { payments } from "../../db/schema/payments";
 import { serviceAccounts, subscribers } from "../../db/schema/subscribers";
 import { users } from "../../db/schema/users";
-import { SERVICE_VERSION } from "../../config";
+import { SERVICE_VERSION, DATABASE_TARGET, type DatabaseTarget } from "../../config";
 
 export interface TableCounts {
   users: number;
@@ -32,6 +34,8 @@ export interface ExtendedHealth {
     nodeVersion: string;
   };
   database: DatabaseHealthResult;
+  /** The database name and host this process is pointed at. Not a credential. */
+  databaseTarget: DatabaseTarget;
   counts: TableCounts;
 }
 
@@ -97,6 +101,7 @@ export async function getExtendedHealth(): Promise<ExtendedHealth> {
       nodeVersion: process.version,
     },
     database,
+    databaseTarget: DATABASE_TARGET,
     counts,
   };
 }

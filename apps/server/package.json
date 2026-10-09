@@ -9,6 +9,8 @@
     "start": "tsx --env-file-if-exists=../../.env src/index.ts",
     "db:seed": "tsx --env-file-if-exists=../../.env src/db/seed.ts",
     "db:seed:demo": "tsx --env-file-if-exists=../../.env src/db/seed-demo.ts",
+    "db:reset-passwords": "tsx --env-file-if-exists=../../.env src/db/reset-passwords.ts",
+    "db:reset": "tsx --env-file-if-exists=../../.env src/db/reset.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },

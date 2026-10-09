@@ -158,9 +158,7 @@ describe.skipIf(!databaseIsReachable)("WP1 schema invariants against real Postgr
     const permissionCount = await client.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM permissions"
     );
-    expect(permissionCount.rows[0]?.count).toBe(
-      String(Object.keys(PERMISSION_DESCRIPTIONS).length)
-    );
+    expect(permissionCount.rows[0]?.count).toBe(String(Object.keys(PERMISSION_DESCRIPTIONS).length));
   });
 
   it("stores a role → permission matrix identical to the shared constants", async () => {

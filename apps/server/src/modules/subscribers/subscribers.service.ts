@@ -4,9 +4,11 @@
 // A subscriber is a person or household. Their service accounts are the units that
 // billing and payments attach to, so every read here returns the accounts too.
 
-import { and, count, desc, eq, ilike, inArray, like, or, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, exists, ilike, inArray, like, or, sql, type SQL } from "drizzle-orm";
 
 import { db, type DbExecutor } from "../../db/connection";
+import { invoices } from "../../db/schema/billing";
+import { gcashPayments, payments } from "../../db/schema/payments";
 import { serviceAccounts, subscribers } from "../../db/schema/subscribers";
 import { NotFoundError } from "../../shared/errors";
 import {
@@ -70,7 +72,11 @@ const subscriberColumns = {
 export interface ListSubscribersFilters {
   page: number;
   pageSize: number;
-  /** Matched against name, account number, and phone number. */
+  /**
+   * Matched against the subscriber's name, account number, phone numbers and
+   * address, and against the receipt, invoice and GCash reference numbers held by
+   * their service accounts (see `buildSubscriberConditions`).
+   */
   search?: string;
   /** Keeps subscribers that have at least one service account in this state. */
   status?: ServiceAccountStatus;
@@ -85,10 +91,101 @@ export interface PaginatedSubscribers {
 }
 
 /**
+ * An EXISTS subquery returning the subscriber when any of their service accounts
+ * has a matching payment receipt number.
+ *
+ * EXISTS rather than a join on purpose: a subscriber with three accounts and two
+ * matching receipts must appear ONCE. A join would multiply the subscriber row by
+ * every match and inflate the page count; EXISTS short-circuits on the first match.
+ */
+function subscriberHasReceiptMatching(pattern: string): SQL {
+  const subscriberAccountIds = db
+    .select({ id: serviceAccounts.id })
+    .from(serviceAccounts)
+    .where(eq(serviceAccounts.subscriberId, subscribers.id));
+
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(payments)
+      .where(
+        and(
+          inArray(payments.serviceAccountId, subscriberAccountIds),
+          ilike(payments.receiptNumber, pattern)
+        )
+      )
+  );
+}
+
+/** As above, for the invoice number printed on a bill. */
+function subscriberHasInvoiceMatching(pattern: string): SQL {
+  const subscriberAccountIds = db
+    .select({ id: serviceAccounts.id })
+    .from(serviceAccounts)
+    .where(eq(serviceAccounts.subscriberId, subscribers.id));
+
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(invoices)
+      .where(
+        and(
+          inArray(invoices.serviceAccountId, subscriberAccountIds),
+          ilike(invoices.invoiceNumber, pattern)
+        )
+      )
+  );
+}
+
+/** As above, for the GCash reference number, which reaches the subscriber through
+ * its payment. */
+function subscriberHasGcashReferenceMatching(pattern: string): SQL {
+  const subscriberAccountIds = db
+    .select({ id: serviceAccounts.id })
+    .from(serviceAccounts)
+    .where(eq(serviceAccounts.subscriberId, subscribers.id));
+
+  const subscriberPaymentIds = db
+    .select({ id: payments.id })
+    .from(payments)
+    .where(inArray(payments.serviceAccountId, subscriberAccountIds));
+
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(gcashPayments)
+      .where(
+        and(
+          inArray(gcashPayments.paymentId, subscriberPaymentIds),
+          ilike(gcashPayments.gcashReferenceNumber, pattern)
+        )
+      )
+  );
+}
+
+/** As above, for the service account number (e.g. SA-20261008-00001). */
+function subscriberHasServiceAccountMatching(pattern: string): SQL {
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(serviceAccounts)
+      .where(
+        and(
+          eq(serviceAccounts.subscriberId, subscribers.id),
+          ilike(serviceAccounts.serviceAccountNumber, pattern)
+        )
+      )
+  );
+}
+
+/**
  * Translates the list filters into a WHERE clause.
  *
  * Search is intentionally generous: a clerk may type part of a name, the account
- * number from a receipt, or the phone number from a text message.
+ * number from a receipt, the phone number from a text message, the address from an
+ * installation order, or the receipt/invoice/GCash reference printed on a document.
+ * The references live in other tables, so each is an EXISTS subquery against the
+ * subscriber's service accounts rather than a join that would multiply rows.
  */
 function buildSubscriberConditions(filters: ListSubscribersFilters): SQL | undefined {
   const conditions: SQL[] = [];
@@ -99,9 +196,22 @@ function buildSubscriberConditions(filters: ListSubscribersFilters): SQL | undef
       ilike(subscribers.firstName, pattern),
       ilike(subscribers.lastName, pattern),
       ilike(subscribers.middleName, pattern),
+      ilike(sql`concat(${subscribers.lastName}, ', ', ${subscribers.firstName})`, pattern),
+      ilike(sql`concat(${subscribers.firstName}, ' ', ${subscribers.lastName})`, pattern),
       ilike(subscribers.accountNumber, pattern),
       ilike(subscribers.primaryPhone, pattern),
-      ilike(subscribers.secondaryPhone, pattern)
+      ilike(subscribers.secondaryPhone, pattern),
+      // S3.2: the address is often the only thing a caller has to hand.
+      ilike(subscribers.serviceAddress, pattern),
+      ilike(subscribers.serviceBarangay, pattern),
+      ilike(subscribers.serviceMunicipality, pattern),
+      // Service account number (SA-YYYYMMDD-XXXXX)
+      subscriberHasServiceAccountMatching(pattern),
+      // S3.2: the three document references. Each is a trigram-indexed substring
+      // search (migration 0012), evaluated once per subscriber.
+      subscriberHasReceiptMatching(pattern),
+      subscriberHasInvoiceMatching(pattern),
+      subscriberHasGcashReferenceMatching(pattern)
     );
 
     if (searchCondition !== undefined) {
@@ -217,11 +327,16 @@ export interface CreateSubscriberInput {
 }
 
 /** Creates a subscriber, and its first service account when one is supplied. */
-export async function createSubscriber(input: CreateSubscriberInput): Promise<SubscriberSummary> {
+export async function createSubscriber(
+  input: CreateSubscriberInput,
+  executor: DbExecutor = db
+): Promise<SubscriberSummary> {
   // The subscriber and its first service account are written in one transaction.
   // A household must never exist with no service to bill: if the account insert
-  // fails, the subscriber insert rolls back with it.
-  return db.transaction(async (tx) => {
+  // fails, the subscriber insert rolls back with it. When the caller already holds
+  // a transaction, the write JOINS it (a nested transaction would commit on its
+  // own and reopen the window the caller closed).
+  const createInTransaction = async (tx: DbExecutor): Promise<SubscriberSummary> => {
     const accountNumber = await nextSubscriberAccountNumber(new Date(), tx);
 
     const created = await tx
@@ -262,7 +377,9 @@ export async function createSubscriber(input: CreateSubscriberInput): Promise<Su
     }
 
     return { ...created, serviceAccounts: serviceAccountsCreated };
-  });
+  };
+
+  return executor === db ? db.transaction(createInTransaction) : createInTransaction(executor);
 }
 
 /** Updates contact and address details. The account number never changes. */
@@ -327,7 +444,10 @@ export async function getSubscriberStatement(subscriberId: string): Promise<Stat
   };
 }
 
-/** Free-text search by name, account number, or phone number. */
+/**
+ * Free-text search by name, account number, phone, address, and the receipt,
+ * invoice and GCash reference numbers held by the subscriber's service accounts.
+ */
 export async function searchSubscribers(
   query: string,
   page: number,

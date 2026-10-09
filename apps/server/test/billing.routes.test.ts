@@ -387,6 +387,57 @@ describe("billing and invoice routes", () => {
     expect(fakeDatabase.updatedRows).toHaveLength(0);
   });
 
+  it("posts all drafts in one transaction: a mid-batch failure rolls the first invoice back too", async () => {
+    const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
+    const secondInvoiceId = randomUUID();
+
+    const draftRow = (id: string, invoiceNumber: string) => ({
+      id,
+      invoiceNumber,
+      serviceAccountId: SERVICE_ACCOUNT_ID,
+      status: "draft",
+      totalAmountCentavos: 99900,
+      paidAmountCentavos: 0,
+      remainingBalanceCentavos: 99900,
+      billingPeriodYear: 2025,
+      billingPeriodMonth: 1,
+    });
+
+    fakeDatabase.queueSelectRows([]); // authenticate
+    fakeDatabase.queueSelectRows([
+      { id: INVOICE_ID },
+      { id: secondInvoiceId },
+    ]); // the two draft invoices for the period
+
+    // First invoice posts cleanly…
+    fakeDatabase.queueSelectRows([draftRow(INVOICE_ID, "INV-2025-01-000001")]);
+    fakeDatabase.queueUpdateRows([]); // status -> unpaid
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance
+    fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // its ledger debit
+    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "unpaid" })]); // reload summary
+    fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
+
+    // …the second fails while writing its ledger debit.
+    fakeDatabase.queueSelectRows([draftRow(secondInvoiceId, "INV-2025-01-000002")]);
+    fakeDatabase.queueUpdateRows([]); // status -> unpaid
+    fakeDatabase.queueSelectRows([{ balanceCentavos: 0 }]); // ledger balance
+    fakeDatabase.failNextInsert(new Error("ledger write failed on the second invoice"));
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/billing/post-all-draft",
+      headers: authorizationHeader(token),
+      payload: { year: 2025, month: 1 },
+    });
+
+    expect(response.statusCode).toBe(500);
+
+    // The batch is one transaction, so nothing posted: neither ledger debit nor
+    // either status change survived.
+    expect(insertedInto(ledgerEntries)).toHaveLength(0);
+    expect(fakeDatabase.updatedRows).toHaveLength(0);
+  });
+
   it("rolls the whole run back when an invoice insert fails: no invoices and no run record", async () => {
     const { token } = signTestToken({ role: "billing_clerk", sub: ADMIN_ID });
 
@@ -476,7 +527,15 @@ describe("billing and invoice routes", () => {
     fakeDatabase.queueSelectRows([{ balanceCentavos: 99900 }]); // current ledger balance
     fakeDatabase.queueInsertRows([{ id: randomUUID() }]); // ledger entry insert
     fakeDatabase.queueUpdateRows([]); // status -> void
-    fakeDatabase.queueSelectRows([invoiceSummaryRow({ status: "void", notes: "Entered wrongly" })]); // reload
+    // The reload is the ALREADY-voided invoice: it carries the fields the void wrote.
+    fakeDatabase.queueSelectRows([
+      invoiceSummaryRow({
+        status: "void",
+        notes: "Entered wrongly",
+        voidedAt: new Date("2026-10-09T00:06:22.791Z"),
+        voidedByTransactionId: "424ff09a-0000-4000-8000-000000000000",
+      }),
+    ]); // reload
     fakeDatabase.queueSelectRows([lineItemRow()]); // reload line items
 
     const response = await server.inject({
@@ -500,9 +559,13 @@ describe("billing and invoice routes", () => {
     // The invoice row is updated, never deleted.
     expect(fakeDatabase.updatedRows[0]?.values).toMatchObject({ status: "void" });
 
-    // The audit trail names the status the invoice actually held before the void.
+    // The audit trail names the status the invoice actually held before the void,
+    // and does NOT show the fields the void itself wrote as that prior state.
     const auditRow = insertedInto(auditLogs)[0]?.values as Record<string, unknown>;
     expect(auditRow.previousState).toMatchObject({ status: "unpaid" });
+    expect(auditRow.previousState).not.toHaveProperty("voidedAt");
+    expect(auditRow.previousState).not.toHaveProperty("voidedByTransactionId");
+    expect(auditRow.previousState).not.toHaveProperty("notes");
     expect(auditRow.newState).toMatchObject({ status: "void" });
   });
 

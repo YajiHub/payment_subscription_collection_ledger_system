@@ -7,6 +7,29 @@ import { Pool } from "pg";
 import { config } from "../config";
 import * as schema from "./schema";
 
+/** A parameter that is a bcrypt hash: every bcrypt variant starts with `$2`. */
+const BCRYPT_HASH_PREFIX = "$2";
+
+/**
+ * Drizzle's SQL logger with bcrypt hashes removed before the line is written.
+ *
+ * The SQL log is useful in development, but a statement that sets a password
+ * carries the bcrypt hash as a parameter. A hash is credential material, so it is
+ * redacted here — once, for every writer (the seeds, `db:reset-passwords`, account
+ * creation, a password change), rather than each writer remembering to turn the
+ * log off. The plain password is never a parameter: only `hashPassword` output is.
+ */
+const redactingSqlLogger = {
+  logQuery(query: string, params: unknown[]): void {
+    const redactedParams = params.map((param) =>
+      typeof param === "string" && param.startsWith(BCRYPT_HASH_PREFIX)
+        ? "[bcrypt hash redacted]"
+        : param
+    );
+    console.log(`Query: ${query} -- params: ${JSON.stringify(redactedParams)}`);
+  },
+};
+
 export const pool = new Pool({
   connectionString: config.DATABASE_URL,
   max: 10, // supports 3 concurrent clients with room to spare
@@ -16,7 +39,8 @@ export const pool = new Pool({
 
 export const db = drizzle(pool, {
   schema,
-  logger: config.NODE_ENV === "development", // logs SQL in dev, silent in production
+  // Logs SQL in development (with hashes redacted), silent in production.
+  logger: config.NODE_ENV === "development" ? redactingSqlLogger : false,
 });
 
 /**

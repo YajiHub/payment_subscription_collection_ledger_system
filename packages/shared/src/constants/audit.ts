@@ -15,6 +15,11 @@ export const AUDIT_ACTIONS = [
   "invoice.discount_applied",
   "payment.posted",
   "payment.reversed",
+  // Recording a GCash claim (S3-1, S3-2) and attaching its proof are consequential
+  // money-adjacent actions by a named user even though neither moves a balance. Both
+  // are recorded as PENDING evidence, so an auditor never reads a claim as a receipt.
+  "payment.gcash_claim_recorded",
+  "payment.gcash_screenshot_uploaded",
   "payment.gcash_verified",
   "payment.gcash_rejected",
   "billing_run.executed",
@@ -42,6 +47,8 @@ export const AUDIT_ACTIONS = [
   // S4-8: completing a reconnection (technician, request and completion dates
   // recorded beside the fee invoice).
   "service_account.reconnected",
+  // Activating a pending account once installation is complete.
+  "service_account.activated",
 
   // System configuration (S5-6)
   "system_setting.updated",
@@ -87,6 +94,8 @@ export const AUDIT_ACTION_LABELS = {
   "invoice.discount_applied": "Discount applied",
   "payment.posted": "Payment posted",
   "payment.reversed": "Payment reversed",
+  "payment.gcash_claim_recorded": "GCash claim recorded (pending)",
+  "payment.gcash_screenshot_uploaded": "GCash proof screenshot uploaded",
   "payment.gcash_verified": "GCash payment verified",
   "payment.gcash_rejected": "GCash payment rejected",
   "billing_run.executed": "Monthly billing run",
@@ -104,6 +113,7 @@ export const AUDIT_ACTION_LABELS = {
   "subscriber.updated": "Subscriber updated",
   "service_account.suspended": "Service account suspended",
   "service_account.reconnected": "Service account reconnected",
+  "service_account.activated": "Service account activated",
   "system_setting.updated": "System setting changed",
   "backup.created": "Backup created",
   "backup.verified": "Backup verified",
