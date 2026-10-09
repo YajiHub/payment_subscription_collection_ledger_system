@@ -23,10 +23,10 @@ export interface ButtonProps {
 }
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: "bg-navy text-surface hover:bg-navy-strong",
-  secondary: "bg-canvas text-content-primary hover:bg-line",
-  outline: "border border-line-strong bg-surface text-content-primary hover:bg-canvas",
-  danger: "bg-danger text-surface hover:bg-danger-strong",
+  primary: "bg-navy text-surface hover:bg-navy-strong active:scale-[0.98] shadow-xs",
+  secondary: "border border-line bg-canvas text-content-primary hover:bg-line active:scale-[0.98]",
+  outline: "border border-line-strong bg-surface text-content-primary hover:bg-canvas active:scale-[0.98] shadow-xs",
+  danger: "bg-danger text-surface hover:bg-danger-strong active:scale-[0.98] shadow-xs",
   link: "text-content-primary underline underline-offset-4 hover:text-navy",
 };
 

@@ -10,7 +10,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Lock } from "lucide-react";
 
-import { USER_ROLE_LABELS } from "@bcis/shared";
+import { getRoleLabel } from "@bcis/shared";
 import { extractApiErrorMessage, unlockSession as requestUnlock } from "../../lib/api-client";
 import { formatTimestamp } from "../../lib/format";
 import { useAuthStore } from "../../stores/auth.store";
@@ -98,7 +98,7 @@ export function SessionLockScreen(): ReactNode {
             {user.fullName}
           </h1>
           <p className="text-sm text-content-secondary">
-            {USER_ROLE_LABELS[user.role]} · signed in here. Locked at {formatTimestamp(lockedAt)}.
+            {getRoleLabel(user.role)} · signed in here. Locked at {formatTimestamp(lockedAt)}.
           </p>
           <p className="text-sm text-content-secondary">
             Enter this account&apos;s password to return to work. Anyone else needs to sign in.

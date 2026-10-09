@@ -26,6 +26,7 @@ import { TextField } from "../components/form/TextField";
 import { TextareaField } from "../components/form/TextareaField";
 import { formResolver } from "../components/form/form-resolver";
 import { normalizeOptionalText } from "../components/form/form-values";
+import { AppShell } from "../components/layout/AppShell";
 
 interface ServiceAccountChoice {
   serviceAccountId: string;
@@ -284,8 +285,9 @@ export function PostPaymentPage(): ReactNode {
     setIsSearching(true);
     setErrorMessage(null);
     try {
-      const page = await searchSubscribers(searchQuery.trim());
-      const choices = page.items.flatMap((subscriber) =>
+      const trimmed = searchQuery.trim();
+      const page = await searchSubscribers(trimmed);
+      let choices = page.items.flatMap((subscriber) =>
         subscriber.serviceAccounts.map((account) => ({
           serviceAccountId: account.id,
           serviceAccountNumber: account.serviceAccountNumber,
@@ -293,6 +295,16 @@ export function PostPaymentPage(): ReactNode {
           planName: account.planName,
         }))
       );
+
+      // If the search specifically matched a service account number, narrow down to it
+      const qLower = trimmed.toLowerCase();
+      const exactAccountMatches = choices.filter((c) =>
+        c.serviceAccountNumber.toLowerCase().includes(qLower)
+      );
+      if (exactAccountMatches.length > 0) {
+        choices = exactAccountMatches;
+      }
+
       setSearchResults(choices);
       if (choices.length === 0) {
         setErrorMessage("No service accounts matched that search.");
@@ -378,66 +390,10 @@ export function PostPaymentPage(): ReactNode {
     const isAwaitingVerification = result.payment.status === "pending_verification";
 
     return (
-      <main className="mx-auto max-w-3xl space-y-6 p-8">
-        <header className="space-y-1">
-          <h1 className="text-2xl font-semibold">
-            {isAwaitingVerification ? "GCash payment awaiting verification" : "Payment posted"}
-          </h1>
-          <p className="text-sm text-content-secondary tabular-nums">
-            Receipt <span className="font-mono">{result.payment.receiptNumber}</span> was issued for{" "}
-            {formatCentavos(result.payment.amountCentavos)}.
-          </p>
-        </header>
-
-        {isAwaitingVerification && (
-          <p
-            role="status"
-            className="rounded-xl border border-warning-line bg-warning-soft px-4 py-3 text-sm text-warning-strong"
-          >
-            Nothing has been applied to the account. A verifier must confirm the GCash transfer
-            before this payment is posted; until then the outstanding balance stands as it was.
-          </p>
-        )}
-
-        <section className="space-y-2 rounded-lg border border-line bg-surface p-5 text-sm shadow-sm">
-          <h2 className="text-base font-medium">
-            {isAwaitingVerification ? "Allocation once verified" : "Allocation"}
-          </h2>
-          {isAwaitingVerification ? (
-            <p className="text-content-secondary">
-              No invoice balance has moved. The payment is applied oldest invoice first when it is
-              verified.
-            </p>
-          ) : (
-            result.allocations.length === 0 &&
-            result.advanceCreditCentavos === 0 && (
-              <p className="text-content-secondary">No invoices were outstanding.</p>
-            )
-          )}
-          {result.allocations.map((allocation) => (
-            <div key={allocation.invoiceId} className="flex justify-between border-t border-line pt-2">
-              <span>Invoice {allocation.invoiceNumber}</span>
-              <span className="tabular-nums">
-                {formatCentavos(allocation.allocatedAmountCentavos)}
-              </span>
-            </div>
-          ))}
-          {result.advanceCreditCentavos > 0 && (
-            <div className="flex justify-between border-t border-line pt-2 font-medium">
-              <span>Advance credit</span>
-              <span className="tabular-nums">{formatCentavos(result.advanceCreditCentavos)}</span>
-            </div>
-          )}
-        </section>
-
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => navigate(`/payments/${result.payment.id}/receipt`)}
-            className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
-          >
-            Print Receipt
-          </button>
+      <AppShell
+        pageTitle={isAwaitingVerification ? "GCash payment awaiting verification" : "Payment posted"}
+        pageDescription={`Receipt ${result.payment.receiptNumber} was issued for ${formatCentavos(result.payment.amountCentavos)}.`}
+        headerActions={
           <button
             type="button"
             onClick={startAnotherPayment}
@@ -445,19 +401,77 @@ export function PostPaymentPage(): ReactNode {
           >
             Post another payment
           </button>
+        }
+      >
+        <div className="w-full max-w-5xl space-y-6">
+          {isAwaitingVerification && (
+            <p
+              role="status"
+              className="rounded-xl border border-warning-line bg-warning-soft px-4 py-3 text-sm text-warning-strong"
+            >
+              Nothing has been applied to the account. A verifier must confirm the GCash transfer
+              before this payment is posted; until then the outstanding balance stands as it was.
+            </p>
+          )}
+
+          <section className="space-y-2 rounded-lg border border-line bg-surface p-5 text-sm shadow-sm">
+            <h2 className="text-base font-medium">
+              {isAwaitingVerification ? "Allocation once verified" : "Allocation"}
+            </h2>
+            {isAwaitingVerification ? (
+              <p className="text-content-secondary">
+                No invoice balance has moved. The payment is applied oldest invoice first when it is
+                verified.
+              </p>
+            ) : (
+              result.allocations.length === 0 &&
+              result.advanceCreditCentavos === 0 && (
+                <p className="text-content-secondary">No invoices were outstanding.</p>
+              )
+            )}
+            {result.allocations.map((allocation) => (
+              <div key={allocation.invoiceId} className="flex justify-between border-t border-line pt-2">
+                <span>Invoice {allocation.invoiceNumber}</span>
+                <span className="tabular-nums">
+                  {formatCentavos(allocation.allocatedAmountCentavos)}
+                </span>
+              </div>
+            ))}
+            {result.advanceCreditCentavos > 0 && (
+              <div className="flex justify-between border-t border-line pt-2 font-medium">
+                <span>Advance credit</span>
+                <span className="tabular-nums">{formatCentavos(result.advanceCreditCentavos)}</span>
+              </div>
+            )}
+          </section>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => navigate(`/payments/${result.payment.id}/receipt`)}
+              className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
+            >
+              Print Receipt
+            </button>
+            <button
+              type="button"
+              onClick={startAnotherPayment}
+              className="rounded border border-line-strong px-4 py-2 text-sm font-medium"
+            >
+              Post another payment
+            </button>
+          </div>
         </div>
-      </main>
+      </AppShell>
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 p-8">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Post Payment</h1>
-        <p className="text-sm text-content-secondary">
-          Find the service account, confirm the amount, then post. Cash or GCash.
-        </p>
-      </header>
+    <AppShell
+      pageTitle="Post Payment"
+      pageDescription="Find the service account, confirm the amount, then post. Cash or GCash."
+    >
+      <div className="w-full max-w-5xl space-y-6">
 
       {errorMessage !== null && (
         <p role="alert" className="rounded border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-strong">
@@ -680,6 +694,7 @@ export function PostPaymentPage(): ReactNode {
           </button>
         </form>
       )}
-    </main>
+      </div>
+    </AppShell>
   );
 }

@@ -56,9 +56,9 @@ function signInAs(role: UserRole | null): void {
   });
 }
 
-function renderNavigation(): void {
+function renderNavigation(initialEntries = ["/"]): void {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <AppNavigation />
     </MemoryRouter>,
   );
@@ -154,5 +154,47 @@ describe("AppNavigation", () => {
 
     expect(linkLabels()).toEqual([]);
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+  });
+
+  it("highlights Post Payment without highlighting Payment Ledger when on /payments/new", () => {
+    renderNavigation(["/payments/new"]);
+
+    const postPaymentLink = screen.getByRole("link", { name: "Post Payment" });
+    const paymentLedgerLink = screen.getByRole("link", { name: "Payment Ledger" });
+
+    expect(postPaymentLink).toHaveAttribute("aria-current", "page");
+    expect(paymentLedgerLink).not.toHaveAttribute("aria-current");
+  });
+
+  it("highlights GCash Verification without highlighting Payment Ledger when on /payments/gcash", () => {
+    renderNavigation(["/payments/gcash"]);
+
+    const gcashLink = screen.getByRole("link", { name: "GCash Verification" });
+    const paymentLedgerLink = screen.getByRole("link", { name: "Payment Ledger" });
+
+    expect(gcashLink).toHaveAttribute("aria-current", "page");
+    expect(paymentLedgerLink).not.toHaveAttribute("aria-current");
+  });
+
+  it("highlights Payment Ledger when on /payments", () => {
+    renderNavigation(["/payments"]);
+
+    const paymentLedgerLink = screen.getByRole("link", { name: "Payment Ledger" });
+    const postPaymentLink = screen.getByRole("link", { name: "Post Payment" });
+    const gcashLink = screen.getByRole("link", { name: "GCash Verification" });
+
+    expect(paymentLedgerLink).toHaveAttribute("aria-current", "page");
+    expect(postPaymentLink).not.toHaveAttribute("aria-current");
+    expect(gcashLink).not.toHaveAttribute("aria-current");
+  });
+
+  it("highlights Add Subscriber without highlighting Subscribers landing when on /subscribers/new", () => {
+    renderNavigation(["/subscribers/new"]);
+
+    const addSubscriberLink = screen.getByRole("link", { name: "Add Subscriber" });
+    const subscribersLink = screen.getByRole("link", { name: "Subscribers" });
+
+    expect(addSubscriberLink).toHaveAttribute("aria-current", "page");
+    expect(subscribersLink).not.toHaveAttribute("aria-current");
   });
 });

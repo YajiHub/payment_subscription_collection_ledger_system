@@ -130,7 +130,7 @@ export function SystemSettingsPage(): ReactNode {
         </Link>
       }
     >
-      <div className="max-w-3xl space-y-5">
+      <div className="w-full max-w-5xl space-y-6">
         {errorMessage !== null && (
           <ErrorBanner message={errorMessage} onRetry={() => void loadSettings()} />
         )}

@@ -10,6 +10,7 @@ import {
   type BatchRouteSheet,
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly } from "../lib/format";
+import { describePrintOutcome } from "../lib/print-outcome";
 import { useAuthStore } from "../stores/auth.store";
 import { AppShell } from "../components/layout/AppShell";
 import { Button } from "../components/ui/Button";
@@ -67,13 +68,18 @@ export function CollectorBatchRouteSheetPage(): ReactNode {
     void loadSheet();
   }, [loadSheet]);
 
-  /** Opens Electron's print window, or the browser's own printer in dev. */
-  function printSheet(): void {
-    if (window.electronAPI !== undefined) {
-      void window.electronAPI.printCurrentWindow();
+  /** Opens the PDF preview window, or the browser's own printer in dev. */
+  async function printSheet(): Promise<void> {
+    if (window.electronAPI === undefined) {
+      window.print();
       return;
     }
-    window.print();
+
+    const report = describePrintOutcome(await window.electronAPI.printCurrentWindow());
+
+    if (report.tone === "error") {
+      setErrorMessage(report.message);
+    }
   }
 
   async function exportSheet(format: "pdf" | "xlsx"): Promise<void> {
@@ -114,9 +120,9 @@ export function CollectorBatchRouteSheetPage(): ReactNode {
         </Link>
       }
     >
-      <div className="mx-auto max-w-5xl space-y-5">
+      <div className="w-full max-w-6xl space-y-5">
         <div className="flex flex-wrap gap-2 print:hidden">
-          <Button variant="secondary" onClick={printSheet} disabled={sheet === null}>
+          <Button variant="secondary" onClick={() => void printSheet()} disabled={sheet === null}>
             Print / Save as PDF
           </Button>
           {canExport && (

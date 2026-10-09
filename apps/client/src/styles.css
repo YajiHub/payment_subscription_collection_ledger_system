@@ -54,6 +54,32 @@
 
 :root {
   color-scheme: light;
+  /*
+   * Fluid responsive typography:
+   * Base is ~16px on normal windows, but smoothly scales upward with viewport width
+   * so high-DPI and fullscreen desktop displays never render tiny/zoomed-out text.
+   */
+  font-size: clamp(15.5px, 0.92rem + 0.35vw, 19.5px);
+  --ui-scale: 1;
+}
+
+/* On widescreen & fullscreen desktop displays (1080p, 1440p, 4K), ensure generous, crisp typography */
+@media screen and (min-width: 1440px) {
+  :root {
+    font-size: clamp(16.5px, 0.96rem + 0.32vw, 20px);
+  }
+}
+
+@media screen and (min-width: 1920px) {
+  :root {
+    font-size: clamp(17.5px, 1.02rem + 0.3vw, 21.5px);
+  }
+}
+
+@media screen and (min-width: 2560px) {
+  :root {
+    font-size: clamp(19px, 1.1rem + 0.3vw, 23px);
+  }
 }
 
 body {
@@ -61,7 +87,47 @@ body {
   background-color: var(--color-canvas);
   color: var(--color-content-primary);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
 }
+
+::selection {
+  background-color: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Crisp modern scrollbars for desktop operational feel */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-content-secondary);
+}
+
+/* Subtle modern transitions and elevations */
+.card-hover-lift {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+}
+.card-hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgb(15 39 71 / 0.08), 0 8px 10px -6px rgb(15 39 71 / 0.04);
+}
+
 
 /*
  * S7-7 — print layout.

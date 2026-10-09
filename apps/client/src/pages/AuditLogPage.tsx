@@ -66,6 +66,10 @@ const AUDIT_COLUMNS: TableColumn<AuditLogEntry>[] = [
     sortValue: (entry) => entry.description,
     cell: (entry) => entry.description,
   },
+  /**
+   * The audit page shows the username. A row written before the username was
+   * carried on the token has none, so it reads as "system" only then.
+   */
   {
     id: "performedByUsername",
     header: "By",

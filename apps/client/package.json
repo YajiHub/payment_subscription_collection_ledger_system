@@ -7,6 +7,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:web": "electron-vite dev --rendererOnly",
     "build": "electron-vite build",
     "package:win": "electron-builder --config electron-builder.config.js --win",
     "preview": "electron-vite preview",

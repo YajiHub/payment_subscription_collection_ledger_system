@@ -199,7 +199,7 @@ export function AddSubscriberPage(): ReactNode {
       <form
         noValidate
         onSubmit={(event) => void handleFormSubmit(event)}
-        className="max-w-2xl space-y-5"
+        className="max-w-3xl space-y-6"
       >
         {errorMessage !== null && (
           <ErrorBanner message={errorMessage} onRetry={() => void loadPlans()} />

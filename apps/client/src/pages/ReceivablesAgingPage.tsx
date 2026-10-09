@@ -11,9 +11,10 @@ import {
   listPlans,
   type ArAgingEntry,
   type ArAgingReport,
-  type ReportFilterParams,
+  type AccountFilterParams,
 } from "../lib/api-client";
 import { formatCentavos } from "../lib/format";
+import { describePrintOutcome } from "../lib/print-outcome";
 import { AppShell } from "../components/layout/AppShell";
 import { DataTable, type TableColumn } from "../components/table/DataTable";
 import { Badge } from "../components/ui/Badge";
@@ -148,7 +149,7 @@ export function ReceivablesAgingPage(): ReactNode {
    * feeds the on-screen report and the XLSX export, so a filtered screen and its
    * file agree. A blank control is omitted rather than sent empty.
    */
-  const filters = useMemo<ReportFilterParams>(
+  const filters = useMemo<AccountFilterParams>(
     () => ({
       collectorId: optionalText(collectorId),
       areaId: optionalText(areaId),
@@ -194,13 +195,19 @@ export function ReceivablesAgingPage(): ReactNode {
     void loadFilterOptions();
   }, []);
 
-  function printReport(): void {
-    // Electron's print dialog can "Save as PDF"; in a plain browser, window.print does.
-    if (window.electronAPI !== undefined) {
-      void window.electronAPI.printCurrentWindow();
+  async function printReport(): Promise<void> {
+    // The preview window's toolbar saves a PDF or prints it; in a plain browser,
+    // window.print does.
+    if (window.electronAPI === undefined) {
+      window.print();
       return;
     }
-    window.print();
+
+    const report = describePrintOutcome(await window.electronAPI.printCurrentWindow());
+
+    if (report.tone === "error") {
+      setErrorMessage(report.message);
+    }
   }
 
   async function exportXlsx(): Promise<void> {
@@ -324,7 +331,7 @@ export function ReceivablesAgingPage(): ReactNode {
                 ))}
               </select>
             </label>
-            <Button type="button" variant="secondary" onClick={printReport}>
+            <Button type="button" variant="secondary" onClick={() => void printReport()}>
               Export PDF
             </Button>
             <Button

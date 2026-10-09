@@ -39,7 +39,7 @@ export interface CardContentProps {
 export function Card({ className = "", children }: CardProps): ReactNode {
   return (
     <div
-      className={`overflow-hidden rounded-xl border border-line bg-surface shadow-sm ${className}`}
+      className={`overflow-hidden rounded-2xl border border-line/90 bg-surface shadow-xs transition-all duration-200 hover:border-line-strong/60 ${className}`}
     >
       {children}
     </div>
@@ -56,7 +56,7 @@ export function Card({ className = "", children }: CardProps): ReactNode {
 export function CardHeader({ className = "", children }: CardSectionProps): ReactNode {
   return (
     <div
-      className={`flex flex-col justify-between gap-2 border-b border-line px-6 py-4 ${className}`}
+      className={`flex flex-col justify-between gap-2 border-b border-line/70 px-6 py-4.5 bg-canvas/30 ${className}`}
     >
       {children}
     </div>
@@ -64,11 +64,11 @@ export function CardHeader({ className = "", children }: CardSectionProps): Reac
 }
 
 export function CardTitle({ className = "", children }: CardSectionProps): ReactNode {
-  return <h2 className={`text-base font-medium text-content-primary ${className}`}>{children}</h2>;
+  return <h2 className={`text-base sm:text-lg font-bold tracking-tight text-content-primary ${className}`}>{children}</h2>;
 }
 
 export function CardDescription({ className = "", children }: CardSectionProps): ReactNode {
-  return <p className={`text-sm text-content-secondary ${className}`}>{children}</p>;
+  return <p className={`text-xs sm:text-sm text-content-secondary ${className}`}>{children}</p>;
 }
 
 /**

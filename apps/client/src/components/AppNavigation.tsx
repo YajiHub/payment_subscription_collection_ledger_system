@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { roleHasPermission, type Permission } from "@bcis/shared";
 import { logout as requestServerLogout } from "../lib/api-client";
@@ -67,7 +67,7 @@ const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
     label: "Billing",
     landing: undefined,
     links: [
-      { label: "Billing Runs", to: "/billing", permissions: ["invoices:read"] },
+      { label: "Billing Runs", to: "/billing", permissions: ["invoices:generate"] },
       { label: "Invoices", to: "/invoices", permissions: ["invoices:read"] },
       { label: "Subscription Plans", to: "/plans", permissions: ["plans:read"] },
     ],
@@ -151,24 +151,83 @@ const NAVIGATION_SECTIONS: ReadonlyArray<NavigationSection> = [
   },
 ];
 
-/** The heading of a section whose own screen is the link. */
-const LANDING_LINK_CLASS = "block font-semibold text-navy underline underline-offset-4";
+export function isRouteActive(targetPath: string, currentPath: string): boolean {
+  // Normalize paths by stripping query parameters, hash fragments, and trailing slashes
+  const currentClean = currentPath.split("?")[0]?.split("#")[0] ?? "";
+  const targetClean = targetPath.split("?")[0]?.split("#")[0] ?? "";
+  const normCurrent = currentClean.replace(/\/+$/, "") || "/";
+  const normTarget = targetClean.replace(/\/+$/, "") || "/";
 
-/** Every other link in the menu. */
-const LINK_CLASS =
-  "text-content-primary underline underline-offset-4 transition-colors hover:text-navy";
+  // Exact match is always active
+  if (normCurrent === normTarget) return true;
+
+  // Specific sibling overrides to prevent parent/sibling collision:
+  if (normTarget === "/payments") {
+    // "/payments/new" (Post Payment) and "/payments/gcash" (GCash Verification) have their own tabs
+    if (
+      normCurrent === "/payments/new" ||
+      normCurrent.startsWith("/payments/new/") ||
+      normCurrent === "/payments/gcash" ||
+      normCurrent.startsWith("/payments/gcash/")
+    ) {
+      return false;
+    }
+    return normCurrent === "/payments" || normCurrent.startsWith("/payments/");
+  }
+
+  if (normTarget === "/subscribers") {
+    // "/subscribers/new" (Add Subscriber) has its own tab
+    if (
+      normCurrent === "/subscribers/new" ||
+      normCurrent.startsWith("/subscribers/new/")
+    ) {
+      return false;
+    }
+    return normCurrent === "/subscribers" || normCurrent.startsWith("/subscribers/");
+  }
+
+  if (normTarget === "/dashboard") {
+    return normCurrent === "/dashboard";
+  }
+
+  if (normTarget === "/services/accounts") {
+    // Account ledger and statement of account live at /service-accounts/:id/...
+    return (
+      normCurrent === "/services/accounts" ||
+      normCurrent.startsWith("/services/accounts/") ||
+      normCurrent.startsWith("/service-accounts/")
+    );
+  }
+
+  // General sub-route match (e.g. /invoices/:id for /invoices, /collector-batches/:id for /collector-batches)
+  return normTarget !== "/" && normCurrent.startsWith(`${normTarget}/`);
+}
+
+function getLandingClass(isActive: boolean): string {
+  return `flex items-center px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide transition-all duration-150 ${
+    isActive
+      ? "bg-gradient-to-r from-accent to-blue-600 text-white shadow-sm shadow-accent/40 ring-1 ring-accent-strong/40"
+      : "text-slate-200 hover:bg-white/[0.08] hover:text-white"
+  }`;
+}
+
+function getLinkClass(isActive: boolean): string {
+  return `flex items-center px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-medium transition-all duration-150 ${
+    isActive
+      ? "bg-accent text-white font-semibold shadow-xs ring-1 ring-accent-strong/40"
+      : "text-slate-300 hover:bg-white/[0.08] hover:text-white"
+  }`;
+}
 
 /**
  * The single navigation menu for signed-in users, grouped into the top-level
  * sections of section 4.2 and filtered by role.
  *
- * It is rendered by the app shell, the home page and the management dashboard.
- * That matters: the Administrator and the Manager are redirected to the dashboard
- * straight after login, so if the dashboard did not carry the menu they would have
- * no way to reach User Management, the audit trail, or settings at all.
+ * Rendered by AppShell inside the executive desktop sidebar.
  */
 export function AppNavigation(): ReactNode {
   const navigate = useNavigate();
+  const location = useLocation();
   const user = useAuthStore((state) => state.user);
   const clearSession = useAuthStore((state) => state.logout);
 
@@ -184,10 +243,6 @@ export function AppNavigation(): ReactNode {
 
   /**
    * S5-4: lock deliberately, before walking away from the counter.
-   *
-   * There is no navigation here on purpose: the lock gate replaces the screen, and
-   * the route the operator left is the one they come back to once the password is
-   * verified again.
    */
   function handleLock(): void {
     lockWorkstation();
@@ -199,8 +254,6 @@ export function AppNavigation(): ReactNode {
     );
   }
 
-  // A section disappears when neither its own screen nor any of its links is
-  // allowed, so a role never sees a heading it cannot act on.
   const visibleSections = NAVIGATION_SECTIONS.map((section) => ({
     ...section,
     landing:
@@ -213,52 +266,68 @@ export function AppNavigation(): ReactNode {
   return (
     <nav
       aria-label="Main navigation"
-      /*
-       * Left-aligned wrapping on purpose. The menu used to pack each wrapped line to
-       * the right (`justify-end`), which left a ragged hole under the first line once
-       * the sections outgrew one row. Starting each line at the left keeps the sections
-       * in a readable block however many there are.
-       */
-      className="flex flex-wrap items-start justify-start gap-x-6 gap-y-3 print:hidden"
+      className="flex flex-col gap-1.5 print:hidden select-none"
     >
       {visibleSections.map((section) => (
-        <div key={section.label} className="space-y-1.5">
+        <div
+          key={section.label}
+          className="flex flex-col gap-0.5"
+        >
           {section.landing === undefined ? (
-            <p className="text-xs font-semibold tracking-wide text-content-secondary uppercase">
+            <p className="px-3.5 pt-3 pb-1 text-[11px] font-bold tracking-wider text-slate-400/90 uppercase">
               {section.label}
             </p>
           ) : (
-            <Link to={section.landing.to} className={LANDING_LINK_CLASS}>
+            <Link
+              to={section.landing.to}
+              aria-current={isRouteActive(section.landing.to, location.pathname) ? "page" : undefined}
+              className={getLandingClass(isRouteActive(section.landing.to, location.pathname))}
+            >
               {section.label}
             </Link>
           )}
 
           {section.links.length > 0 && (
-            <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-medium">
-              {section.links.map((link) => (
-                <li key={link.to}>
-                  <Link to={link.to} className={LINK_CLASS}>
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
+            <ul
+              className={`m-0 p-0 list-none space-y-0.5 ${
+                section.landing !== undefined ? "mt-1 ml-2.5 pl-2.5 border-l border-slate-700/60" : ""
+              }`}
+            >
+              {section.links.map((link) => {
+                const isActive = isRouteActive(link.to, location.pathname);
+                return (
+                  <li key={link.to}>
+                    <Link
+                      to={link.to}
+                      aria-current={isActive ? "page" : undefined}
+                      className={getLinkClass(isActive)}
+                    >
+                      {link.label}
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
       ))}
 
-      <button
-        type="button"
-        onClick={handleLock}
-        className="text-sm font-medium text-navy underline underline-offset-4"
-      >
-        Lock
-      </button>
+      <hr className="my-2 border-slate-700/60" />
+
+      {user !== null && (
+        <button
+          type="button"
+          onClick={handleLock}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-700/80 bg-slate-800/80 px-3 py-2.5 text-xs sm:text-sm font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition-all shadow-xs active:scale-[0.98]"
+        >
+          Lock
+        </button>
+      )}
 
       <button
         type="button"
         onClick={() => void handleLogout()}
-        className="text-sm font-medium text-danger-strong underline underline-offset-4"
+        className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-950/30 px-3 py-2.5 text-xs sm:text-sm font-semibold text-red-300 hover:bg-red-900/40 hover:text-red-100 transition-all shadow-xs active:scale-[0.98]"
       >
         Log out
       </button>

@@ -15,6 +15,7 @@ import {
 } from "../lib/api-client";
 import { formatCentavos } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { AppShell } from "../components/layout/AppShell";
 
 const MONTH_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
@@ -183,23 +184,18 @@ export function BillingDashboardPage(): ReactNode {
   }
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Billing Dashboard</h1>
-          <p className="text-sm text-content-secondary">
-            Generate, review, and post the monthly invoices.
-          </p>
-        </div>
-        <nav className="flex items-center gap-3 text-sm font-medium">
-          <Link to="/invoices" className="text-content-primary underline">
-            Invoices
-          </Link>
-          <Link to="/" className="text-content-primary underline">
-            Dashboard
-          </Link>
-        </nav>
-      </header>
+    <AppShell
+      pageTitle="Billing Dashboard"
+      pageDescription="Generate, review, and post the monthly invoices."
+      headerActions={
+        <Link
+          to="/invoices"
+          className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-medium text-content-primary transition-colors hover:bg-canvas"
+        >
+          View Invoices
+        </Link>
+      }
+    >
 
       {errorMessage !== null && (
         <p
@@ -340,6 +336,6 @@ export function BillingDashboardPage(): ReactNode {
           </table>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

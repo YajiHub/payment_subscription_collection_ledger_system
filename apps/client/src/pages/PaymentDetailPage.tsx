@@ -81,7 +81,7 @@ export function PaymentDetailPage(): ReactNode {
   if (isLoading) {
     return (
       <AppShell pageTitle="Payment" pageDescription="Loading payment…">
-        <div className="mx-auto max-w-3xl space-y-6">
+        <div className="w-full max-w-5xl space-y-6">
           <Skeleton className="h-8 w-56" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-48 w-full" />
@@ -93,7 +93,7 @@ export function PaymentDetailPage(): ReactNode {
   if (payment === null) {
     return (
       <AppShell pageTitle="Payment" pageDescription="The requested payment could not be loaded">
-        <div className="mx-auto max-w-3xl space-y-4">
+        <div className="w-full max-w-5xl space-y-4">
           <ErrorBanner
             message={errorMessage ?? "Payment not found."}
             onRetry={() => void loadPayment()}
@@ -121,7 +121,7 @@ export function PaymentDetailPage(): ReactNode {
         </Link>
       }
     >
-      <div className="mx-auto max-w-3xl space-y-6">
+      <div className="w-full max-w-5xl space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <Badge variant={alreadyReversed ? "danger" : "success"} size="md" dot>

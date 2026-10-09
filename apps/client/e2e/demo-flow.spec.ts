@@ -18,21 +18,99 @@ import path from "node:path";
 import { expect, test, _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
 
 const UI_URL = (process.env.BCIS_UI_URL ?? "http://localhost:5173").replace(/\/$/, "");
+const API_URL = (process.env.BCIS_API_URL ?? "http://localhost:3003").replace(/\/$/, "");
 
 const CASHIER = {
   username: process.env.BCIS_E2E_USERNAME ?? "demo.cashier",
-  password: process.env.BCIS_E2E_PASSWORD ?? "DemoPassword1!",
+  password: process.env.BCIS_E2E_PASSWORD ?? "password",
 };
 
 /**
- * A subscriber with more than one service account and outstanding invoices. The
- * demo dataset seeds it; the test refuses to run if it is absent rather than
- * silently asserting nothing.
+ * A subscriber the seed actually produced, resolved at run time instead of
+ * hardcoded. A hardcoded account number (SUB-20260927-00011, say) breaks the
+ * moment the demo dataset is regenerated with a different date prefix, so the
+ * fixture is looked up through the API before the UI is driven at all.
+ *
+ * The chosen subscriber owns at least one service account with an outstanding
+ * balance, which is what the ledger and payment steps below need.
  */
-const FEATURED_ACCOUNT_NUMBER = "SUB-20260927-00011";
+interface DemoFixture {
+  /** The subscriber's account number (SUB-…), typed into the subscriber search. */
+  subscriberAccountNumber: string;
+  /** The service account number (SA-…) with an outstanding invoice, typed into the payment search. */
+  serviceAccountNumber: string;
+}
 
-/** The account the payment is posted against. Small, so the dataset drifts slowly. */
-const PAYMENT_ACCOUNT_NUMBER = "SUB-20260927-00011";
+/**
+ * Signs in through the API as the same cashier the UI uses and walks the
+ * subscriber list until it finds an account with money outstanding.
+ *
+ * Fails loudly when the dataset holds no such account rather than letting the
+ * UI assertions below quietly inspect nothing.
+ */
+async function resolveDemoFixture(): Promise<DemoFixture> {
+  const loginResponse = await fetch(`${API_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(CASHIER),
+  });
+  const loginBody = (await loginResponse.json()) as {
+    success: boolean;
+    data?: { token: string };
+  };
+  if (!loginResponse.ok || loginBody.data === undefined) {
+    throw new Error(
+      `Could not sign in through the API at ${API_URL} as ${CASHIER.username}. ` +
+        `Status ${loginResponse.status}.`
+    );
+  }
+  const token = loginBody.data.token;
+
+  // The list endpoint caps a page at 100 rows, so walk the pages until an account
+  // with an outstanding balance turns up. The demo dataset is small enough that
+  // this costs one or two requests.
+  for (let page = 1; page <= 20; page += 1) {
+    const listResponse = await fetch(`${API_URL}/api/subscribers?page=${page}&pageSize=100`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!listResponse.ok) {
+      throw new Error(
+        `Could not list subscribers at ${API_URL} (status ${listResponse.status}). ` +
+          "Is the API running against the demo dataset?"
+      );
+    }
+
+    const listBody = (await listResponse.json()) as {
+      data: {
+        items: {
+          accountNumber: string;
+          serviceAccounts: { serviceAccountNumber: string; balanceCentavos: number }[];
+        }[];
+      };
+    };
+
+    for (const subscriber of listBody.data.items) {
+      const owed = subscriber.serviceAccounts.find((account) => account.balanceCentavos > 0);
+      if (owed !== undefined) {
+        return {
+          subscriberAccountNumber: subscriber.accountNumber,
+          serviceAccountNumber: owed.serviceAccountNumber,
+        };
+      }
+    }
+
+    if (listBody.data.items.length < 100) {
+      break;
+    }
+  }
+
+  throw new Error(
+    `No subscriber with an outstanding invoice was found at ${API_URL}. ` +
+      "Seed the demo dataset (pnpm db:seed:demo) before running this suite."
+  );
+}
+
+let fixture: DemoFixture;
 const PAYMENT_AMOUNT_TEXT = "100.00";
 
 let electronApp: ElectronApplication;
@@ -59,6 +137,10 @@ test.beforeAll(async () => {
     cwd: path.resolve(__dirname, ".."),
   });
   window = await electronApp.firstWindow();
+
+  // Resolve the fixture through the API before driving the UI, so the test is
+  // tied to whatever the current seed produced rather than a frozen number.
+  fixture = await resolveDemoFixture();
 });
 
 test.afterAll(async () => {
@@ -79,7 +161,7 @@ test("the cashier reviews a subscriber's invoice ledger, posts a payment and con
 
   // ── A subscriber with a service account ────────────────────────────────────
   await window.goto(`${UI_URL}/#/subscribers`);
-  await window.getByPlaceholder("Name, account number, or phone").fill(FEATURED_ACCOUNT_NUMBER);
+  await window.getByPlaceholder("Name, account number, or phone").fill(fixture.subscriberAccountNumber);
   await window.getByRole("button", { name: "Search" }).click();
 
   const viewLink = window.getByRole("link", { name: "View" }).first();
@@ -87,7 +169,7 @@ test("the cashier reviews a subscriber's invoice ledger, posts a payment and con
   await viewLink.click();
 
   await expect(window.getByRole("heading", { name: "Service Accounts" })).toBeVisible();
-  await expect(window.getByText(FEATURED_ACCOUNT_NUMBER)).toBeVisible();
+  await expect(window.getByText(fixture.subscriberAccountNumber)).toBeVisible();
 
   // ── The account ledger and its invoice debit ───────────────────────────────
   await window.getByRole("link", { name: "View ledger & statement" }).first().click();
@@ -107,7 +189,7 @@ test("the cashier reviews a subscriber's invoice ledger, posts a payment and con
 
   await window
     .getByPlaceholder("Account number, subscriber name, or phone")
-    .fill(PAYMENT_ACCOUNT_NUMBER);
+    .fill(fixture.serviceAccountNumber);
   await window.getByRole("button", { name: "Search" }).click();
 
   const accountChoice = window.locator("ul button").first();

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
+  PAYMENT_METHOD_LABELS,
   SERVICE_ACCOUNT_STATUS_LABELS,
   SERVICE_TYPE_LABELS,
   roleHasPermission,
@@ -10,11 +11,14 @@ import {
 } from "@bcis/shared";
 import {
   extractApiErrorMessage,
+  activateServiceAccount,
   getSubscriber,
+  listPayments,
   reconnectServiceAccount,
   suspendServiceAccount,
   terminateServiceAccount,
   updateSubscriber,
+  type PaymentSummary,
   type ServiceAccount,
   type Subscriber,
 } from "../lib/api-client";
@@ -36,10 +40,14 @@ const STATUS_BADGE_VARIANTS = {
   pending: "info",
 } satisfies Record<ServiceAccountStatus, BadgeVariant>;
 
-type PendingAction = "suspend" | "reconnect" | "terminate";
+type PendingAction = "suspend" | "activate" | "reconnect" | "terminate";
+
+/** How many recent payments the profile shows. The history page pages through the rest. */
+const RECENT_PAYMENTS_LIMIT = 10;
 
 const ACTION_TITLES: Record<PendingAction, string> = {
   suspend: "Suspend service",
+  activate: "Activate service",
   reconnect: "Reconnect service",
   terminate: "Terminate service",
 };
@@ -53,7 +61,9 @@ function availableActions(status: ServiceAccountStatus): PendingAction[] {
     return ["reconnect", "terminate"];
   }
   if (status === "pending") {
-    return ["terminate"];
+    // A pending account has never been in service, so it is activated (not
+    // "reconnected") once installation is complete.
+    return ["activate", "terminate"];
   }
   return ["suspend", "terminate"];
 }
@@ -136,6 +146,16 @@ function ServiceAccountCard({
                 Suspend
               </Button>
             )}
+            {actions.includes("activate") && canSuspend && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-success-line text-success-strong"
+                onClick={() => onAction(account, "activate")}
+              >
+                Activate
+              </Button>
+            )}
             {actions.includes("reconnect") && canReconnect && (
               <Button
                 variant="outline"
@@ -192,6 +212,8 @@ export function SubscriberDetailPage(): ReactNode {
   const user = useAuthStore((state) => state.user);
 
   const [subscriber, setSubscriber] = useState<Subscriber | null>(null);
+  const [recentPayments, setRecentPayments] = useState<PaymentSummary[]>([]);
+  const [paymentsErrorMessage, setPaymentsErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -207,6 +229,7 @@ export function SubscriberDetailPage(): ReactNode {
   const canSuspend = user !== null && roleHasPermission(user.role, "subscribers:suspend");
   const canReconnect = user !== null && roleHasPermission(user.role, "subscribers:reconnect");
   const canViewLedger = user !== null && roleHasPermission(user.role, "ledger:read");
+  const canViewPayments = user !== null && roleHasPermission(user.role, "payments:read");
 
   const loadSubscriber = useCallback(async (): Promise<void> => {
     if (id === undefined) {
@@ -217,12 +240,25 @@ export function SubscriberDetailPage(): ReactNode {
     try {
       const loaded = await getSubscriber(id);
       setSubscriber(loaded);
+
+      // The profile shows the subscriber's real payments, newest first, across
+      // every service account they hold. A failure here never hides the profile
+      // itself: the section reports its own error and the rest still renders.
+      if (user !== null && roleHasPermission(user.role, "payments:read")) {
+        try {
+          const page = await listPayments({ subscriberId: id, pageSize: RECENT_PAYMENTS_LIMIT });
+          setRecentPayments(page.items);
+          setPaymentsErrorMessage(null);
+        } catch (error) {
+          setPaymentsErrorMessage(extractApiErrorMessage(error));
+        }
+      }
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, [id]);
+  }, [id, user]);
 
   useEffect(() => {
     void loadSubscriber();
@@ -248,6 +284,11 @@ export function SubscriberDetailPage(): ReactNode {
       if (action === "suspend") {
         await suspendServiceAccount(account.id, reason);
         setStatusMessage(`Suspended ${account.serviceAccountNumber}.`);
+      } else if (action === "activate") {
+        await activateServiceAccount(account.id, {
+          reason: reason.trim() === "" ? undefined : reason,
+        });
+        setStatusMessage(`Activated ${account.serviceAccountNumber}.`);
       } else if (action === "terminate") {
         await terminateServiceAccount(account.id, reason);
         setStatusMessage(`Terminated ${account.serviceAccountNumber}.`);
@@ -307,7 +348,7 @@ export function SubscriberDetailPage(): ReactNode {
   if (isLoading) {
     return (
       <AppShell pageTitle="Subscriber" pageDescription="Loading subscriber…">
-        <div className="mx-auto max-w-4xl space-y-6">
+        <div className="w-full max-w-6xl space-y-6">
           <Skeleton className="h-8 w-64" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-40 w-full" />
@@ -319,7 +360,7 @@ export function SubscriberDetailPage(): ReactNode {
   if (subscriber === null) {
     return (
       <AppShell pageTitle="Subscriber" pageDescription="The requested subscriber could not be loaded">
-        <div className="mx-auto max-w-4xl space-y-4">
+        <div className="w-full max-w-6xl space-y-4">
           <ErrorBanner
             message={errorMessage ?? "Subscriber not found."}
             onRetry={() => void loadSubscriber()}
@@ -332,7 +373,10 @@ export function SubscriberDetailPage(): ReactNode {
     );
   }
 
-  const reasonIsRequired = pendingAction !== null && pendingAction.action !== "reconnect";
+  const reasonIsRequired =
+    pendingAction !== null &&
+    pendingAction.action !== "reconnect" &&
+    pendingAction.action !== "activate";
   const reasonIsTooShort = reasonIsRequired && reason.trim().length < 10;
 
   return (
@@ -347,7 +391,7 @@ export function SubscriberDetailPage(): ReactNode {
         ) : undefined
       }
     >
-      <div className="mx-auto max-w-4xl space-y-6">
+      <div className="w-full max-w-6xl space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
             <p className="text-sm text-content-secondary">
@@ -399,14 +443,64 @@ export function SubscriberDetailPage(): ReactNode {
           )}
         </section>
 
-        <Card>
-          <CardContent>
-            <h2 className="text-base font-medium">Recent Payment History</h2>
-            <p className="mt-1 text-sm text-content-secondary">
-              Payments are recorded in Phase 5. Until then this section stays empty.
-            </p>
-          </CardContent>
-        </Card>
+        {canViewPayments && (
+          <Card>
+            <CardContent className="space-y-3">
+              <h2 className="text-base font-medium">Recent Payment History</h2>
+              {paymentsErrorMessage !== null ? (
+                <p className="text-sm text-danger-strong">{paymentsErrorMessage}</p>
+              ) : recentPayments.length === 0 ? (
+                <p className="text-sm text-content-secondary">
+                  No payments have been recorded for this subscriber yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-content-secondary">
+                      <tr className="border-b border-line">
+                        <th scope="col" className="px-3 py-2 text-left font-medium">
+                          Receipt #
+                        </th>
+                        <th scope="col" className="px-3 py-2 text-left font-medium">
+                          Date
+                        </th>
+                        <th scope="col" className="px-3 py-2 text-left font-medium">
+                          Method
+                        </th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">
+                          Amount
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentPayments.map((payment) => (
+                        <tr key={payment.id} className="border-b border-line last:border-0">
+                          <td className="px-3 py-2">
+                            <Link
+                              to={`/payments/${payment.id}`}
+                              className="font-mono text-accent underline-offset-4 hover:underline"
+                            >
+                              {payment.receiptNumber}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-2 text-content-secondary">
+                            {formatDateOnly(payment.paymentDate)}
+                          </td>
+                          <td className="px-3 py-2 text-content-primary">
+                            {PAYMENT_METHOD_LABELS[payment.paymentMethod]}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-content-primary">
+                            {formatCentavos(payment.amountCentavos)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Modal
@@ -420,7 +514,9 @@ export function SubscriberDetailPage(): ReactNode {
         description={
           pendingAction?.action === "reconnect"
             ? "Reconnecting creates a reconnection fee entry for this account."
-            : "Give a reason. It is written to the account's status history."
+            : pendingAction?.action === "activate"
+              ? "Activating starts service and billing for this account."
+              : "Give a reason. It is written to the account's status history."
         }
         footer={
           <>

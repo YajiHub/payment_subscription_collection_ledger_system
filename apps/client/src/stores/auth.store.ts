@@ -7,12 +7,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import type { UserRole } from "@bcis/shared";
+import type { SystemRole, UserRole } from "@bcis/shared";
 
 export interface AuthenticatedClientUser {
   id: string;
   fullName: string;
-  role: UserRole;
+  role: UserRole | SystemRole;
   /**
    * The account name this session was signed in with.
    *

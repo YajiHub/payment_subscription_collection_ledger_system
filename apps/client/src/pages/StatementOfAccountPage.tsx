@@ -8,6 +8,7 @@ import {
   type ServiceAccountStatement,
 } from "../lib/api-client";
 import { formatCentavos } from "../lib/format";
+import { describePrintOutcome } from "../lib/print-outcome";
 import { AppShell } from "../components/layout/AppShell";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -69,11 +70,16 @@ export function StatementOfAccountPage(): ReactNode {
     void loadStatement();
   }, [loadStatement]);
 
-  function printStatement(): void {
-    if (window.electronAPI !== undefined) {
-      void window.electronAPI.printCurrentWindow();
-    } else {
+  async function printStatement(): Promise<void> {
+    if (window.electronAPI === undefined) {
       window.print();
+      return;
+    }
+
+    const report = describePrintOutcome(await window.electronAPI.printCurrentWindow());
+
+    if (report.tone === "error") {
+      setErrorMessage(report.message);
     }
   }
 
@@ -104,7 +110,7 @@ export function StatementOfAccountPage(): ReactNode {
               className={fieldClass}
             />
           </label>
-          <Button size="md" onClick={printStatement}>
+          <Button size="md" onClick={() => void printStatement()}>
             Print / Export PDF
           </Button>
           {statement !== null && (
@@ -134,7 +140,9 @@ export function StatementOfAccountPage(): ReactNode {
             </Link>
           </>
         ) : (
-          <article className="mx-auto max-w-3xl space-y-6 rounded-xl border border-line-strong bg-surface p-8 shadow-xs">
+          <>
+            {errorMessage !== null && <ErrorBanner message={errorMessage} />}
+            <article className="mx-auto max-w-3xl space-y-6 rounded-xl border border-line-strong bg-surface p-8 shadow-xs">
             <header className="border-b border-line pb-4 text-center">
               <h1 className="text-xl font-semibold text-content-primary">{COMPANY.name}</h1>
               <p className="text-sm text-content-secondary">{COMPANY.address}</p>
@@ -254,6 +262,7 @@ export function StatementOfAccountPage(): ReactNode {
               </p>
             </footer>
           </article>
+          </>
         )}
       </div>
     </AppShell>

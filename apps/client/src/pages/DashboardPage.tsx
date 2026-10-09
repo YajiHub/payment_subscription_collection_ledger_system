@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { AppNavigation } from "../components/AppNavigation";
+import { AppShell } from "../components/layout/AppShell";
 import { roleHasPermission } from "@bcis/shared";
 import {
   extractApiErrorMessage,
@@ -41,10 +41,12 @@ function KpiCard({
   hint?: string;
 }): ReactNode {
   return (
-    <div className="rounded-lg border border-line bg-surface p-4 shadow-sm">
-      <p className="text-xs uppercase tracking-wide text-content-secondary">{label}</p>
-      <p className="mt-1 text-right text-xl font-semibold tabular-nums">{value}</p>
-      {hint !== undefined && <p className="mt-1 text-xs text-content-secondary">{hint}</p>}
+    <div className="min-w-0 rounded-2xl border border-line/90 bg-surface p-5 shadow-xs transition-all duration-200 hover:border-line-strong hover:shadow-md hover:-translate-y-0.5 flex flex-col justify-between">
+      <p className="text-xs font-bold tracking-wider text-content-secondary uppercase truncate">{label}</p>
+      <p className="mt-2 text-right text-xl sm:text-2xl font-extrabold tracking-tight text-content-primary tabular-nums truncate" title={value}>
+        {value}
+      </p>
+      {hint !== undefined && <p className="mt-1 text-right text-xs text-content-secondary truncate">{hint}</p>}
     </div>
   );
 }
@@ -54,10 +56,10 @@ function ArAgingMiniChart({ aging }: { aging: ArAgingReport }): ReactNode {
   const grandTotal = aging.totals.grandTotal;
 
   return (
-    <div className="space-y-3 rounded-lg border border-line bg-surface p-4 shadow-sm">
+    <div className="space-y-4 rounded-2xl border border-line/90 bg-surface p-6 shadow-xs">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-medium">AR Aging</h2>
-        <span className="text-sm font-semibold tabular-nums">{formatCentavos(grandTotal)}</span>
+        <h2 className="text-base font-bold text-content-primary">AR Aging Analysis</h2>
+        <span className="text-base font-extrabold text-content-primary tabular-nums">{formatCentavos(grandTotal)}</span>
       </div>
 
       {grandTotal === 0 ? (
@@ -270,38 +272,44 @@ export function DashboardPage(): ReactNode {
   }, [loadDashboard]);
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-8">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Management Dashboard</h1>
-          <p className="text-sm text-content-secondary">
-            {kpis === null
-              ? "Loading the pulse of the business…"
-              : `Last billing run: ${kpis.lastBillingRunDate === null ? "never" : formatDateOnly(kpis.lastBillingRunDate)}`}
-          </p>
-        </div>
-        <AppNavigation />
-      </header>
-
-      {errorMessage !== null && <p className="text-sm text-danger-strong">{errorMessage}</p>}
+    <AppShell
+      pageTitle="Management Dashboard"
+      pageDescription={
+        kpis === null
+          ? "Loading the pulse of the business…"
+          : `Last billing run: ${kpis.lastBillingRunDate === null ? "never" : formatDateOnly(kpis.lastBillingRunDate)}`
+      }
+      headerActions={
+        canExportReports ? (
+          <Link
+            to="/reports"
+            className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
+          >
+            Reports Center
+          </Link>
+        ) : undefined
+      }
+    >
+    <div className="w-full space-y-6">
+        {errorMessage !== null && <p className="text-sm text-danger-strong">{errorMessage}</p>}
 
       {isLoading || kpis === null || aging === null ? (
         <p className="text-content-secondary">Loading the dashboard…</p>
       ) : (
         <>
           {kpis.submittedBatchesPendingReconciliation > 0 && (
-            <section className="rounded-lg border border-warning-line bg-warning-soft p-4 text-sm text-warning-strong">
-              <p className="font-medium">
+            <section className="rounded-xl border border-warning-line bg-warning-soft p-4 text-sm text-warning-strong shadow-xs flex items-center justify-between">
+              <p className="font-semibold">
                 {kpis.submittedBatchesPendingReconciliation} collector batch(es) awaiting
                 reconciliation.
               </p>
-              <Link to="/collector-batches" className="underline">
-                Open the collector batches
+              <Link to="/collector-batches" className="rounded-lg bg-warning px-3 py-1 text-xs font-bold text-white hover:bg-warning-strong transition-colors">
+                Open Batches
               </Link>
             </section>
           )}
 
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <KpiCard
               label="Active Accounts"
               value={kpis.totalActiveServiceAccounts.toLocaleString("en-PH")}
@@ -338,62 +346,73 @@ export function DashboardPage(): ReactNode {
 
           <p className="text-sm text-content-secondary">
             Overdue more than 30 days:{" "}
-            <span className="font-medium tabular-nums text-content-primary">
+            <span className="font-semibold tabular-nums text-content-primary">
               {formatCentavos(kpis.overdueOver30DaysCentavos)}
             </span>{" "}
             — more than 90 days:{" "}
-            <span className="font-medium tabular-nums text-content-primary">
+            <span className="font-semibold tabular-nums text-content-primary">
               {formatCentavos(kpis.overdueOver90DaysCentavos)}
             </span>
           </p>
 
           {performance !== null && (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-6 lg:grid-cols-2">
               <PaymentMethodSummaryBlock performance={performance} />
               <CollectorPerformanceBlock performance={performance} />
             </div>
           )}
 
-          <section className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
-            <h2 className="px-4 py-3 text-sm font-medium">Recent payments</h2>
-            <table className="min-w-full text-sm">
-              <thead className="bg-canvas text-left text-content-secondary">
-                <tr>
-                  <th className="px-4 py-2">Receipt #</th>
-                  <th className="px-4 py-2">Date</th>
-                  <th className="px-4 py-2">Subscriber</th>
-                  <th className="px-4 py-2">Method</th>
-                  <th className="px-4 py-2 text-right">Amount</th>
-                  <th className="px-4 py-2">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentPayments.length === 0 ? (
+          <section className="overflow-hidden rounded-2xl border border-line/90 bg-surface shadow-xs">
+            <div className="border-b border-line/70 px-6 py-4 bg-canvas/30 flex items-center justify-between">
+              <h2 className="text-base font-bold text-content-primary">Recent Payments</h2>
+              <Link to="/payments" className="text-xs font-semibold text-accent hover:underline">
+                View all payments &rarr;
+              </Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm sm:text-base">
+                <thead className="bg-canvas/90 text-left text-xs font-semibold text-content-secondary uppercase tracking-wider">
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-content-secondary">
-                      No payments have been posted yet.
-                    </td>
+                    <th className="px-5 py-3">Receipt #</th>
+                    <th className="px-5 py-3">Date</th>
+                    <th className="px-5 py-3">Subscriber</th>
+                    <th className="px-5 py-3">Method</th>
+                    <th className="px-5 py-3 text-right">Amount</th>
+                    <th className="px-5 py-3">Status</th>
                   </tr>
-                ) : (
-                  recentPayments.map((payment) => (
-                    <tr key={payment.id} className="border-t border-line">
-                      <td className="px-4 py-2 font-mono text-xs">
-                        <Link to={`/payments/${payment.id}`} className="underline">
-                          {payment.receiptNumber}
-                        </Link>
+                </thead>
+                <tbody className="divide-y divide-line/70">
+                  {recentPayments.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-6 text-center text-content-secondary">
+                        No payments have been posted yet.
                       </td>
-                      <td className="px-4 py-2">{formatDateOnly(payment.paymentDate)}</td>
-                      <td className="px-4 py-2">{payment.subscriberName}</td>
-                      <td className="px-4 py-2">{payment.paymentMethod}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {formatCentavos(payment.amountCentavos)}
-                      </td>
-                      <td className="px-4 py-2">{payment.status}</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    recentPayments.map((payment) => (
+                      <tr key={payment.id} className="hover:bg-accent/[0.04] transition-colors">
+                        <td className="px-5 py-3 font-mono text-xs sm:text-sm">
+                          <Link to={`/payments/${payment.id}`} className="font-semibold text-accent hover:underline">
+                            {payment.receiptNumber}
+                          </Link>
+                        </td>
+                        <td className="px-5 py-3">{formatDateOnly(payment.paymentDate)}</td>
+                        <td className="px-5 py-3 font-medium">{payment.subscriberName}</td>
+                        <td className="px-5 py-3">{payment.paymentMethod}</td>
+                        <td className="px-5 py-3 text-right tabular-nums font-semibold">
+                          {formatCentavos(payment.amountCentavos)}
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="inline-block rounded-full px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700">
+                            {payment.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           <p className="text-xs text-content-secondary">
@@ -403,6 +422,7 @@ export function DashboardPage(): ReactNode {
           </p>
         </>
       )}
-    </main>
+      </div>
+    </AppShell>
   );
 }

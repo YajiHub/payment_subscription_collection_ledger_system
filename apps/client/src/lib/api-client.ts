@@ -565,6 +565,21 @@ export async function terminateServiceAccount(id: string, reason: string): Promi
   return unwrap(response.data);
 }
 
+/**
+ * PUT /api/service-accounts/:id/activate — brings a pending account into service.
+ * The reason is optional; the activation date defaults to today on the server.
+ */
+export async function activateServiceAccount(
+  id: string,
+  input: { reason?: string; activationDate?: string } = {}
+): Promise<ServiceAccount> {
+  const response = await httpClient.put<ApiSuccessEnvelope<ServiceAccount>>(
+    `/api/service-accounts/${id}/activate`,
+    input
+  );
+  return unwrap(response.data);
+}
+
 /** PUT /api/service-accounts/:id/plan — moves the account onto another plan. */
 export async function changeServiceAccountPlan(
   id: string,
@@ -861,6 +876,8 @@ export interface ReversePaymentResult {
 
 export interface ListPaymentFilters {
   serviceAccountId?: string;
+  /** One subscriber's payments across every account they hold. */
+  subscriberId?: string;
   method?: PaymentMethod;
   status?: PaymentStatus;
   dateFrom?: string;
@@ -1693,7 +1710,7 @@ export async function cancelCollectorBatch(
  */
 export async function getArAging(
   asOfDate?: string,
-  filters: ReportFilterParams = {}
+  filters: AccountFilterParams = {}
 ): Promise<ArAgingReport> {
   const response = await httpClient.get<ApiSuccessEnvelope<ArAgingReport>>(
     "/api/receivables/ar-aging",
@@ -1712,7 +1729,7 @@ export async function getArAging(
  */
 export async function downloadArAgingXlsx(
   asOfDate?: string,
-  filters: ReportFilterParams = {}
+  filters: AccountFilterParams = {}
 ): Promise<{ fileName: string; bytes: ArrayBuffer }> {
   const response = await httpClient.get<ArrayBuffer>("/api/receivables/ar-aging/export", {
     params: { asOfDate, format: "xlsx", ...filters },
@@ -1730,7 +1747,7 @@ export async function downloadArAgingXlsx(
  * same ones every report accepts, so the list can be narrowed to one collector,
  * area, plan or service type.
  */
-export interface OverdueAccountFilters extends ReportFilterParams {
+export interface OverdueAccountFilters extends AccountFilterParams {
   /** Only accounts with no payment in the last N days (omit for any). */
   noPaymentInDays?: number;
   /** Only accounts overdue for at least this many consecutive months. */
@@ -1941,8 +1958,10 @@ export interface CollectorOutstandingGroup {
   collectorName: string;
   assignedAccountCount: number;
   totalOutstandingCentavos: number;
-  bucket_30_60_centavos: number;
-  bucket_60_90_centavos: number;
+  currentCentavos: number;
+  bucket_1_30_centavos: number;
+  bucket_31_60_centavos: number;
+  bucket_61_90_centavos: number;
   over_90_centavos: number;
 }
 
@@ -2028,7 +2047,7 @@ export async function getMonthlyBillingReport(
  */
 export async function getArAgingReport(
   asOf?: string,
-  filters: ReportFilterParams = {}
+  filters: AccountFilterParams = {}
 ): Promise<ArAgingReport> {
   const response = await httpClient.get<ApiSuccessEnvelope<ArAgingReport>>(
     "/api/reports/ar-aging",
@@ -2051,7 +2070,7 @@ export async function getCollectorRemittanceReport(
 /** GET /api/reports/outstanding-by-collector — receivables grouped by collector. */
 export async function getOutstandingByCollectorReport(
   asOf?: string,
-  filters: ReportFilterParams = {}
+  filters: AccountFilterParams = {}
 ): Promise<OutstandingByCollectorReport> {
   const response = await httpClient.get<ApiSuccessEnvelope<OutstandingByCollectorReport>>(
     "/api/reports/outstanding-by-collector",
@@ -2072,11 +2091,7 @@ export async function getOutstandingByCollectorReport(
  * fields to render per report. Passing `undefined` omits the parameter entirely, so
  * an unfiltered report stays complete.
  */
-export interface ReportFilterParams {
-  /** First day of the range, inclusive. */
-  fromDate?: string;
-  /** Last day of the range, inclusive. */
-  toDate?: string;
+export interface AccountFilterParams {
   /** Only rows whose account is assigned to this collector. */
   collectorId?: string;
   /** Only rows whose account sits in this collection area. */
@@ -2085,6 +2100,20 @@ export interface ReportFilterParams {
   planId?: string;
   /** Only rows whose plan is of this service type. */
   serviceType?: ServiceType;
+}
+
+/**
+ * The account filters PLUS the date range, for the reports that really apply one.
+ *
+ * A snapshot report (AR aging, outstanding by collector, collector assignment) or
+ * a year-scoped one (annual collection) takes `AccountFilterParams` instead: it has
+ * no date range, and the server refuses one (D7).
+ */
+export interface ReportFilterParams extends AccountFilterParams {
+  /** First day of the range, inclusive. */
+  fromDate?: string;
+  /** Last day of the range, inclusive. */
+  toDate?: string;
 }
 
 /** The audit filters a report may carry (S6-5). */
@@ -2342,7 +2371,7 @@ export async function getRevenueReport(
 
 /** GET /api/reports/collector-assignment — an assignment snapshot. */
 export async function getCollectorAssignmentReport(
-  filters: ReportFilterParams = {}
+  filters: AccountFilterParams = {}
 ): Promise<CollectorAssignmentReport> {
   const response = await httpClient.get<ApiSuccessEnvelope<CollectorAssignmentReport>>(
     "/api/reports/collector-assignment",

@@ -11,7 +11,6 @@ import {
   roleHasPermission,
   type CollectorBatchStatus,
   type Permission,
-  type UserRole,
 } from "@bcis/shared";
 
 /** An action an operator can take on a batch. */
@@ -91,7 +90,7 @@ export function isCollectorBatchActionAllowed(
 
 /** True when the role holds the permission the action's route requires. */
 export function roleMayTakeCollectorBatchAction(
-  role: UserRole,
+  role: string,
   action: CollectorBatchAction
 ): boolean {
   return roleHasPermission(role, COLLECTOR_BATCH_ACTION_PERMISSIONS[action]);
@@ -100,11 +99,85 @@ export function roleMayTakeCollectorBatchAction(
 /** The actions the state machine allows AND the role may take. */
 export function permittedCollectorBatchActions(
   status: CollectorBatchStatus,
-  role: UserRole
+  role: string
 ): CollectorBatchAction[] {
   return COLLECTOR_BATCH_ACTIONS[status].filter((action) =>
     roleMayTakeCollectorBatchAction(role, action)
   );
+}
+
+/** The actions whose control is a button in the Actions card itself. */
+export const BATCH_LEVEL_ACTIONS = [
+  "add_accounts",
+  "submit",
+  "remit",
+  "reconcile",
+  "close",
+  "cancel",
+] as const satisfies readonly CollectorBatchAction[];
+
+/**
+ * The actions that act on ONE assigned account. Their button lives on that
+ * account's row, never on the batch card, so a permitted action of this kind does
+ * not give the card anything to draw.
+ */
+export const ROW_LEVEL_ACTIONS = [
+  "record_collection",
+  "void_collection",
+] as const satisfies readonly CollectorBatchAction[];
+
+/** True when the action's control is a button on the batch card. */
+function isBatchLevelAction(action: CollectorBatchAction): boolean {
+  return BATCH_LEVEL_ACTIONS.some((batchAction) => batchAction === action);
+}
+
+/** True when the action's control lives on an assigned account's row. */
+function isRowLevelAction(action: CollectorBatchAction): boolean {
+  return ROW_LEVEL_ACTIONS.some((rowAction) => rowAction === action);
+}
+
+/**
+ * What the Actions card renders for one viewer and one batch.
+ *
+ *   buttons         — batch-level controls to draw (possibly alongside row actions)
+ *   row-level-only  — nothing to draw here; the actions left are on the rows, so
+ *                     the card says so rather than rendering an empty body
+ *   nothing-to-do   — the batch's state permits nothing for this viewer
+ */
+export interface CollectorBatchActionsCard {
+  kind: "buttons" | "row-level-only" | "nothing-to-do";
+  /** Every action this viewer may take in this state, both kinds together. */
+  permitted: CollectorBatchAction[];
+  /** The batch-level actions to draw as buttons; empty unless `kind` is "buttons". */
+  batchActions: CollectorBatchAction[];
+  /** The per-account actions this viewer holds, for the row-level-only message. */
+  rowActions: CollectorBatchAction[];
+}
+
+/**
+ * Decides the Actions card's content, so it is never silently empty.
+ *
+ * A Cashier on an `in_progress` batch is the case that produced an empty card:
+ * `permittedCollectorBatchActions` returns `["void_collection"]`, but `Void` is a
+ * row control, so the card drew neither a button nor the "nothing left to do"
+ * sentence. Every permitted action is classified here, and the card always has
+ * something to say about the ones it cannot draw itself.
+ */
+export function collectorBatchActionsCard(
+  status: CollectorBatchStatus,
+  role: string
+): CollectorBatchActionsCard {
+  const permitted = permittedCollectorBatchActions(status, role);
+  const batchActions = permitted.filter(isBatchLevelAction);
+  const rowActions = permitted.filter(isRowLevelAction);
+
+  if (batchActions.length > 0) {
+    return { kind: "buttons", permitted, batchActions, rowActions };
+  }
+  if (rowActions.length > 0) {
+    return { kind: "row-level-only", permitted, batchActions, rowActions };
+  }
+  return { kind: "nothing-to-do", permitted, batchActions, rowActions };
 }
 
 /** How the money stands after a remittance the operator is about to record. */

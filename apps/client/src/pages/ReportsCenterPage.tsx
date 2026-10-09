@@ -764,7 +764,10 @@ export function ReportsCenterPage(): ReactNode {
     }
 
     if (window.electronAPI?.openPrintPreview !== undefined) {
-      void window.electronAPI.openPrintPreview(buildPrintableHtml(table));
+      // A failed preview window would otherwise be invisible: surface the reason.
+      void window.electronAPI.openPrintPreview(buildPrintableHtml(table)).catch((error: unknown) => {
+        setErrorMessage(error instanceof Error ? error.message : "Could not open the print preview.");
+      });
       return;
     }
 

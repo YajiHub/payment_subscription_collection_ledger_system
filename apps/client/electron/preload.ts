@@ -3,7 +3,10 @@
 // Whitelist rule: if a capability is not listed here, React cannot call it.
 // Because the renderer is sandboxed it has no `require`, no `fs`, no `net`.
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+
+import { PREVIEW_ACTIVITY_CHANNEL, type PreviewActivityState } from "./preview-activity";
+import type { PrintOutcome } from "./printing";
 
 // Options accepted by the native open-file dialog. The renderer may choose a
 // title and file filters; it can never ask for a directory or a raw path.
@@ -18,8 +21,12 @@ const electronApi = {
     return ipcRenderer.invoke("open-file-picker", options);
   },
 
-  /** Asks the main process to print the current window using OS print services. */
-  printCurrentWindow: (): Promise<void> => {
+  /**
+   * Asks the main process to show the print preview for the current window.
+   * Resolves with what actually happened: the preview opened, or it failed with
+   * the reason. No printer is required — the preview window saves or prints.
+   */
+  printCurrentWindow: (): Promise<PrintOutcome> => {
     return ipcRenderer.invoke("print-window");
   },
 
@@ -35,6 +42,31 @@ const electronApi = {
   /** Version of the installed desktop application, shown in the UI footer. */
   getAppVersion: (): Promise<string> => {
     return ipcRenderer.invoke("get-app-version");
+  },
+
+  /**
+   * The preview windows that are open right now. The window behind a modal preview
+   * is blocked at the OS level, so the renderer cannot detect that itself — it can
+   * only be told, and this is where the notice gets its state.
+   */
+  getPreviewActivity: (): Promise<PreviewActivityState> => {
+    return ipcRenderer.invoke("get-preview-activity");
+  },
+
+  /**
+   * Calls `listener` whenever a preview window opens or closes. Returns a function
+   * that removes the listener, so a component can stop listening when it unmounts.
+   */
+  onPreviewActivityChanged: (
+    listener: (state: PreviewActivityState) => void
+  ): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: PreviewActivityState): void => {
+      listener(state);
+    };
+    ipcRenderer.on(PREVIEW_ACTIVITY_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PREVIEW_ACTIVITY_CHANNEL, handler);
+    };
   },
 
   /**

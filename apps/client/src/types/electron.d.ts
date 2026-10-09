@@ -12,6 +12,9 @@
 
 export {};
 
+import type { PrintOutcome } from "../../electron/printing";
+import type { PreviewActivityState } from "../../electron/preview-activity";
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -20,12 +23,21 @@ declare global {
         title?: string;
         filters?: { name: string; extensions: string[] }[];
       }) => Promise<string | null>;
-      /** Ask the main process to print the current window. */
-      printCurrentWindow: () => Promise<void>;
+      /**
+       * Ask the main process to show the print preview for the current window.
+       * Resolves with the real outcome: the preview opened, or it failed with the
+       * reason. Printing is never attempted directly — the preview window's toolbar
+       * saves the PDF or prints it, with or without a printer.
+       */
+      printCurrentWindow: () => Promise<PrintOutcome>;
       /** Open a separate window showing a finished report document. */
       openPrintPreview: (htmlContent: string) => Promise<void>;
       /** Version of the installed desktop application. */
       getAppVersion: () => Promise<string>;
+      /** The preview windows that are open right now; the main process owns this state. */
+      getPreviewActivity: () => Promise<PreviewActivityState>;
+      /** Calls the listener when a preview opens or closes; returns an unsubscribe function. */
+      onPreviewActivityChanged: (listener: (state: PreviewActivityState) => void) => () => void;
       /** The configured API server and the file that holds that setting. */
       getAppConfig: () => Promise<{ apiBaseUrl: string | null; configFilePath: string }>;
     };

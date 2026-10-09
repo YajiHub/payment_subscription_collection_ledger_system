@@ -73,6 +73,9 @@ vi.mock("../lib/api-client", () => ({
   })),
   uploadGcashScreenshot: vi.fn(),
   extractApiErrorMessage: vi.fn(() => "Something went wrong."),
+  getApiBaseUrl: vi.fn(() => "http://localhost:3003"),
+  fetchServiceHealth: vi.fn(async () => ({ version: "test" })),
+  fetchDatabaseHealth: vi.fn(async () => ({ latency_ms: 1, error: null })),
 }));
 
 /** The text a screen reader is told explains why a field is invalid. */
@@ -286,5 +289,59 @@ describe("PostPaymentPage", () => {
     // allocation list means for a payment that has actually posted.
     expect(screen.queryByText("No invoices were outstanding.")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Payment posted" })).not.toBeInTheDocument();
+  });
+
+  // Regression: the POST response once leaked the server's internal allocation
+  // draft (`amountCentavos`, no `invoiceNumber`), so the breakdown rendered the
+  // literal "₱NaN.NaN" and "Invoice undefined". The response now carries the same
+  // shape the read endpoints return, and this proves the screen shows real money.
+  it("renders the posted allocation as a real peso amount, never NaN", async () => {
+    vi.mocked(postPayment).mockResolvedValueOnce({
+      payment: {
+        id: "55555555-5555-4555-8555-555555555555",
+        receiptNumber: "OR-2026-000001",
+        serviceAccountId: "33333333-3333-4333-8333-333333333333",
+        serviceAccountNumber: "SA-0001",
+        subscriberId: "22222222-2222-4222-8222-222222222222",
+        subscriberName: "Dela Cruz, Juan",
+        paymentMethod: "cash",
+        status: "posted",
+        amountCentavos: 5000,
+        allocatedCentavos: 5000,
+        advanceCreditCentavos: 0,
+        paymentDate: "2026-02-01",
+        notes: null,
+        gcashReferenceNumber: null,
+        postedAt: "2026-02-01T00:00:00.000Z",
+        postedById: "u1",
+        postedByName: "Demo Owner",
+        reversedAt: null,
+        reversedById: null,
+      },
+      allocations: [
+        {
+          invoiceId: "44444444-4444-4444-8444-444444444444",
+          invoiceNumber: "INV-2026-0001",
+          allocatedAmountCentavos: 5000,
+        },
+      ],
+      allocatedCentavos: 5000,
+      advanceCreditCentavos: 0,
+    });
+
+    const user = userEvent.setup();
+    await openPaymentSection(user);
+
+    fireEvent.change(screen.getByLabelText("Amount (₱)"), { target: { value: "50.00" } });
+    fireEvent.change(screen.getByLabelText("Payment date"), { target: { value: "2026-02-01" } });
+    await user.click(screen.getByRole("button", { name: "Post Payment" }));
+
+    const allocationHeading = await screen.findByRole("heading", { name: "Allocation" });
+    const allocationSection = allocationHeading.closest("section") as HTMLElement;
+
+    expect(within(allocationSection).getByText("₱50.00")).toBeInTheDocument();
+    expect(within(allocationSection).getByText("Invoice INV-2026-0001")).toBeInTheDocument();
+    expect(allocationSection.textContent).not.toContain("NaN");
+    expect(allocationSection.textContent).not.toContain("undefined");
   });
 });

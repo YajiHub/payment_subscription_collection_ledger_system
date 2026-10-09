@@ -32,7 +32,8 @@ import {
 } from "../lib/api-client";
 import {
   assessBatchRemittance,
-  permittedCollectorBatchActions,
+  collectorBatchActionsCard,
+  COLLECTOR_BATCH_ACTION_LABELS,
   type CollectorBatchAction,
 } from "../lib/collector-batch-actions";
 import { formatCentavos, formatDateOnly, parsePesosToCentavos } from "../lib/format";
@@ -340,9 +341,11 @@ export function CollectorBatchDetailPage(): ReactNode {
     void loadBatch();
   }, [loadBatch]);
 
-  const permittedActions: readonly CollectorBatchAction[] =
-    batch === null || user === null ? [] : permittedCollectorBatchActions(batch.status, user.role);
-  const offers = (action: CollectorBatchAction): boolean => permittedActions.includes(action);
+  // The card's content, decided in one place so it can never be silently empty.
+  const actionsCard =
+    batch === null || user === null ? null : collectorBatchActionsCard(batch.status, user.role);
+  const offers = (action: CollectorBatchAction): boolean =>
+    actionsCard !== null && actionsCard.permitted.includes(action);
   const takesMoney = recordResult === "collected" || recordResult === "partial";
 
   function closeDialog(): void {
@@ -539,7 +542,7 @@ export function CollectorBatchDetailPage(): ReactNode {
   if (isLoading) {
     return (
       <AppShell pageTitle="Collector Batch" pageDescription="Loading batch…">
-        <div className="mx-auto max-w-5xl space-y-6">
+        <div className="w-full max-w-6xl space-y-6">
           <Card>
             <TableSkeleton rows={5} columns={8} />
           </Card>
@@ -551,7 +554,7 @@ export function CollectorBatchDetailPage(): ReactNode {
   if (batch === null) {
     return (
       <AppShell pageTitle="Collector Batch" pageDescription="The requested batch could not be loaded">
-        <div className="mx-auto max-w-5xl space-y-4">
+        <div className="w-full max-w-6xl space-y-4">
           <ErrorBanner
             message={errorMessage ?? "Batch not found."}
             onRetry={() => void loadBatch()}
@@ -593,7 +596,7 @@ export function CollectorBatchDetailPage(): ReactNode {
         </div>
       }
     >
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="w-full max-w-6xl space-y-6">
         <Link to="/collector-batches" className="text-sm text-content-secondary underline">
           ← Back to batches
         </Link>
@@ -658,10 +661,19 @@ export function CollectorBatchDetailPage(): ReactNode {
             <CardTitle>Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {permittedActions.length === 0 ? (
+            {actionsCard === null || actionsCard.kind === "nothing-to-do" ? (
               <p className="text-sm text-content-secondary">
                 This batch is {COLLECTOR_BATCH_STATUS_LABELS[batch.status].toLowerCase()}; there is
                 nothing left to do.
+              </p>
+            ) : actionsCard.kind === "row-level-only" ? (
+              <p className="text-sm text-content-secondary">
+                This batch is {COLLECTOR_BATCH_STATUS_LABELS[batch.status].toLowerCase()}. The
+                remaining actions are on individual accounts — use{" "}
+                {actionsCard.rowActions
+                  .map((action) => COLLECTOR_BATCH_ACTION_LABELS[action])
+                  .join(" or ")}{" "}
+                on the account row below.
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">

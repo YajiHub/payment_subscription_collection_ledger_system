@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -19,6 +18,7 @@ import { TextField } from "../components/form/TextField";
 import { formResolver } from "../components/form/form-resolver";
 import { DataTable, type TableColumn } from "../components/table/DataTable";
 import { EmptyState } from "../components/ui/EmptyState";
+import { AppShell } from "../components/layout/AppShell";
 
 interface UserFormState {
   fullName: string;
@@ -282,25 +282,19 @@ export function UserManagementPage(): ReactNode {
   });
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">User Management</h1>
-          <p className="text-sm text-content-secondary">Create accounts, change roles, deactivate users.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link to="/" className="text-sm font-medium text-content-primary underline">
-            Dashboard
-          </Link>
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
-          >
-            Add User
-          </button>
-        </div>
-      </header>
+    <AppShell
+      pageTitle="User Management"
+      pageDescription="Create accounts, change roles, deactivate users."
+      headerActions={
+        <button
+          type="button"
+          onClick={openCreateModal}
+          className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
+        >
+          Add User
+        </button>
+      }
+    >
 
       {errorMessage !== null && modalMode === null && (
         <p
@@ -425,6 +419,6 @@ export function UserManagementPage(): ReactNode {
           </form>
         </div>
       )}
-    </main>
+    </AppShell>
   );
 }

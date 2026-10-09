@@ -8,6 +8,14 @@ import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolvePrintOutcome, type PrintOutcome, type PrintPreviewSession } from "./printing";
+import {
+  createPreviewActivityTracker,
+  PREVIEW_ACTIVITY_CHANNEL,
+  trackPreviewWindow,
+  type PreviewActivityState,
+} from "./preview-activity";
+
 // Prevent GPU process crashes and fullscreen/resize hangs in WSLg / Linux
 app.disableHardwareAcceleration();
 
@@ -22,6 +30,29 @@ const DEFAULT_API_BASE_URL = "http://localhost:3003";
 /** The path documented in docs/deployment/README.md: %APPDATA%\BCIS\config.json. */
 function clientConfigFilePath(): string {
   return path.join(app.getPath("appData"), CLIENT_CONFIG_DIRECTORY_NAME, CLIENT_CONFIG_FILE_NAME);
+}
+
+/**
+ * The preview windows that are open right now.
+ *
+ * This lives in the main process because only it sees the window lifecycle. A modal
+ * preview blocks the window behind it at the OS level, so the renderer cannot
+ * detect the block — it can only be told.
+ */
+const previewActivity = createPreviewActivityTracker();
+
+/** Pushes the current preview state to the window a preview is blocking. */
+function broadcastPreviewActivity(
+  parentWindow: BrowserWindow | null,
+  state: PreviewActivityState
+): void {
+  // The main window can be gone (the app is quitting) while a preview is still
+  // closing; there is then nobody to tell and nothing to throw at.
+  if (parentWindow === null || parentWindow.isDestroyed()) {
+    return;
+  }
+
+  parentWindow.webContents.send(PREVIEW_ACTIVITY_CHANNEL, state);
 }
 
 /**
@@ -152,16 +183,42 @@ ipcMain.handle("open-file-picker", async () => {
   return result.canceled ? null : (result.filePaths[0] ?? null);
 });
 
-ipcMain.handle("print-window", (event) => {
-  // The OS print dialog handles the actual printing.
-  return BrowserWindow.fromWebContents(event.sender)?.webContents.print();
+// Printing always previews. The window is rendered to a PDF, written to a temp
+// file named after the document, and opened in a viewer window whose toolbar
+// saves the PDF or prints it. `print()` is never called: it resolves successfully
+// on a machine with no print backend while printing nothing, so its result cannot
+// be trusted. The outcome tells the renderer whether the preview opened.
+ipcMain.handle("print-window", async (event): Promise<PrintOutcome> => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+
+  if (senderWindow === null) {
+    return { status: "failed", reason: "The window to preview is no longer open." };
+  }
+
+  const senderContents = senderWindow.webContents;
+  const documentName = senderWindow.getTitle();
+
+  return resolvePrintOutcome(documentName, {
+    renderPdf: () => senderContents.printToPDF({}),
+    temporaryPdfPath: (name) =>
+      path.join(app.getPath("temp"), `${safePreviewFileName(name)}-${Date.now()}.pdf`),
+    writePdf: (filePath, pdfBytes) => {
+      fs.writeFileSync(filePath, pdfBytes);
+    },
+    openPreview: (filePath, name) => openPdfPreviewWindow(senderWindow, filePath, name),
+    deletePdf: (filePath) => {
+      fs.rmSync(filePath, { force: true });
+    },
+  });
 });
 
 // Report preview: a separate window that shows a report document and can be printed
 // from there. The renderer supplies the finished HTML; the main process only opens a
 // window for it, so no data is fetched here either.
-ipcMain.handle("open-print-preview", async (_event, htmlContent: string) => {
+ipcMain.handle("open-print-preview", async (event, htmlContent: string) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
   const previewWindow = new BrowserWindow({
+    ...(senderWindow === null ? {} : { parent: senderWindow, modal: true }),
     width: 900,
     height: 700,
     title: "Print Preview",
@@ -172,8 +229,78 @@ ipcMain.handle("open-print-preview", async (_event, htmlContent: string) => {
     },
   });
 
+  registerPreviewWindow(previewWindow, senderWindow, previewWindow.getTitle());
+
   await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
 });
+
+// The renderer asks for the current state when it mounts, so a notice is correct
+// even if it subscribed after a preview had already opened.
+ipcMain.handle("get-preview-activity", (): PreviewActivityState => previewActivity.current());
+
+/** Turns a window title into a file name the OS will accept. */
+function safePreviewFileName(documentName: string): string {
+  const cleaned = documentName.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return (cleaned === "" ? "document" : cleaned).slice(0, 80);
+}
+
+/**
+ * Opens a rendered PDF in a Chromium PDF viewer window, made a child of the
+ * sender so it cannot be lost behind the app. That viewer's own toolbar is where
+ * the user saves the PDF or prints it — with a printer attached or without one.
+ * The returned session resolves when the window is closed, so the temporary file
+ * can be deleted.
+ */
+function openPdfPreviewWindow(
+  senderWindow: BrowserWindow,
+  filePath: string,
+  documentName: string
+): PrintPreviewSession {
+  const previewWindow = new BrowserWindow({
+    parent: senderWindow,
+    // Modal so the receipt must be dealt with — saved, printed or dismissed — before
+    // the cashier can carry on in the main window. Without this the preview sits on
+    // top while clicks still reach the page behind it, which loses work.
+    modal: true,
+    width: 900,
+    height: 1000,
+    title: documentName,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+
+  previewWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+    console.error(`Preview failed to load (${errorCode}): ${errorDescription}`);
+  });
+
+  registerPreviewWindow(previewWindow, senderWindow, documentName);
+
+  void previewWindow.loadFile(filePath);
+
+  return {
+    whenClosed: new Promise<void>((resolve) => {
+      previewWindow.once("closed", () => resolve());
+    }),
+  };
+}
+
+/**
+ * Registers a preview window with the shared tracker and relays each state change to
+ * the window the preview is blocking. The lifecycle rules live in `preview-activity`
+ * so they can be tested without a real window.
+ */
+function registerPreviewWindow(
+  previewWindow: BrowserWindow,
+  parentWindow: BrowserWindow | null,
+  documentName: string
+): void {
+  trackPreviewWindow(previewWindow, previewActivity, documentName, (state) => {
+    broadcastPreviewActivity(parentWindow, state);
+  });
+}
 
 void app.whenReady().then(() => {
   ensureClientConfigFileExists();

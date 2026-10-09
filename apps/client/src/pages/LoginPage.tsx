@@ -57,55 +57,65 @@ export function LoginPage(): ReactNode {
   });
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-canvas p-8">
-      <form
-        // The browser's own bubble is replaced by this screen's field messages,
-        // so native validation is switched off and Zod decides.
-        noValidate
-        onSubmit={(event) => void onSubmit(event)}
-        className="w-full max-w-sm space-y-5 rounded-lg border border-line bg-surface p-8 shadow-sm"
-      >
-        <header className="space-y-1">
-          <h1 className="text-xl font-semibold">BCIS Sign In</h1>
-          <p className="text-sm text-content-secondary">Enter your office credentials to continue.</p>
-        </header>
-
-        <TextField
-          id="username"
-          label="Username"
-          required
-          autoComplete="username"
-          error={errors.username?.message}
-          {...register("username")}
-        />
-
-        <TextField
-          id="password"
-          label="Password"
-          type="password"
-          required
-          autoComplete="current-password"
-          error={errors.password?.message}
-          {...register("password")}
-        />
-
-        {errorMessage !== null && (
-          <p
-            role="alert"
-            className="rounded border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-strong"
-          >
-            {errorMessage}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong disabled:opacity-60"
+    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#071322] via-[#0b1c33] to-[#040c17] p-6 sm:p-10">
+      <div className="w-full max-w-md space-y-6">
+        <form
+          // The browser's own bubble is replaced by this screen's field messages,
+          // so native validation is switched off and Zod decides.
+          noValidate
+          onSubmit={(event) => void onSubmit(event)}
+          className="w-full space-y-5 rounded-2xl border border-white/10 bg-surface/95 p-8 sm:p-10 shadow-2xl backdrop-blur-md"
         >
-          {isSubmitting ? "Signing in…" : "Login"}
-        </button>
-      </form>
+          <header className="space-y-2 text-center">
+            <div className="mx-auto inline-flex items-center gap-2 rounded-xl bg-accent/10 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-accent border border-accent/20">
+              <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
+              ISP Operations
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight text-content-primary">BCIS Sign In</h1>
+            <p className="text-sm text-content-secondary">Enter your office credentials to access billing and ledger.</p>
+          </header>
+
+          <TextField
+            id="username"
+            label="Username"
+            required
+            autoComplete="username"
+            error={errors.username?.message}
+            {...register("username")}
+          />
+
+          <TextField
+            id="password"
+            label="Password"
+            type="password"
+            required
+            autoComplete="current-password"
+            error={errors.password?.message}
+            {...register("password")}
+          />
+
+          {errorMessage !== null && (
+            <p
+              role="alert"
+              className="rounded-xl border border-danger-line bg-danger-soft px-3.5 py-2.5 text-sm text-danger-strong"
+            >
+              {errorMessage}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full rounded-xl bg-gradient-to-r from-accent to-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-accent/25 hover:from-blue-600 hover:to-accent focus:outline-hidden focus:ring-2 focus:ring-accent focus:ring-offset-2 disabled:opacity-60 transition-all cursor-pointer"
+          >
+            {isSubmitting ? "Signing in…" : "Login"}
+          </button>
+        </form>
+
+        <p className="text-center text-xs text-white/40">
+          BCIS · Subscription &amp; Collection Ledger System
+        </p>
+      </div>
     </main>
   );
 }

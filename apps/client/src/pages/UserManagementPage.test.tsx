@@ -30,6 +30,9 @@ vi.mock("../lib/api-client", () => ({
   changeUserPassword: vi.fn(),
   setUserActiveState: vi.fn(),
   extractApiErrorMessage: vi.fn(() => "Something went wrong."),
+  getApiBaseUrl: vi.fn(() => "http://localhost:3003"),
+  fetchServiceHealth: vi.fn(async () => ({ version: "test" })),
+  fetchDatabaseHealth: vi.fn(async () => ({ latency_ms: 1, error: null })),
 }));
 
 /**

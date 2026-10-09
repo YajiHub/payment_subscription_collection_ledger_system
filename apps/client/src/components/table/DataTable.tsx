@@ -135,8 +135,8 @@ export function DataTable<TData>({
 
   return (
     <div>
-      <div className="data-table-scroll max-h-[70vh] overflow-auto">
-        <table className="data-table w-full text-left text-sm">
+      <div className="data-table-scroll max-h-[72vh] overflow-auto">
+        <table className="data-table w-full text-left text-sm sm:text-base">
           <thead className="text-content-secondary">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -156,7 +156,7 @@ export function DataTable<TData>({
                             ? "descending"
                             : "none"
                       }
-                      className={`sticky top-0 z-10 border-b border-line bg-canvas px-4 py-3 font-medium ${
+                      className={`sticky top-0 z-10 border-b border-line bg-canvas/95 backdrop-blur-xs px-5 py-3.5 text-xs font-semibold uppercase tracking-wider ${
                         isRightAligned ? "text-right" : "text-left"
                       } ${column?.headerClassName ?? ""}`}
                     >
@@ -166,7 +166,7 @@ export function DataTable<TData>({
                           onClick={(event) => header.column.getToggleSortingHandler()?.(event)}
                           aria-label={`Sort by ${column?.header ?? ""}`}
                           title={`Sort by ${column?.header ?? ""}`}
-                          className={`inline-flex items-center gap-1 rounded-sm focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none ${
+                          className={`inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-black/5 hover:text-content-primary transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none ${
                             isRightAligned ? "flex-row-reverse" : ""
                           }`}
                         >
@@ -186,14 +186,14 @@ export function DataTable<TData>({
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="border-t border-line transition-colors hover:bg-canvas/60"
+                className="border-t border-line/80 transition-colors duration-150 hover:bg-accent/[0.04]"
               >
                 {row.getVisibleCells().map((cell) => {
                   const column = columnStyles.get(cell.column.id);
                   return (
                     <td
                       key={cell.id}
-                      className={`px-4 py-3 ${column?.align === "right" ? "text-right" : ""} ${
+                      className={`px-5 py-3.5 ${column?.align === "right" ? "text-right" : ""} ${
                         column?.cellClassName ?? ""
                       }`}
                     >

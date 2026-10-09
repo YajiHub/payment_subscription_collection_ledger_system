@@ -18,6 +18,7 @@ import {
   type InvoiceDetail,
 } from "../lib/api-client";
 import { formatCentavos, formatDateOnly } from "../lib/format";
+import { describePrintOutcome } from "../lib/print-outcome";
 import { useAuthStore } from "../stores/auth.store";
 import { AppShell } from "../components/layout/AppShell";
 import { Badge, type BadgeVariant } from "../components/ui/Badge";
@@ -131,20 +132,30 @@ export function InvoiceDetailPage(): ReactNode {
     }
   }
 
-  function printInvoice(): void {
+  async function printInvoice(): Promise<void> {
     // Printing is an OS feature exposed by the Electron preload bridge. In a plain
     // browser during development the bridge is absent, so fall back to the browser.
-    if (window.electronAPI !== undefined) {
-      void window.electronAPI.printCurrentWindow();
-    } else {
+    if (window.electronAPI === undefined) {
       window.print();
+      return;
+    }
+
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const report = describePrintOutcome(await window.electronAPI.printCurrentWindow());
+
+    if (report.tone === "error") {
+      setErrorMessage(report.message);
+    } else {
+      setStatusMessage(report.message);
     }
   }
 
   if (isLoading) {
     return (
       <AppShell pageTitle="Invoice" pageDescription="Loading invoice…">
-        <div className="mx-auto max-w-4xl space-y-6">
+        <div className="w-full max-w-6xl space-y-6">
           <Skeleton className="h-8 w-56" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-64 w-full" />
@@ -156,7 +167,7 @@ export function InvoiceDetailPage(): ReactNode {
   if (invoice === null) {
     return (
       <AppShell pageTitle="Invoice" pageDescription="The requested invoice could not be loaded">
-        <div className="mx-auto max-w-4xl space-y-4">
+        <div className="w-full max-w-6xl space-y-4">
           <ErrorBanner
             message={errorMessage ?? "Invoice not found."}
             onRetry={() => void loadInvoice()}
@@ -180,13 +191,13 @@ export function InvoiceDetailPage(): ReactNode {
           variant="outline"
           size="md"
           leftIcon={<Printer className="h-4 w-4" />}
-          onClick={printInvoice}
+          onClick={() => void printInvoice()}
         >
           Print / Preview
         </Button>
       }
     >
-      <div className="mx-auto max-w-4xl space-y-6">
+      <div className="w-full max-w-6xl space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <Badge variant={STATUS_BADGE_VARIANTS[invoice.status]} size="md" dot>

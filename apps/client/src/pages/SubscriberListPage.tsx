@@ -12,8 +12,10 @@ import {
 import { extractApiErrorMessage, listSubscribers, type Subscriber } from "../lib/api-client";
 import { formatSubscriberName } from "../lib/format";
 import { useAuthStore } from "../stores/auth.store";
+import { Search, SearchX, UserPlus } from "lucide-react";
 import { DataTable, type TableColumn } from "../components/table/DataTable";
 import { EmptyState } from "../components/ui/EmptyState";
+import { AppShell } from "../components/layout/AppShell";
 
 /** The page size the list opens with. Server-side paging caps it at 200. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -158,54 +160,58 @@ export function SubscriberListPage(): ReactNode {
   }
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-8">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Subscribers</h1>
-          <p className="text-sm text-content-secondary">Search by name, account number, or phone number.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link to="/" className="text-sm font-medium text-content-primary underline">
-            Dashboard
-          </Link>
-          {canCreate && (
-            <button
-              type="button"
-              onClick={() => navigate("/subscribers/new")}
-              className="rounded bg-navy px-4 py-2 text-sm font-medium text-surface hover:bg-navy-strong"
-            >
-              Add Subscriber
-            </button>
-          )}
-        </div>
-      </header>
-
-      <form onSubmit={handleSearchSubmit} className="flex flex-wrap items-end gap-3">
-        <label className="flex-1 space-y-1">
-          <span className="text-sm font-medium text-content-primary">Search</span>
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(event) => {
-              setSearchTerm(event.target.value);
-              setPage(1);
-            }}
-            placeholder="Name, account number, or phone"
-            className="w-full rounded border border-line-strong px-3 py-2 text-sm"
-          />
+    <AppShell
+      pageTitle="Subscribers"
+      pageDescription="Search by name, account number, or phone number."
+      headerActions={
+        canCreate ? (
+          <button
+            type="button"
+            onClick={() => navigate("/subscribers/new")}
+            className="inline-flex items-center gap-1.5 rounded-md bg-navy px-4 py-2 text-sm font-semibold text-surface hover:bg-navy-strong active:scale-[0.98] transition-all shadow-xs"
+          >
+            <UserPlus className="h-4 w-4" />
+            Add Subscriber
+          </button>
+        ) : undefined
+      }
+    >
+      <form
+        onSubmit={handleSearchSubmit}
+        className="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-surface p-4 shadow-xs"
+      >
+        <label className="min-w-[240px] flex-1 space-y-1.5">
+          <span className="text-xs font-bold tracking-wider text-content-secondary uppercase">
+            Search
+          </span>
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-content-secondary/70" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(event) => {
+                setSearchTerm(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Name, account number, or phone..."
+              className="w-full rounded-md border border-line-strong bg-canvas/40 py-2 pr-3 pl-9 text-sm text-content-primary transition-all focus:border-accent focus:bg-surface focus:ring-1 focus:ring-accent focus:outline-hidden"
+            />
+          </div>
         </label>
 
-        <label className="space-y-1">
-          <span className="text-sm font-medium text-content-primary">Status</span>
+        <label className="min-w-[150px] space-y-1.5">
+          <span className="text-xs font-bold tracking-wider text-content-secondary uppercase">
+            Status
+          </span>
           <select
             value={statusFilter}
             onChange={(event) => {
               setStatusFilter(event.target.value as ServiceAccountStatus | "");
               setPage(1);
             }}
-            className="rounded border border-line-strong px-3 py-2 text-sm"
+            className="w-full rounded-md border border-line-strong bg-canvas/40 px-3 py-2 text-sm text-content-primary transition-all focus:border-accent focus:bg-surface focus:ring-1 focus:ring-accent focus:outline-hidden"
           >
-            <option value="">All</option>
+            <option value="">All Statuses</option>
             {SERVICE_ACCOUNT_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {SERVICE_ACCOUNT_STATUS_LABELS[status]}
@@ -214,8 +220,10 @@ export function SubscriberListPage(): ReactNode {
           </select>
         </label>
 
-        <label className="space-y-1">
-          <span className="text-sm font-medium text-content-primary">Municipality</span>
+        <label className="min-w-[160px] space-y-1.5">
+          <span className="text-xs font-bold tracking-wider text-content-secondary uppercase">
+            Municipality
+          </span>
           <input
             type="text"
             value={municipalityFilter}
@@ -223,14 +231,16 @@ export function SubscriberListPage(): ReactNode {
               setMunicipalityFilter(event.target.value);
               setPage(1);
             }}
-            className="rounded border border-line-strong px-3 py-2 text-sm"
+            placeholder="Filter municipality..."
+            className="w-full rounded-md border border-line-strong bg-canvas/40 px-3 py-2 text-sm text-content-primary transition-all focus:border-accent focus:bg-surface focus:ring-1 focus:ring-accent focus:outline-hidden"
           />
         </label>
 
         <button
           type="submit"
-          className="rounded border border-line-strong px-4 py-2 text-sm font-medium"
+          className="inline-flex items-center gap-1.5 rounded-md bg-navy px-5 py-2 text-sm font-semibold text-surface transition-all shadow-xs hover:bg-navy-strong active:scale-[0.98]"
         >
+          <Search className="h-4 w-4" />
           Search
         </button>
       </form>
@@ -238,13 +248,13 @@ export function SubscriberListPage(): ReactNode {
       {errorMessage !== null && (
         <p
           role="alert"
-          className="rounded border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-strong"
+          className="rounded-lg border border-danger-line bg-danger-soft px-4 py-3 text-sm font-medium text-danger-strong shadow-xs"
         >
           {errorMessage}
         </p>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-xs">
         <DataTable
           columns={SUBSCRIBER_COLUMNS}
           data={subscribers}
@@ -252,8 +262,18 @@ export function SubscriberListPage(): ReactNode {
           isLoading={isLoading}
           emptyState={
             <EmptyState
+              icon={<SearchX className="h-10 w-10 text-content-secondary/60 stroke-[1.5]" />}
               title="No subscribers match this search"
               description="Try a different name, account number, or phone number, or clear the status and municipality filters."
+              actionLabel={
+                searchTerm || statusFilter || municipalityFilter ? "Clear Filters" : undefined
+              }
+              onAction={() => {
+                setSearchTerm("");
+                setStatusFilter("");
+                setMunicipalityFilter("");
+                setPage(1);
+              }}
             />
           }
           pagination={{
@@ -269,6 +289,6 @@ export function SubscriberListPage(): ReactNode {
           }}
         />
       </div>
-    </main>
+    </AppShell>
   );
 }

@@ -5,6 +5,7 @@ import { Printer } from "lucide-react";
 
 import { PAYMENT_METHOD_LABELS } from "@bcis/shared";
 import { extractApiErrorMessage, getPayment, type PaymentDetail } from "../lib/api-client";
+import { describePrintOutcome } from "../lib/print-outcome";
 import { formatCentavos, formatDateOnly } from "../lib/format";
 import { AppShell } from "../components/layout/AppShell";
 import { Button } from "../components/ui/Button";
@@ -27,6 +28,7 @@ export function ReceiptPreviewPage(): ReactNode {
   const [payment, setPayment] = useState<PaymentDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const loadPayment = useCallback(async (): Promise<void> => {
     if (id === undefined) {
@@ -47,11 +49,35 @@ export function ReceiptPreviewPage(): ReactNode {
     void loadPayment();
   }, [loadPayment]);
 
-  function printReceipt(): void {
-    if (window.electronAPI !== undefined) {
-      void window.electronAPI.printCurrentWindow();
-    } else {
+  // The window title becomes the preview's temporary file name, so the PDF
+  // viewer's title bar and the downloaded file carry the receipt number.
+  useEffect(() => {
+    if (payment === null) {
+      return;
+    }
+    const previousTitle = document.title;
+    document.title = `Official Receipt ${payment.receiptNumber}`;
+    return () => {
+      document.title = previousTitle;
+    };
+  }, [payment]);
+
+  /** Tells the cashier whether the preview opened, or why it could not. */
+  async function printReceipt(): Promise<void> {
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    if (window.electronAPI === undefined) {
       window.print();
+      return;
+    }
+
+    const report = describePrintOutcome(await window.electronAPI.printCurrentWindow());
+
+    if (report.tone === "error") {
+      setErrorMessage(report.message);
+    } else {
+      setStatusMessage(report.message);
     }
   }
 
@@ -95,8 +121,24 @@ export function ReceiptPreviewPage(): ReactNode {
   return (
     <AppShell pageTitle="Official Receipt" pageDescription={`Receipt ${payment.receiptNumber}`}>
       <div className="mx-auto max-w-2xl space-y-6">
+        {errorMessage !== null && <ErrorBanner message={errorMessage} />}
+
+        {statusMessage !== null && (
+          <div
+            role="status"
+            className="flex items-center gap-2.5 rounded-xl border border-success-line bg-success-soft px-4 py-3"
+          >
+            <span className="text-sm text-success-strong">{statusMessage}</span>
+          </div>
+        )}
+
         <div className="flex justify-end gap-3 print:hidden">
-          <Button type="button" variant="secondary" leftIcon={<Printer className="h-4 w-4" />} onClick={printReceipt}>
+          <Button
+            type="button"
+            variant="secondary"
+            leftIcon={<Printer className="h-4 w-4" />}
+            onClick={() => void printReceipt()}
+          >
             Print Receipt
           </Button>
           <Link
