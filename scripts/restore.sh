@@ -66,6 +66,51 @@ fi
 # --clean --if-exists drops the existing objects before recreating them, so the
 # restore does not need permission to CREATE DATABASE. gunzip -c decompresses to
 # stdout, which is what pg_restore reads.
-gunzip -c "$BACKUP_FILE" | pg_restore --dbname="$DATABASE_URL" --no-password --clean --if-exists
+#
+# A dump taken with a NEWER pg_dump than the server writes `SET transaction_timeout
+# = 0` into the archive — a setting the server only knows from PostgreSQL 17 on.
+# pg_restore reports it, ignores it, restores everything else, and STILL exits 1,
+# which the API reported as a failed restore even though the data was restored. Only
+# that class of error is tolerated, and only when pg_restore itself says the errors
+# were ignorable, so a real failure still fails loudly.
+RESTORE_LOG="$(mktemp)"
+trap 'rm -f "$RESTORE_LOG"' EXIT
 
-echo "Restore complete. Start the API server again (pm2 start bcis-api)."
+set +e
+gunzip -c "$BACKUP_FILE" | pg_restore --dbname="$DATABASE_URL" --no-password --clean --if-exists 2> "$RESTORE_LOG"
+RESTORE_CODE=$?
+set -e
+
+if [ "$RESTORE_CODE" -ne 0 ]; then
+  ERROR_LINES="$(grep -c 'pg_restore: error:' "$RESTORE_LOG" || true)"
+  BENIGN_LINES="$(grep -c 'unrecognized configuration parameter' "$RESTORE_LOG" || true)"
+
+  if grep -q 'errors ignored on restore' "$RESTORE_LOG" &&
+     [ "$ERROR_LINES" -gt 0 ] &&
+     [ "$ERROR_LINES" -eq "$BENIGN_LINES" ]; then
+    echo "Warning: the only errors were settings this server does not know, which" >&2
+    echo "means the backup was taken with a newer PostgreSQL client than the server." >&2
+    echo "Everything else was restored." >&2
+    sed 's/^/  /' "$RESTORE_LOG" >&2
+  else
+    echo "Restore failed:" >&2
+    sed 's/^/  /' "$RESTORE_LOG" >&2
+    exit 1
+  fi
+fi
+
+# Prove the restore actually put something back. A restore that reports success but
+# leaves the schema empty is worse than one that fails loudly.
+if command -v psql >/dev/null 2>&1; then
+  RESTORED_TABLES="$(psql --dbname="$DATABASE_URL" --no-password -t -A -c \
+    "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null || echo 0)"
+  if [ "${RESTORED_TABLES:-0}" -lt 1 ]; then
+    echo "Restore failed: the database has no tables after the restore." >&2
+    exit 1
+  fi
+  echo "Restore complete: $RESTORED_TABLES tables in the public schema."
+else
+  echo "Restore complete. (psql was not found, so the result could not be counted.)"
+fi
+
+echo "Start the API server again (pm2 start bcis-api)."

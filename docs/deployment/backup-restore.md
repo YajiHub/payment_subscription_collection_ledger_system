@@ -86,6 +86,20 @@ setting the environment variable for the task.
    recreating them. Because it does not drop and recreate the *database*, it needs
    no superuser rights.
 
+   > **If the restore reports `unrecognized configuration parameter
+   > "transaction_timeout"`.** The archive was taken with a newer PostgreSQL client
+   > than the server, so it carries a setting the older server does not have.
+   > `pg_restore` ignores that one statement, restores everything else, and still
+   > exits non-zero. The script recognises this case, explains it, and reports
+   > success, because the data was in fact restored. Every other error still fails
+   > the restore loudly.
+   >
+   > To remove the warning altogether, take and restore dumps with the same
+   > PostgreSQL major version as the server — for example the tools inside the
+   > database's own container (`docker exec bcis-postgres pg_dump --version`).
+   > An archive should always be restored with a client at least as new as the one
+   > that created it, never an older one.
+
 3. Start the API server again:
 
    ```bash
