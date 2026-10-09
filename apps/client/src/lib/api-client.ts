@@ -137,13 +137,32 @@ export interface LoginResult {
   user: { id: string; fullName: string; role: UserRole; username?: string };
 }
 
+/**
+ * The user record a session keeps: the server's identity for the account, plus the
+ * account name that was just accepted.
+ *
+ * The server answers with who the account is, not what it was called, so both
+ * sign-in paths attach the name they authenticated with. The lock screen reads it to
+ * send the password back for the same account (S5-4) — without it, every lock
+ * refused to unlock and sent the operator back to the sign-in screen instead.
+ */
+export function authenticatedUser(
+  user: LoginResult["user"],
+  username: string
+): LoginResult["user"] {
+  // A server that does supply the name is the authority on how it is spelled; the
+  // typed name is only a fallback for the one that does not.
+  return { ...user, username: user.username ?? username };
+}
+
 /** POST /api/auth/login — exchanges credentials for a token. */
 export async function login(username: string, password: string): Promise<LoginResult> {
   const response = await httpClient.post<ApiSuccessEnvelope<LoginResult>>("/api/auth/login", {
     username,
     password,
   });
-  return unwrap(response.data);
+  const result = unwrap(response.data);
+  return { token: result.token, user: authenticatedUser(result.user, username) };
 }
 
 /** POST /api/auth/logout — revokes the current token on the server. */
@@ -162,9 +181,9 @@ export async function logout(): Promise<void> {
  * The user returned carries the username that was authenticated, so the client can
  * show whose account is locked and ask only for that account's password.
  */
-export async function unlockSession(username: string, password: string): Promise<LoginResult> {
-  const result = await login(username, password);
-  return { token: result.token, user: { ...result.user, username } };
+export function unlockSession(username: string, password: string): Promise<LoginResult> {
+  // The same exchange as a sign-in, so it carries the account name the same way.
+  return login(username, password);
 }
 
 /**
