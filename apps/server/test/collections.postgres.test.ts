@@ -392,6 +392,66 @@ describe.skipIf(!databaseIsReachable)("Phase 7 against real PostgreSQL", () => {
     ]);
   });
 
+  it("keeps the target the run was worth apart from what the collector recorded", async () => {
+    const adminToken = signTestToken({ role: "admin", sub: adminId }).token;
+    const collectorToken = signTestToken({ role: "collector", sub: collectorId }).token;
+
+    const accountA = await createServiceAccount("Target");
+    const accountB = await createServiceAccount("Target");
+    await createPostedInvoice(accountA, 50000, 1);
+    await createPostedInvoice(accountB, 30000, 2);
+
+    const batch = await createBatch(collectorId, [accountA, accountB], "2025-02-02", adminToken);
+
+    /** The batch as the list screen sees it. */
+    async function listedBatch() {
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/collector-batches",
+        headers: authorizationHeader(adminToken),
+      });
+      expect(response.statusCode).toBe(200);
+      return response
+        .json()
+        .data.items.find((item: { id: string }) => item.id === batch.id);
+    }
+
+    // The target is what the two accounts owed when they were sent out.
+    const before = await listedBatch();
+    expect(before.expectedReceivableCentavos).toBe(80000);
+    expect(before.expectedRemittanceCentavos).toBe(0);
+
+    // Collect all of A. What was recorded moves; the target must not.
+    const recordA = await server.inject({
+      method: "PUT",
+      url: `/api/collector-batches/${batch.id}/assignments/${accountA}`,
+      headers: authorizationHeader(collectorToken),
+      payload: { result: "collected", collectedAmountCentavos: 50000, collectedMethod: "cash" },
+    });
+    expect(recordA.statusCode).toBe(200);
+
+    const after = await listedBatch();
+    expect(after.expectedRemittanceCentavos).toBe(50000);
+    // A's live balance has dropped to zero, but the target is a snapshot of the day
+    // the accounts were assigned. Were it read live, uncollected would report
+    // -50000 instead of the 30000 genuinely left behind.
+    expect(after.expectedReceivableCentavos).toBe(80000);
+
+    const detail = await server.inject({
+      method: "GET",
+      url: `/api/collector-batches/${batch.id}`,
+      headers: authorizationHeader(adminToken),
+    });
+    expect(detail.statusCode).toBe(200);
+    const summary = detail.json().data.methodSummary;
+    expect(summary.expectedReceivableCentavos).toBe(80000);
+    expect(summary.collectedTotalCentavos).toBe(50000);
+    expect(summary.uncollectedCentavos).toBe(30000);
+
+    // The list and the detail must never disagree about the same number.
+    expect(after.expectedReceivableCentavos).toBe(summary.expectedReceivableCentavos);
+  });
+
   it("refuses to put one service account in two open batches", async () => {
     const adminToken = signTestToken({ role: "admin", sub: adminId }).token;
     const account = await createServiceAccount("Charlie");

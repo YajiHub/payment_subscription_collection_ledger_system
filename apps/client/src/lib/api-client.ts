@@ -1270,6 +1270,12 @@ export interface CollectorBatchSummary {
   collectorName: string;
   status: CollectorBatchStatus;
   collectionDate: string;
+  /**
+   * The run's target: what the assigned accounts owed when they were assigned.
+   * A snapshot, so it does not shrink as the collector collects.
+   */
+  expectedReceivableCentavos: number;
+  /** What the collector recorded collecting in the field — not the target above. */
   expectedRemittanceCentavos: number;
   actualRemittanceCentavos: number | null;
   varianceCentavos: number | null;

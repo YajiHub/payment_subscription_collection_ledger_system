@@ -87,6 +87,17 @@ export interface CollectorBatchSummary {
   collectorName: string;
   status: CollectorBatchStatus;
   collectionDate: string;
+  /**
+   * What the run was WORTH — the assigned accounts' outstanding balances as they
+   * stood when the accounts were put in the batch. This is the collector's target.
+   * It is a snapshot: collecting on the route does not move it, so
+   * `expectedReceivableCentavos - collectedTotalCentavos` is what was left behind.
+   */
+  expectedReceivableCentavos: number;
+  /**
+   * What the collector RECORDED collecting in the field. This is not the target
+   * above; it is the figure the remittance variance below is measured against.
+   */
   expectedRemittanceCentavos: number;
   actualRemittanceCentavos: number | null;
   varianceCentavos: number | null;
@@ -317,8 +328,7 @@ async function requireAssignmentForUpdate(
 function toCollectorBatchSummary(
   batch: CollectorBatch,
   collectorName: string,
-  assignmentCount: number,
-  collectedCount: number
+  totals: BatchAssignmentTotals
 ): CollectorBatchSummary {
   return {
     id: batch.id,
@@ -327,12 +337,13 @@ function toCollectorBatchSummary(
     collectorName,
     status: batch.status,
     collectionDate: batch.collectionDate,
+    expectedReceivableCentavos: totals.expectedReceivableCentavos,
     expectedRemittanceCentavos: batch.expectedRemittanceCentavos,
     actualRemittanceCentavos: batch.actualRemittanceCentavos,
     varianceCentavos: batch.varianceCentavos,
     varianceNotes: batch.varianceNotes,
-    assignmentCount,
-    collectedCount,
+    assignmentCount: totals.assignmentCount,
+    collectedCount: totals.collectedCount,
     createdAt: batch.createdAt,
     submittedAt: batch.submittedAt,
     reconciledAt: batch.reconciledAt,
@@ -455,7 +466,15 @@ export async function createCollectorBatch(
     );
 
     return {
-      ...toCollectorBatchSummary(batch, collector.fullName, uniqueAccountIds.length, 0),
+      ...toCollectorBatchSummary(batch, collector.fullName, {
+        assignmentCount: uniqueAccountIds.length,
+        collectedCount: 0,
+        expectedReceivableCentavos: uniqueAccountIds.reduce(
+          (runningTotal, serviceAccountId) =>
+            runningTotal + (outstandingBalances.get(serviceAccountId) ?? 0),
+          0
+        ),
+      }),
       assignments: [],
       collectedTotalCentavos: 0,
       outstandingTotalCentavos: 0,
@@ -1129,7 +1148,7 @@ export async function cancelBatch(
     }
 
     const collectorName = await loadCollectorName(tx, updated.collectorId);
-    return toCollectorBatchSummary(updated, collectorName, 0, 0);
+    return toCollectorBatchSummary(updated, collectorName, EMPTY_ASSIGNMENT_TOTALS);
   });
 }
 
@@ -1151,39 +1170,51 @@ interface BatchListRow {
   collectorName: string;
 }
 
-/** The per-batch assignment counts the list screen needs. */
-interface AssignmentCounts {
+/** The per-batch assignment totals the list screen needs. */
+interface BatchAssignmentTotals {
   assignmentCount: number;
   collectedCount: number;
+  /** The run's target: the assigned accounts' balances when they were assigned. */
+  expectedReceivableCentavos: number;
 }
 
-async function loadAssignmentCounts(
+const EMPTY_ASSIGNMENT_TOTALS: BatchAssignmentTotals = {
+  assignmentCount: 0,
+  collectedCount: 0,
+  expectedReceivableCentavos: 0,
+};
+
+async function loadAssignmentTotals(
   executor: DbExecutor,
   batchIds: readonly string[]
-): Promise<Map<string, AssignmentCounts>> {
-  const counts = new Map<string, AssignmentCounts>();
+): Promise<Map<string, BatchAssignmentTotals>> {
+  const totals = new Map<string, BatchAssignmentTotals>();
   if (batchIds.length === 0) {
-    return counts;
+    return totals;
   }
 
   const rows = await executor
     .select({
       batchId: batchAssignments.batchId,
       collectedAmountCentavos: batchAssignments.collectedAmountCentavos,
+      outstandingBalanceCentavos: batchAssignments.outstandingBalanceCentavos,
     })
     .from(batchAssignments)
     .where(inArray(batchAssignments.batchId, [...batchIds]));
 
   for (const row of rows) {
-    const running = counts.get(row.batchId) ?? { assignmentCount: 0, collectedCount: 0 };
+    const running = totals.get(row.batchId) ?? { ...EMPTY_ASSIGNMENT_TOTALS };
     running.assignmentCount += 1;
     if (row.collectedAmountCentavos !== null) {
       running.collectedCount += 1;
     }
-    counts.set(row.batchId, running);
+    // The stored snapshot, not a live balance: the target must not shrink as the
+    // collector collects, or the uncollected figure would go negative.
+    running.expectedReceivableCentavos += row.outstandingBalanceCentavos;
+    totals.set(row.batchId, running);
   }
 
-  return counts;
+  return totals;
 }
 
 /** A collector that can be given a batch. */
@@ -1255,19 +1286,14 @@ export async function listCollectorBatches(
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(collectorBatches.collectionDate), desc(collectorBatches.createdAt));
 
-  const counts = await loadAssignmentCounts(
+  const totals = await loadAssignmentTotals(
     db,
     rows.map((row) => row.batch.id)
   );
 
   const items = rows.map((row) => {
-    const batchCounts = counts.get(row.batch.id) ?? { assignmentCount: 0, collectedCount: 0 };
-    return toCollectorBatchSummary(
-      row.batch,
-      row.collectorName,
-      batchCounts.assignmentCount,
-      batchCounts.collectedCount
-    );
+    const batchTotals = totals.get(row.batch.id) ?? EMPTY_ASSIGNMENT_TOTALS;
+    return toCollectorBatchSummary(row.batch, row.collectorName, batchTotals);
   });
 
   const offset = (filters.page - 1) * filters.pageSize;
@@ -1358,12 +1384,13 @@ async function loadBatchDetail(
   );
 
   return {
-    ...toCollectorBatchSummary(
-      row.batch,
-      row.collectorName,
-      assignments.length,
-      assignments.filter((assignment) => assignment.collectedAmountCentavos !== null).length
-    ),
+    ...toCollectorBatchSummary(row.batch, row.collectorName, {
+      assignmentCount: assignments.length,
+      collectedCount: assignments.filter(
+        (assignment) => assignment.collectedAmountCentavos !== null
+      ).length,
+      expectedReceivableCentavos: outstandingTotalCentavos,
+    }),
     assignments,
     collectedTotalCentavos,
     outstandingTotalCentavos,

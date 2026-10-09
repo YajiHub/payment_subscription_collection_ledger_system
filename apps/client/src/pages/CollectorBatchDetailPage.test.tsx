@@ -68,6 +68,7 @@ function makeBatch(status: CollectorBatchStatus): CollectorBatchDetail {
     collectorName: "Ana Reyes",
     status,
     collectionDate: "2025-01-24",
+    expectedReceivableCentavos: 200000,
     expectedRemittanceCentavos: 100000,
     actualRemittanceCentavos: null,
     varianceCentavos: null,

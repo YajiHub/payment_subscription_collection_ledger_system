@@ -100,8 +100,16 @@ const BATCH_COLUMNS: TableColumn<CollectorBatchSummary>[] = [
     cell: (batch) => `${batch.collectedCount}/${batch.assignmentCount}`,
   },
   {
+    id: "expectedReceivableCentavos",
+    header: "Receivable",
+    align: "right",
+    cellClassName: "tabular-nums",
+    sortValue: (batch) => batch.expectedReceivableCentavos,
+    cell: (batch) => formatCentavos(batch.expectedReceivableCentavos),
+  },
+  {
     id: "expectedRemittanceCentavos",
-    header: "Expected",
+    header: "Recorded",
     align: "right",
     cellClassName: "tabular-nums",
     sortValue: (batch) => batch.expectedRemittanceCentavos,
@@ -109,7 +117,7 @@ const BATCH_COLUMNS: TableColumn<CollectorBatchSummary>[] = [
   },
   {
     id: "actualRemittanceCentavos",
-    header: "Actual",
+    header: "Remitted",
     align: "right",
     cellClassName: "tabular-nums",
     sortValue: (batch) => batch.actualRemittanceCentavos ?? -1,
@@ -218,7 +226,7 @@ export function CollectorBatchListPage(): ReactNode {
   return (
     <AppShell
       pageTitle="Collector Batches"
-      pageDescription="Field collections grouped by collector and date"
+      pageDescription="Field collections grouped by collector and date — Receivable is what the assigned accounts owed when the run went out, Recorded is what the collector logged in the field, and Remitted is the cash handed in"
       headerActions={
         <div className="flex items-center gap-2">
           <Link
