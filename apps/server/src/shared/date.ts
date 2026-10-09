@@ -41,6 +41,46 @@ export function addDaysToDay(day: string, days: number): string {
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * Formats a Date as HH:MM:SS using the machine's local calendar fields.
+ *
+ * A report is read in the office, so a printed time is the office's wall-clock
+ * time. `toISOString()` would print the same instant in UTC and show a payment
+ * posted at 10:35 local as 02:35 — the wrong time on the wrong side of a
+ * midnight boundary (D5).
+ */
+export function formatTimeOfDay(instant: Date): string {
+  const hours = String(instant.getHours()).padStart(2, "0");
+  const minutes = String(instant.getMinutes()).padStart(2, "0");
+  const seconds = String(instant.getSeconds()).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Formats a Date as "YYYY-MM-DD HH:MM:SS" in the office's local time.
+ *
+ * The local twin of `toISOString().slice(0, 19).replace("T", " ")`, used by the
+ * audit reports whose rows carry a full instant rather than a business day.
+ */
+export function formatOfficeDateTime(instant: Date): string {
+  return `${formatDateOnly(instant)} ${formatTimeOfDay(instant)}`;
+}
+
+/**
+ * The local instant at the start of a calendar day: 00:00:00.000 local.
+ *
+ * Used for a period filter over an instant column (the ledger's `entry_date`),
+ * so the range follows the office day rather than the UTC day (D6).
+ */
+export function startOfLocalDay(day: string): Date {
+  return new Date(`${day}T00:00:00.000`);
+}
+
+/** The local instant at the last millisecond of a calendar day. */
+export function endOfLocalDay(day: string): Date {
+  return new Date(`${day}T23:59:59.999`);
+}
+
 /** A month, expressed so a SQL range can never be off by a day. */
 export interface MonthWindow {
   year: number;

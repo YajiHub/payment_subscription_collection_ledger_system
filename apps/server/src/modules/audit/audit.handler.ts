@@ -4,6 +4,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
+import { queryNumber } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
 import { listAuditLogs } from "./audit.service";
@@ -11,8 +12,8 @@ import { listAuditLogs } from "./audit.service";
 // Exported so the route table can declare it as the route's Zod schema, which
 // makes Fastify reject an invalid query before this handler runs.
 export const listAuditLogsQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(100)).default(20),
   action: z.string().trim().max(100).optional(),
   entityType: z.string().trim().max(50).optional(),
   entityId: z.string().uuid("A valid entity id is required").optional(),

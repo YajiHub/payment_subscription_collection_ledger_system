@@ -23,6 +23,7 @@ import { ledgerEntries } from "../../db/schema/ledger";
 import { payments } from "../../db/schema/payments";
 import { serviceAccounts, subscribers, subscriptionPlans } from "../../db/schema/subscribers";
 import { NotFoundError } from "../../shared/errors";
+import { endOfLocalDay, formatDateOnly, startOfLocalDay } from "../../shared/date";
 import { getBalanceBeforeCentavos } from "./ledger.service";
 
 /** The service account a statement belongs to. */
@@ -85,18 +86,16 @@ export interface StatementOfAccount {
   totalCreditsCentavos: number;
 }
 
-/** Turns a calendar date (YYYY-MM-DD) into UTC instants covering the whole day. */
-function startOfDay(date: string): Date {
-  return new Date(`${date}T00:00:00.000Z`);
-}
-
-function endOfDay(date: string): Date {
-  return new Date(`${date}T23:59:59.999Z`);
-}
-
-/** The calendar day of an instant, as YYYY-MM-DD. */
+/**
+ * The office-local calendar day of an instant, as YYYY-MM-DD.
+ *
+ * The statement's period boundaries are the local day too (D6): a ledger row at
+ * 17:30 UTC on the 9th is 01:30 local on the 10th, so filtering on 10 October
+ * includes it and the opening balance excludes it. The UTC instants this
+ * replaces put the row on the wrong side of both.
+ */
 function toCalendarDate(instant: Date): string {
-  return instant.toISOString().slice(0, 10);
+  return formatDateOnly(instant);
 }
 
 /**
@@ -113,8 +112,8 @@ export async function getStatementOfAccount(
 ): Promise<StatementOfAccount> {
   const account = await loadStatementHeader(executor, serviceAccountId);
 
-  const periodStart = options.fromDate === undefined ? undefined : startOfDay(options.fromDate);
-  const periodEnd = options.toDate === undefined ? undefined : endOfDay(options.toDate);
+  const periodStart = options.fromDate === undefined ? undefined : startOfLocalDay(options.fromDate);
+  const periodEnd = options.toDate === undefined ? undefined : endOfLocalDay(options.toDate);
 
   const openingBalanceCentavos =
     periodStart === undefined

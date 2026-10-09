@@ -156,12 +156,7 @@ describe("ledger routes", () => {
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([ledgerHeaderRow()]); // statement header
     fakeDatabase.queueSelectRows([
-      ledgerEntryRow({
-        sequenceNumber: 1,
-        entryType: "invoice_posted",
-        amountCentavos: 99900,
-        runningBalanceCentavos: 99900,
-      }),
+      ledgerEntryRow({ sequenceNumber: 1, entryType: "invoice_posted", amountCentavos: 99900, runningBalanceCentavos: 99900 }),
       ledgerEntryRow({
         id: randomUUID(),
         sequenceNumber: 2,
@@ -205,13 +200,7 @@ describe("ledger routes", () => {
     fakeDatabase.queueSelectRows([ledgerHeaderRow()]); // statement header
     fakeDatabase.queueSelectRows([{ balanceCentavos: 99900 }]); // opening balance before the period
     fakeDatabase.queueSelectRows([
-      ledgerEntryRow({
-        sequenceNumber: 3,
-        entryType: "late_fee",
-        amountCentavos: 5000,
-        runningBalanceCentavos: 104900,
-        invoiceId: randomUUID(),
-      }),
+      ledgerEntryRow({ sequenceNumber: 3, entryType: "late_fee", amountCentavos: 5000, runningBalanceCentavos: 104900, invoiceId: randomUUID() }),
     ]);
 
     const response = await server.inject({
@@ -237,20 +226,8 @@ describe("ledger routes", () => {
 
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([
-      {
-        id: randomUUID(),
-        sequenceNumber: 1,
-        entryType: "invoice_posted",
-        amountCentavos: 99900,
-        runningBalanceCentavos: 99900,
-      },
-      {
-        id: randomUUID(),
-        sequenceNumber: 2,
-        entryType: "payment_received",
-        amountCentavos: 50000,
-        runningBalanceCentavos: 49900,
-      },
+      { id: randomUUID(), sequenceNumber: 1, entryType: "invoice_posted", amountCentavos: 99900, runningBalanceCentavos: 99900 },
+      { id: randomUUID(), sequenceNumber: 2, entryType: "payment_received", amountCentavos: 50000, runningBalanceCentavos: 49900 },
     ]);
 
     const response = await server.inject({
@@ -272,21 +249,9 @@ describe("ledger routes", () => {
 
     fakeDatabase.queueSelectRows([]); // authenticate
     fakeDatabase.queueSelectRows([
-      {
-        id: randomUUID(),
-        sequenceNumber: 1,
-        entryType: "invoice_posted",
-        amountCentavos: 99900,
-        runningBalanceCentavos: 99900,
-      },
+      { id: randomUUID(), sequenceNumber: 1, entryType: "invoice_posted", amountCentavos: 99900, runningBalanceCentavos: 99900 },
       // Sequence 2 is missing: a row was deleted.
-      {
-        id: randomUUID(),
-        sequenceNumber: 3,
-        entryType: "payment_received",
-        amountCentavos: 50000,
-        runningBalanceCentavos: 49900,
-      },
+      { id: randomUUID(), sequenceNumber: 3, entryType: "payment_received", amountCentavos: 50000, runningBalanceCentavos: 49900 },
     ]);
 
     const response = await server.inject({

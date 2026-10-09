@@ -6,7 +6,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { applyLateFeesSchema, billingPeriodQuerySchema, DEFAULT_LATE_FEE_CENTAVOS, postAllDraftSchema, runBillingSchema } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
-import { audit, logAuditEntry, requestActor } from "../../shared/audit/audit-logger";
+import { audit, logAuditEntry, requestActor, requestActorFields } from "../../shared/audit/audit-logger";
 import { AUDIT_NO_ENTITY_ID } from "@bcis/shared";
 import { applyLateFeesToOverdueInvoices } from "./late-fee.service";
 import {
@@ -55,9 +55,7 @@ export async function postAllDraftInvoicesHandler(
     entityId: AUDIT_NO_ENTITY_ID,
     newState: { year: period.year, month: period.month, posted },
     description: `Posted ${posted} draft invoice(s) for ${period.year}-${period.month}`,
-    ...requestActor(request),
-    performedBy: request.user?.id ?? null,
-    clientIpAddress: request.ip,
+    ...requestActorFields(request),
   });
 
   return sendSuccess(reply, { posted });

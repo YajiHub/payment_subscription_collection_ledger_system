@@ -11,12 +11,17 @@
 import { z } from "zod";
 
 import { COLLECTED_METHODS, COLLECTION_RESULTS, COLLECTOR_BATCH_STATUSES } from "../constants/collections";
-import { reportFilterFields } from "./report.types";
+import { calendarDateSchema } from "./calendar-date";
+import { queryNumber } from "./query-number";
+import { reportAccountFilterFields } from "./report.types";
 
-/** A calendar day in the office's local timezone, e.g. "2025-01-24". */
-const dateOnlySchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "A date is required in YYYY-MM-DD format");
+/**
+ * A calendar day in the office's local timezone, e.g. "2025-01-24".
+ *
+ * Validated for existence as well as shape, so a collection date or an "as of"
+ * day the calendar does not contain is a readable 400.
+ */
+const dateOnlySchema = calendarDateSchema;
 
 /** A non-negative integer number of centavos. */
 const centavosSchema = z
@@ -175,8 +180,8 @@ export const listCollectorBatchesQuerySchema = z.object({
   status: z.enum(COLLECTOR_BATCH_STATUSES).optional(),
   dateFrom: dateOnlySchema.optional(),
   dateTo: dateOnlySchema.optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(200)).default(50),
 });
 export type ListCollectorBatchesQuery = z.infer<typeof listCollectorBatchesQuerySchema>;
 
@@ -186,32 +191,38 @@ export type ListCollectorBatchesQuery = z.infer<typeof listCollectorBatchesQuery
  * The same collector/area/plan/service-type filters every report accepts, so the
  * aging report can be narrowed instead of always returning the whole book.
  */
-export const arAgingQuerySchema = z.object({
-  asOfDate: dateOnlySchema.optional(),
-  ...reportFilterFields,
-});
+export const arAgingQuerySchema = z
+  .object({
+    asOfDate: dateOnlySchema.optional(),
+    ...reportAccountFilterFields,
+  })
+  .strict();
 export type ArAgingQuery = z.infer<typeof arAgingQuerySchema>;
 
 /** GET /api/receivables/ar-aging/export — the format to download. */
-export const arAgingExportQuerySchema = z.object({
-  asOfDate: dateOnlySchema.optional(),
-  format: z.enum(["xlsx"]).default("xlsx"),
-  ...reportFilterFields,
-});
+export const arAgingExportQuerySchema = z
+  .object({
+    asOfDate: dateOnlySchema.optional(),
+    format: z.enum(["xlsx"]).default("xlsx"),
+    ...reportAccountFilterFields,
+  })
+  .strict();
 export type ArAgingExportQuery = z.infer<typeof arAgingExportQuerySchema>;
 
 /** GET /api/receivables/overdue — filters for the overdue account list. */
 export const overdueAccountsQuerySchema = z.object({
   // Only accounts with no payment in the last N days (omit for any).
-  noPaymentInDays: z.coerce.number().int().min(0).optional(),
+  noPaymentInDays: queryNumber("noPaymentInDays", (schema) => schema.int().min(0)).optional(),
   // Only accounts overdue for at least this many consecutive months.
-  minConsecutiveOverdueMonths: z.coerce.number().int().min(0).optional(),
+  minConsecutiveOverdueMonths: queryNumber("minConsecutiveOverdueMonths", (schema) =>
+    schema.int().min(0)
+  ).optional(),
   // Only accounts whose oldest overdue invoice is at least this many days past due.
-  minOverdueDays: z.coerce.number().int().min(0).optional(),
+  minOverdueDays: queryNumber("minOverdueDays", (schema) => schema.int().min(0)).optional(),
   // The shared account filters, so the overdue list can be narrowed to a
   // collector, area, plan, or service type like every other report.
-  ...reportFilterFields,
-});
+  ...reportAccountFilterFields,
+}).strict();
 export type OverdueAccountsQuery = z.infer<typeof overdueAccountsQuerySchema>;
 
 /** POST /api/receivables/overdue/suspend — bulk suspension of selected accounts. */

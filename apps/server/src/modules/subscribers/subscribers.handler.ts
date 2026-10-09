@@ -8,6 +8,7 @@ import {
   SERVICE_ACCOUNT_STATUSES,
   createServiceAccountSchema,
   createSubscriberSchema,
+  queryNumber,
   updateSubscriberSchema,
 } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
@@ -24,8 +25,8 @@ import {
 
 // Query strings arrive as text, so numeric filters are coerced and bounded here.
 const listSubscribersQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(100)).default(20),
   search: z.string().trim().max(200).optional(),
   status: z.enum(SERVICE_ACCOUNT_STATUSES).optional(),
   municipality: z.string().trim().max(100).optional(),
@@ -33,8 +34,8 @@ const listSubscribersQuerySchema = z.object({
 
 const searchSubscribersQuerySchema = z.object({
   q: z.string().trim().min(1, "A search term is required").max(200),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(100)).default(20),
 });
 
 const subscriberIdParamsSchema = z.object({

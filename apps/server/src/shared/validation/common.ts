@@ -6,6 +6,8 @@
 
 import { z } from "zod";
 
+import { calendarDateSchema } from "@bcis/shared";
+
 /**
  * A monetary amount in integer centavos that must be greater than zero.
  * Guards against the float and zero-value mistakes the spec calls out.
@@ -31,7 +33,10 @@ export const gcashReferenceNumber = z
   .string()
   .regex(/^\d{13}$/, "GCash reference number must be 13 digits");
 
-/** A calendar date in YYYY-MM-DD form. */
-export const isoDateString = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format");
+/**
+ * A calendar date in YYYY-MM-DD form.
+ *
+ * Shape AND existence: an impossible day such as "2026-02-30" is refused, so it
+ * can never reach a `new Date(...)` that would shift it to another day (D1).
+ */
+export const isoDateString = calendarDateSchema;

@@ -50,7 +50,10 @@ import { centavosToDecimalText } from "../src/shared/xlsx/xlsx-writer";
 function paymentRow(overrides: Partial<DailyCollectionPaymentRow> = {}): DailyCollectionPaymentRow {
   return {
     receiptNumber: "OR-2025-000001",
-    postedAt: new Date("2025-01-24T09:15:00Z"),
+    // Built from LOCAL calendar fields on purpose: the report prints the office's
+    // wall-clock time, so a fixture anchored to a UTC literal would render
+    // differently on a machine outside the office zone (D5).
+    postedAt: new Date(2025, 0, 24, 9, 15, 0),
     subscriberFirstName: "Maria",
     subscriberLastName: "Santos",
     serviceAccountNumber: "SA-20250101-00001",
@@ -273,14 +276,14 @@ describe("buildOutstandingByCollector", () => {
   it("groups by collector and keeps the buckets non-overlapping at their boundaries", () => {
     const report = buildOutstandingByCollector(
       [
-        // Exactly 30 days past due: the 1-30 bucket, so it belongs to NO column here.
+        // Exactly 30 days past due: the 1-30 bucket.
         outstandingRow({
           collectorId: "collector-1",
           collectorName: "Rico Reyes",
           remainingBalanceCentavos: 1000,
           dueDate: dueDaysAgo(30),
         }),
-        // 31 days: the first column begins here.
+        // 31 days: the 31-60 column begins here.
         outstandingRow({
           collectorId: "collector-1",
           collectorName: "Rico Reyes",
@@ -321,8 +324,9 @@ describe("buildOutstandingByCollector", () => {
 
     expect(report.groups).toHaveLength(1);
     expect(report.groups[0]).toMatchObject({
-      bucket_30_60_centavos: 2000 + 4000,
-      bucket_60_90_centavos: 8000 + 16000,
+      bucket_1_30_centavos: 1000,
+      bucket_31_60_centavos: 2000 + 4000,
+      bucket_61_90_centavos: 8000 + 16000,
       over_90_centavos: 32000,
       totalOutstandingCentavos: 1000 + 2000 + 4000 + 8000 + 16000 + 32000,
     });
@@ -377,8 +381,8 @@ describe("buildOutstandingByCollector", () => {
 
     expect(report.totals.totalOutstandingCentavos).toBe(aging.totals.grandTotal);
     expect(report.totals.totalOutstandingCentavos).toBe(366666);
-    expect(report.totals.bucket_30_60_centavos).toBe(111111);
-    expect(report.totals.bucket_60_90_centavos).toBe(222222);
+    expect(report.totals.bucket_31_60_centavos).toBe(111111);
+    expect(report.totals.bucket_61_90_centavos).toBe(222222);
     expect(report.totals.over_90_centavos).toBe(33333);
   });
 
@@ -619,15 +623,55 @@ describe("report tables", () => {
 
     const table = outstandingByCollectorReportTable(report);
 
+    // The labels are the canonical aging bucket names, matching the aging report:
+    // a 31-day-past-due invoice is under "31-60 Days", not "30-60 Days" (O7).
     expect(table.columns.map((column) => column.header)).toEqual([
       "Collector",
       "Assigned Accounts",
       "Total Outstanding",
-      "30-60 Days",
-      "60-90 Days",
+      "Current",
+      "1-30 Days",
+      "31-60 Days",
+      "61-90 Days",
       "90+ Days",
     ]);
-    expect(table.totalsRows[0]).toEqual(["TOTAL", 1, 100000, 100000, 0, 0]);
+    expect(table.totalsRows[0]).toEqual(["TOTAL", 1, 100000, 0, 0, 100000, 0, 0]);
+  });
+
+  it("reconciles the five bucket columns to the collector total (O7)", () => {
+    const AS_OF = new Date("2025-04-01T00:00:00Z");
+    const dueDaysAgo = (days: number): string =>
+      new Date(AS_OF.getTime() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const report = buildOutstandingByCollector(
+      [
+        // Not yet due, 1-30, 31-60, 61-90 and 90+ all present, so every remainder
+        // bucket is populated and none can be dropped unnoticed.
+        outstandingRow({ remainingBalanceCentavos: 500, dueDate: dueDaysAgo(-5) }),
+        outstandingRow({ remainingBalanceCentavos: 1500, dueDate: dueDaysAgo(20) }),
+        outstandingRow({ remainingBalanceCentavos: 2500, dueDate: dueDaysAgo(45) }),
+        outstandingRow({ remainingBalanceCentavos: 3500, dueDate: dueDaysAgo(75) }),
+        outstandingRow({ remainingBalanceCentavos: 4500, dueDate: dueDaysAgo(200) }),
+      ],
+      AS_OF
+    );
+
+    const totals = report.totals;
+    const bucketSum =
+      totals.currentCentavos +
+      totals.bucket_1_30_centavos +
+      totals.bucket_31_60_centavos +
+      totals.bucket_61_90_centavos +
+      totals.over_90_centavos;
+
+    // The columns now account for every centavo, including the not-yet-due and
+    // 1-30 days that the old report left unexplained.
+    expect(bucketSum).toBe(totals.totalOutstandingCentavos);
+    expect(totals.currentCentavos).toBe(500);
+    expect(totals.bucket_1_30_centavos).toBe(1500);
+    expect(totals.bucket_31_60_centavos).toBe(2500);
+    expect(totals.bucket_61_90_centavos).toBe(3500);
+    expect(totals.over_90_centavos).toBe(4500);
   });
 
   it("labels the remittance variance as an overage or a shortage", () => {

@@ -18,7 +18,7 @@
 // themselves are declared above the audit row in the file so a reader sees the
 // purpose before the SQL.
 
-import { and, desc, eq, gte, lt } from "drizzle-orm";
+import { and, count, desc, eq, gte, lt, type SQL } from "drizzle-orm";
 
 import { db, type DbExecutor } from "../../db/connection";
 import { auditLogs } from "../../db/schema/audit";
@@ -98,7 +98,20 @@ export interface UserActivityReport {
   fromDate: string;
   toDate: string;
   groups: UserActivityGroup[];
+  /**
+   * The TRUE number of audit rows the filters matched, before the cap dropped any.
+   * The groups below describe only the rows that were rendered, so this is what
+   * tells a reader whether the summary is the whole picture (D3).
+   */
+  totalRows: number;
+  /** True when the cap dropped audit rows, so the summary never looks complete. */
+  isTruncated: boolean;
+  /** The cap in force, stated so a truncated summary can name it. */
+  rowLimit: number;
+  /** The number of audit rows the groups were actually built from. */
+  renderedRows: number;
   totals: {
+    /** The number of audited actions in the whole match, not just the rendered rows. */
     entryCount: number;
     userCount: number;
     distinctActionCount: number;
@@ -109,6 +122,38 @@ export interface UserActivityReport {
 export const SYSTEM_ACTOR_USERNAME = "system";
 
 /**
+ * The label for an audit row whose actor is KNOWN but whose username was not
+ * recorded (D4).
+ *
+ * An audit row that carries `performed_by` names a real user: calling them
+ * "system" would assert a system event that did not happen, exactly the defect
+ * already fixed once on the audit trail screen. The id is kept so two unnamed
+ * users are never merged into one anonymous group.
+ */
+export function unnamedActorLabel(performedBy: string): string {
+  return `(unknown user ${performedBy})`;
+}
+
+/**
+ * The name to show for the actor of an audit row.
+ *
+ *   • the denormalized username when the row recorded one;
+ *   • an honest "(unknown user <id>)" when the actor is known but unnamed;
+ *   • "system" only when there genuinely is no user.
+ */
+export function auditActorLabel(
+  row: Pick<AuditReportRow, "performedBy" | "performedByUsername">
+): string {
+  if (row.performedByUsername !== null) {
+    return row.performedByUsername;
+  }
+  if (row.performedBy !== null) {
+    return unnamedActorLabel(row.performedBy);
+  }
+  return SYSTEM_ACTOR_USERNAME;
+}
+
+/**
  * Counts the auditable actions per user per action.
  *
  * Pure and database-free: two runs over the same rows produce the same groups, and
@@ -116,12 +161,14 @@ export const SYSTEM_ACTOR_USERNAME = "system";
  */
 export function buildUserActivityReport(
   rows: readonly AuditReportRow[],
-  range: { fromDate: string; toDate: string }
+  range: { fromDate: string; toDate: string },
+  rowLimit: number = MAX_REPORT_EXPORT_ROWS,
+  totalRows: number = rows.length
 ): UserActivityReport {
   const groupsByKey = new Map<string, UserActivityGroup>();
 
   for (const row of rows) {
-    const username = row.performedByUsername ?? SYSTEM_ACTOR_USERNAME;
+    const username = auditActorLabel(row);
     const groupKey = `${username}\u0000${row.action}`;
     const existing = groupsByKey.get(groupKey) ?? {
       username,
@@ -149,9 +196,15 @@ export function buildUserActivityReport(
     fromDate: range.fromDate,
     toDate: range.toDate,
     groups,
+    // The count of the whole match, not of the rows the cap kept: a summary built
+    // from a truncated read must not claim to be the whole trail (D3).
+    totalRows,
+    isTruncated: totalRows > rows.length,
+    rowLimit,
+    renderedRows: rows.length,
     totals: {
-      entryCount: rows.length,
-      userCount: new Set(rows.map((row) => row.performedByUsername ?? SYSTEM_ACTOR_USERNAME)).size,
+      entryCount: totalRows,
+      userCount: new Set(rows.map((row) => auditActorLabel(row))).size,
       distinctActionCount: new Set(rows.map((row) => row.action)).size,
     },
   };
@@ -178,7 +231,8 @@ export interface AuditLogReport {
 export function buildAuditLogReport(
   rows: readonly AuditReportRow[],
   range: { fromDate: string; toDate: string },
-  rowLimit: number = MAX_REPORT_EXPORT_ROWS
+  rowLimit: number = MAX_REPORT_EXPORT_ROWS,
+  totalRows: number = rows.length
 ): AuditLogReport {
   const sorted = [...rows].sort(
     (left, right) => right.performedAt.getTime() - left.performedAt.getTime()
@@ -188,26 +242,24 @@ export function buildAuditLogReport(
     fromDate: range.fromDate,
     toDate: range.toDate,
     rows: sorted.slice(0, rowLimit),
-    totalRows: sorted.length,
-    isTruncated: sorted.length > rowLimit,
+    // The caller passes the COUNT of the whole match; when it does not, the rows in
+    // hand are all there is. Either way the report never claims more than it was
+    // given, and never fewer than it shows (D2).
+    totalRows: Math.max(totalRows, sorted.length),
+    isTruncated: Math.max(totalRows, sorted.length) > rowLimit,
     rowLimit,
   };
 }
 
 /**
- * The audit rows in the range, narrowed by the audit filters.
- *
- * The loader asks for one row more than the cap so `buildAuditLogReport` can tell
- * "exactly at the cap" from "more than the cap". Every other caller asks for the
- * cap exactly, because it only renders.
+ * The `where` conditions an audit report narrows on, shared by the row query and
+ * the count, so the two can never disagree about what "matching" means.
  */
-export async function loadAuditReportRows(
+function auditReportConditions(
   range: AuditReportRange,
-  filters: AuditReportFilters,
-  rowLimit: number = MAX_REPORT_EXPORT_ROWS + 1,
-  executor: DbExecutor = db
-): Promise<AuditReportRow[]> {
-  const conditions = [
+  filters: AuditReportFilters
+): SQL[] {
+  const conditions: SQL[] = [
     // The day boundary is anchored to UTC midnight, the same anchor the aging
     // bucket arithmetic uses, so a report's window is reproducible on any machine.
     gte(auditLogs.performedAt, utcMidnightOfDay(range.fromDate)),
@@ -224,6 +276,40 @@ export async function loadAuditReportRows(
     conditions.push(eq(auditLogs.entityType, filters.entityType));
   }
 
+  return conditions;
+}
+
+/**
+ * The TRUE number of audit rows the range and filters match, independent of any
+ * cap. The report headers and subtitles state this number, so a truncated file
+ * names how many rows it really left out rather than the cap it happened to read
+ * (D2, D3).
+ */
+export async function countAuditReportRows(
+  range: AuditReportRange,
+  filters: AuditReportFilters,
+  executor: DbExecutor = db
+): Promise<number> {
+  return executor
+    .select({ value: count() })
+    .from(auditLogs)
+    .where(and(...auditReportConditions(range, filters)))
+    .then((rows) => rows[0]?.value ?? 0);
+}
+
+/**
+ * The audit rows in the range, narrowed by the audit filters.
+ *
+ * The loader asks for one row more than the cap so `buildAuditLogReport` can tell
+ * "exactly at the cap" from "more than the cap". Every other caller asks for the
+ * cap exactly, because it only renders.
+ */
+export async function loadAuditReportRows(
+  range: AuditReportRange,
+  filters: AuditReportFilters,
+  rowLimit: number = MAX_REPORT_EXPORT_ROWS + 1,
+  executor: DbExecutor = db
+): Promise<AuditReportRow[]> {
   return executor
     .select({
       performedAt: auditLogs.performedAt,
@@ -236,7 +322,7 @@ export async function loadAuditReportRows(
       clientIpAddress: auditLogs.clientIpAddress,
     })
     .from(auditLogs)
-    .where(and(...conditions))
+    .where(and(...auditReportConditions(range, filters)))
     .orderBy(desc(auditLogs.performedAt))
     .limit(rowLimit);
 }

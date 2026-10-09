@@ -9,13 +9,14 @@
 import { z } from "zod";
 
 import { LEDGER_ENTRY_TYPES, MANUAL_LEDGER_ENTRY_TYPES } from "../constants/ledger";
+import { queryNumber } from "./query-number";
 
 /** The filters the ledger page may apply. Dates are inclusive calendar days. */
 export const listLedgerQuerySchema = z.object({
   fromDate: z.string().date("Start date must be a calendar date (YYYY-MM-DD)").optional(),
   toDate: z.string().date("End date must be a calendar date (YYYY-MM-DD)").optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(200)).default(50),
 });
 export type ListLedgerQuery = z.infer<typeof listLedgerQuerySchema>;
 

@@ -27,6 +27,7 @@ import { computeArAging } from "../receivables/ar-aging.service";
 import {
   buildAuditLogReport,
   buildUserActivityReport,
+  countAuditReportRows,
   defaultAuditReportRange,
   loadAuditReportRows,
   resolveAuditReportRange,
@@ -367,10 +368,23 @@ export async function buildReportExportDocument(
         auditFiltersOf(parameters),
         defaultAuditReportRange(today)
       );
-      const rows = await loadAuditReportRows(auditRange, auditFiltersOf(parameters), MAX_REPORT_EXPORT_ROWS);
+      const [rows, totalRows] = await Promise.all([
+        loadAuditReportRows(auditRange, auditFiltersOf(parameters), MAX_REPORT_EXPORT_ROWS),
+        countAuditReportRows(auditRange, auditFiltersOf(parameters)),
+      ]);
+      const report = buildUserActivityReport(
+        rows,
+        auditRange,
+        MAX_REPORT_EXPORT_ROWS,
+        totalRows
+      );
+      // The summary's own totals already know the true match and whether the cap
+      // bit; the headers state that, so an exported summary is never passed off
+      // as complete (D3).
       return document(
-        userActivityReportTable(buildUserActivityReport(rows, auditRange)),
-        `user-activity-${auditRange.fromDate}-to-${auditRange.toDate}`
+        userActivityReportTable(report),
+        `user-activity-${auditRange.fromDate}-to-${auditRange.toDate}`,
+        { totalRows: report.totalRows, isTruncated: report.isTruncated }
       );
     }
 
@@ -389,10 +403,15 @@ export async function buildReportExportDocument(
         auditFiltersOf(parameters),
         defaultAuditReportRange(today)
       );
+      const [rows, totalRows] = await Promise.all([
+        loadAuditReportRows(auditRange, auditFiltersOf(parameters), MAX_REPORT_EXPORT_ROWS),
+        countAuditReportRows(auditRange, auditFiltersOf(parameters)),
+      ]);
       const report = buildAuditLogReport(
-        await loadAuditReportRows(auditRange, auditFiltersOf(parameters), MAX_REPORT_EXPORT_ROWS + 1),
+        rows,
         auditRange,
-        MAX_REPORT_EXPORT_ROWS
+        MAX_REPORT_EXPORT_ROWS,
+        totalRows
       );
       return document(auditLogReportTable(report), `audit-log-${auditRange.fromDate}-to-${auditRange.toDate}`, {
         totalRows: report.totalRows,

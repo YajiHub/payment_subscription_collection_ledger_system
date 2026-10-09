@@ -27,9 +27,9 @@ import {
   voidedReceiptReportQuerySchema,
   weeklyCollectionReportQuerySchema,
   reportNeedsAuditRead,
-  roleHasPermission,
   type ReportExportFormat,
 } from "@bcis/shared";
+import { callerHasPermission } from "../../shared/rbac/permission-resolver";
 import { PDF_CONTENT_TYPE, generateReportPdf } from "../../shared/pdf/report-generator";
 import { XLSX_CONTENT_TYPE, generateReportXlsx } from "../../shared/xlsx/report-generator";
 import { ForbiddenError, UnauthorizedError } from "../../shared/errors";
@@ -38,10 +38,12 @@ import { parseOrThrow } from "../../shared/validate";
 import { addDaysToDay, formatDateOnly, utcMidnightOfDay } from "../../shared/date";
 import type { BatchActor } from "../collections/collector-batches.service";
 import { getCollectorBatchDetail } from "../collections/collector-batches.service";
+import { callerSeesEveryCollectorBatch } from "../collections/collector-batch-visibility";
 import { computeArAging } from "../receivables/ar-aging.service";
 import {
   buildAuditLogReport,
   buildUserActivityReport,
+  countAuditReportRows,
   defaultAuditReportRange,
   loadAuditReportRows,
   resolveAuditReportRange,
@@ -89,17 +91,25 @@ function today(): string {
 }
 
 /**
- * The authenticated caller, needed only to scope a collector to their own batches.
+ * The authenticated caller, needed to scope a field collector to their own batches.
+ *
+ * The visibility scope comes from the same RBAC grants the route guards read, so
+ * "what may this user see" and "what may this user do" cannot disagree.
  *
  * The routes run `authenticate` first, so a missing caller means the route was
  * misconfigured; answering 401 is safer than silently reporting on someone else's
  * work.
  */
-function requireActor(request: FastifyRequest): BatchActor {
-  if (request.user === undefined) {
+async function requireActor(request: FastifyRequest): Promise<BatchActor> {
+  const user = request.user;
+  if (user === undefined) {
     throw new UnauthorizedError();
   }
-  return { id: request.user.id, role: request.user.role };
+  return {
+    id: user.id,
+    username: user.username,
+    seesEveryCollectorBatch: await callerSeesEveryCollectorBatch(user.id, user.role),
+  };
 }
 
 /** The shared report filters, carried from a parsed query to a loader. */
@@ -162,7 +172,7 @@ export async function getCollectorRemittanceReportHandler(
 ): Promise<FastifyReply> {
   const query = parseOrThrow(collectorRemittanceQuerySchema, request.query);
 
-  const batch = await getCollectorBatchDetail(query.batchId, requireActor(request));
+  const batch = await getCollectorBatchDetail(query.batchId, await requireActor(request));
 
   return sendSuccess(reply, buildCollectorRemittanceReport(batch));
 }
@@ -332,10 +342,16 @@ export async function getUserActivityReportHandler(
     action: query.action,
   };
   const range = resolveAuditReportRange(auditFilters, defaultAuditReportRange(today()));
+  // One query more than the cap is not enough to count the match: the caller is
+  // told the TRUE total and whether anything was dropped (D3).
+  const [rows, totalRows] = await Promise.all([
+    loadAuditReportRows(range, auditFilters, MAX_REPORT_EXPORT_ROWS),
+    countAuditReportRows(range, auditFilters),
+  ]);
 
   return sendSuccess(
     reply,
-    buildUserActivityReport(await loadAuditReportRows(range, auditFilters), range)
+    buildUserActivityReport(rows, range, MAX_REPORT_EXPORT_ROWS, totalRows)
   );
 }
 
@@ -379,9 +395,15 @@ export async function getAuditLogReportHandler(
     entityType: query.entityType,
   };
   const range = resolveAuditReportRange(auditFilters, defaultAuditReportRange(today()));
-  const rows = await loadAuditReportRows(range, auditFilters, MAX_REPORT_EXPORT_ROWS + 1);
+  const [rows, totalRows] = await Promise.all([
+    loadAuditReportRows(range, auditFilters, MAX_REPORT_EXPORT_ROWS),
+    countAuditReportRows(range, auditFilters),
+  ]);
 
-  return sendSuccess(reply, buildAuditLogReport(rows, range, MAX_REPORT_EXPORT_ROWS));
+  return sendSuccess(
+    reply,
+    buildAuditLogReport(rows, range, MAX_REPORT_EXPORT_ROWS, totalRows)
+  );
 }
 
 /** Builds the requested report and sends it as a file download. */
@@ -395,9 +417,16 @@ async function sendReportExport(
   // The audit reports need `audit:read`, the same permission the audit screen
   // needs. The export route is shared, so the extra check lives here rather than in
   // a second route: a Manager holds `reports:export` but not `audit:read`.
+  //
+  // The check goes through the SAME authority as every route guard — the resolved
+  // grants, not the compiled matrix and the legacy JWT role — so an auditor whose
+  // `audit:read` grant lives only in `role_permissions` is allowed here too.
   if (reportNeedsAuditRead(body.reportType)) {
-    const role = request.user?.role;
-    if (role === undefined || !roleHasPermission(role, "audit:read")) {
+    const caller = request.user;
+    if (
+      caller === undefined ||
+      !(await callerHasPermission(caller.id, caller.role, "audit:read"))
+    ) {
       throw new ForbiddenError("The audit trail needs the audit:read permission");
     }
   }
@@ -405,7 +434,7 @@ async function sendReportExport(
   const document = await buildReportExportDocument(
     body.reportType,
     body.params,
-    requireActor(request)
+    await requireActor(request)
   );
 
   const fileName = reportExportFileName(document.fileNameStem, format);

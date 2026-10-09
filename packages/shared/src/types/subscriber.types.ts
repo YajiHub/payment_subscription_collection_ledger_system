@@ -8,7 +8,8 @@
 
 import { z } from "zod";
 
-import { SERVICE_TYPES } from "../constants/service-accounts";
+import { SERVICE_ACCOUNT_STATUSES, SERVICE_TYPES } from "../constants/service-accounts";
+import { queryNumber } from "./query-number";
 
 // Philippine phone numbers are typed with digits, spaces, dashes, parentheses,
 // and an optional leading +63. Keep the pattern permissive: clerks paste numbers
@@ -114,6 +115,15 @@ export const terminateServiceAccountSchema = z.object({
 });
 export type TerminateServiceAccountFields = z.infer<typeof terminateServiceAccountSchema>;
 
+// A pending account is activated once installation is complete. The reason is
+// optional (activation is the expected outcome, not a decision to justify), and
+// an explicit activation date may be supplied when the work finished earlier.
+export const activateServiceAccountSchema = z.object({
+  reason: z.string().trim().min(10, "Activation reason must be at least 10 characters").optional(),
+  activationDate: z.string().date().optional(),
+});
+export type ActivateServiceAccountFields = z.infer<typeof activateServiceAccountSchema>;
+
 export const changeServiceAccountPlanSchema = z.object({
   planId: z.string().uuid(),
 });
@@ -124,3 +134,19 @@ export const assignCollectorSchema = z.object({
   assignedCollectorId: z.string().uuid().nullable(),
 });
 export type AssignCollectorFields = z.infer<typeof assignCollectorSchema>;
+
+// ─── Service Account List ─────────────────────────────────────────────────────
+// The query a clerk sends when finding an account: any one number from a piece of
+// paper, plus the operating filters (route, plan, service type, status, collector).
+// `pageSize` is bounded so a caller cannot ask the server for the whole table.
+export const listServiceAccountsQuerySchema = z.object({
+  search: z.string().trim().max(200).optional(),
+  status: z.enum(SERVICE_ACCOUNT_STATUSES).optional(),
+  serviceType: z.enum(SERVICE_TYPES).optional(),
+  planId: z.string().uuid().optional(),
+  areaId: z.string().uuid().optional(),
+  collectorId: z.string().uuid().optional(),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(100)).default(20),
+});
+export type ListServiceAccountsQuery = z.infer<typeof listServiceAccountsQuerySchema>;

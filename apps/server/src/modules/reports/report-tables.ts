@@ -21,6 +21,7 @@ import {
   type AgingBucket,
 } from "@bcis/shared";
 import type { ReportTable } from "../../shared/reports/report-table";
+import { formatDateOnly, formatOfficeDateTime, formatTimeOfDay } from "../../shared/date";
 import type { StatementOfAccount } from "../ledger/statement-of-account.service";
 import type { ArAgingReport } from "../receivables/ar-aging.service";
 import type { CollectorRemittanceReport } from "./collector-remittance.service";
@@ -42,6 +43,7 @@ import type {
   VoidedReceiptReport,
 } from "./payment-adjustment.service";
 import type { AuditLogReport, UserActivityReport } from "./audit-reports.service";
+import { auditActorLabel } from "./audit-reports.service";
 import type { SubscriberMasterListReport } from "./subscriber-master-list.service";
 
 // The bucket labels shared with the screen use an en dash ("1–30 Days"), which the
@@ -77,7 +79,7 @@ export function dailyCollectionReportTable(report: DailyCollectionReport): Repor
     ],
     rows: report.items.map((item) => [
       item.receiptNumber,
-      item.postedAt.toISOString().slice(11, 19),
+      formatTimeOfDay(item.postedAt),
       item.subscriberName,
       item.serviceAccountNumber,
       PAYMENT_METHOD_LABELS[item.paymentMethod],
@@ -259,16 +261,22 @@ export function outstandingByCollectorReportTable(
       { header: "Collector", format: "text" },
       { header: "Assigned Accounts", format: "count" },
       { header: "Total Outstanding", format: "money" },
-      { header: "30-60 Days", format: "money" },
-      { header: "60-90 Days", format: "money" },
-      { header: "90+ Days", format: "money" },
+      // The five canonical aging buckets, labelled and filled identically to the
+      // AR aging report, so the columns reconcile to the total (O7).
+      { header: printableBucketHeader("current"), format: "money" },
+      { header: printableBucketHeader("1_to_30"), format: "money" },
+      { header: printableBucketHeader("31_to_60"), format: "money" },
+      { header: printableBucketHeader("61_to_90"), format: "money" },
+      { header: printableBucketHeader("over_90"), format: "money" },
     ],
     rows: report.groups.map((group) => [
       group.collectorName,
       group.assignedAccountCount,
       group.totalOutstandingCentavos,
-      group.bucket_30_60_centavos,
-      group.bucket_60_90_centavos,
+      group.currentCentavos,
+      group.bucket_1_30_centavos,
+      group.bucket_31_60_centavos,
+      group.bucket_61_90_centavos,
       group.over_90_centavos,
     ]),
     totalsRows: [
@@ -276,8 +284,10 @@ export function outstandingByCollectorReportTable(
         "TOTAL",
         report.totals.assignedAccountCount,
         report.totals.totalOutstandingCentavos,
-        report.totals.bucket_30_60_centavos,
-        report.totals.bucket_60_90_centavos,
+        report.totals.currentCentavos,
+        report.totals.bucket_1_30_centavos,
+        report.totals.bucket_31_60_centavos,
+        report.totals.bucket_61_90_centavos,
         report.totals.over_90_centavos,
       ],
     ],
@@ -551,7 +561,7 @@ export function paymentAdjustmentReportTable(report: PaymentAdjustmentReport): R
       line.receiptNumber,
       line.reversalReceiptNumber,
       line.paymentDate,
-      line.reversedAt.toISOString().slice(0, 10),
+      formatDateOnly(line.reversedAt),
       line.subscriberName,
       line.serviceAccountNumber,
       PAYMENT_METHOD_LABELS[line.paymentMethod],
@@ -587,7 +597,7 @@ export function voidedReceiptReportTable(report: VoidedReceiptReport): ReportTab
     rows: report.lines.map((line) => [
       line.receiptNumber,
       line.paymentDate,
-      line.reversedAt.toISOString().slice(0, 10),
+      formatDateOnly(line.reversedAt),
       line.subscriberName,
       line.serviceAccountNumber,
       PAYMENT_METHOD_LABELS[line.paymentMethod],
@@ -605,9 +615,15 @@ export function voidedReceiptReportTable(report: VoidedReceiptReport): ReportTab
 
 /** R16 — User Activity Report. */
 export function userActivityReportTable(report: UserActivityReport): ReportTable {
+  // A truncated summary says so, in the same words the export cap uses, so the
+  // reader can never mistake the rendered groups for the whole trail (D3).
+  const truncation = report.isTruncated
+    ? ` — showing the first ${report.renderedRows.toLocaleString("en-US")} of ${report.totalRows.toLocaleString("en-US")} audited action(s)`
+    : "";
+
   return {
     title: REPORT_TYPE_LABELS.user_activity.toUpperCase(),
-    subtitle: `${report.fromDate} to ${report.toDate} — ${report.totals.entryCount} audited action(s) by ${report.totals.userCount} user(s)`,
+    subtitle: `${report.fromDate} to ${report.toDate} — ${report.totals.entryCount} audited action(s) by ${report.totals.userCount} user(s)${truncation}`,
     orientation: "portrait",
     columns: [
       { header: "User", format: "text" },
@@ -619,7 +635,7 @@ export function userActivityReportTable(report: UserActivityReport): ReportTable
       group.username,
       group.action,
       group.actionCount,
-      group.lastPerformedAt.toISOString().slice(0, 19).replace("T", " "),
+      formatOfficeDateTime(group.lastPerformedAt),
     ]),
     totalsRows: [
       [
@@ -704,8 +720,8 @@ export function auditLogReportTable(report: AuditLogReport): ReportTable {
       { header: "Client IP", format: "text" },
     ],
     rows: report.rows.map((row) => [
-      row.performedAt.toISOString().slice(0, 19).replace("T", " "),
-      row.performedByUsername ?? "",
+      formatOfficeDateTime(row.performedAt),
+      auditActorLabel(row),
       row.action,
       row.entityType,
       row.entityId,

@@ -662,7 +662,7 @@ describe("GET /api/reports/outstanding-by-collector", () => {
     expect(response.statusCode).toBe(200);
     expect(body.groups).toHaveLength(2);
     expect(body.totals.totalOutstandingCentavos).toBe(agingResponse.json().data.totals.grandTotal);
-    expect(body.totals.bucket_30_60_centavos).toBe(100000);
+    expect(body.totals.bucket_31_60_centavos).toBe(100000);
     expect(body.totals.over_90_centavos).toBe(250000);
     expect(recordedWrites()).toBe(0);
   });

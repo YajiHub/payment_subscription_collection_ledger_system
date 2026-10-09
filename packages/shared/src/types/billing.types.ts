@@ -9,6 +9,7 @@
 import { z } from "zod";
 
 import { INVOICE_STATUS_INPUTS, normalizeInvoiceStatusInput } from "../constants/statuses";
+import { queryNumber } from "./query-number";
 
 /** A calendar month, 1–12, with a plausible four-digit year. */
 export const billingPeriodSchema = z.object({
@@ -19,8 +20,8 @@ export type BillingPeriodFields = z.infer<typeof billingPeriodSchema>;
 
 /** Query strings arrive as text; coerce so `?year=2025` validates as a number. */
 export const billingPeriodQuerySchema = z.object({
-  year: z.coerce.number().int().min(2000).max(2100),
-  month: z.coerce.number().int().min(1).max(12),
+  year: queryNumber("year", (schema) => schema.int().min(2000).max(2100)),
+  month: queryNumber("month", (schema) => schema.int().min(1).max(12)),
 });
 export type BillingPeriodQuery = z.infer<typeof billingPeriodQuerySchema>;
 
@@ -48,11 +49,11 @@ export const listInvoicesQuerySchema = z.object({
     .enum(INVOICE_STATUS_INPUTS)
     .transform(normalizeInvoiceStatusInput)
     .optional(),
-  year: z.coerce.number().int().min(2000).max(2100).optional(),
-  month: z.coerce.number().int().min(1).max(12).optional(),
+  year: queryNumber("year", (schema) => schema.int().min(2000).max(2100)).optional(),
+  month: queryNumber("month", (schema) => schema.int().min(1).max(12)).optional(),
   subscriberId: z.string().uuid().optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(200)).default(50),
 });
 export type ListInvoicesQuery = z.infer<typeof listInvoicesQuerySchema>;
 

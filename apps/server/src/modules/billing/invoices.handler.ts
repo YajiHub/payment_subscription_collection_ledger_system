@@ -25,14 +25,14 @@ import {
 import { voidInvoice } from "./void-invoice.service";
 
 /**
- * The actor fields an audit row carries. `request.user` has no username (the JWT
- * only carries the id and role), so the trail records the user id and the client
- * address; the audit page resolves the display name from the user table.
+ * The actor fields an audit row carries for an authenticated request. The JWT
+ * carries the username, so the trail names the real operator instead of an
+ * anonymous "system".
  */
-function auditActorFields(request: FastifyRequest) {
+function requestAuditActorFields(request: FastifyRequest) {
   return {
     performedBy: request.user?.id ?? null,
-    performedByUsername: null,
+    performedByUsername: request.user?.username ?? null,
     clientIpAddress: request.ip,
   };
 }
@@ -123,7 +123,7 @@ export async function postInstallationFee(
     description: `Installation fee of ${result.amountCentavos} centavos charged on invoice ${
       result.invoice.invoiceNumber
     }. Reason: ${body.reason ?? "(none given)"}`,
-    ...auditActorFields(request),
+    ...requestAuditActorFields(request),
   });
 
   return sendSuccess(reply, result, 201);
@@ -173,7 +173,7 @@ export async function postInvoiceDiscount(
       discountCentavos: before.totalAmountCentavos - invoice.totalAmountCentavos,
     },
     description: `Discount applied to invoice ${invoice.invoiceNumber}. Reason: ${body.reason}`,
-    ...auditActorFields(request),
+    ...requestAuditActorFields(request),
   });
 
   return sendSuccess(reply, invoice);

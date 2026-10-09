@@ -22,10 +22,7 @@ import {
   type MonthlyPaymentRow,
   type ServiceAccountCountRow,
 } from "../src/modules/dashboard/dashboard.service";
-import {
-  buildAgingReport,
-  type OutstandingInvoiceAgingRow,
-} from "../src/modules/receivables/ar-aging.service";
+import { buildAgingReport, type OutstandingInvoiceAgingRow } from "../src/modules/receivables/ar-aging.service";
 
 const BUSINESS_DAY = "2025-04-01";
 
@@ -75,9 +72,7 @@ function paymentRow(overrides: Partial<MonthlyPaymentRow> = {}): MonthlyPaymentR
 }
 
 /** An outstanding invoice as the AR aging query returns it. */
-function outstandingRow(
-  overrides: Partial<OutstandingInvoiceAgingRow> = {}
-): OutstandingInvoiceAgingRow {
+function outstandingRow(overrides: Partial<OutstandingInvoiceAgingRow> = {}): OutstandingInvoiceAgingRow {
   return {
     invoiceId: randomUUID(),
     serviceAccountId: randomUUID(),
@@ -260,14 +255,8 @@ describe("AR metrics", () => {
 
   it("places the 30-day, 31-day, 90-day, and 91-day boundaries in the right bucket", () => {
     // 2025-04-01 minus 30 days is 2025-03-02; minus 31 is 2025-03-01.
-    const thirtyDaysPastDue = outstandingRow({
-      remainingBalanceCentavos: 1000,
-      dueDate: "2025-03-02",
-    });
-    const thirtyOneDaysPastDue = outstandingRow({
-      remainingBalanceCentavos: 2000,
-      dueDate: "2025-03-01",
-    });
+    const thirtyDaysPastDue = outstandingRow({ remainingBalanceCentavos: 1000, dueDate: "2025-03-02" });
+    const thirtyOneDaysPastDue = outstandingRow({ remainingBalanceCentavos: 2000, dueDate: "2025-03-01" });
 
     const atThirty = buildDashboardKpis(
       { ...emptySnapshot(), outstandingInvoices: [thirtyDaysPastDue] },
@@ -282,14 +271,8 @@ describe("AR metrics", () => {
     expect(atThirtyOne.overdueOver30DaysCentavos).toBe(2000);
 
     // 2025-04-01 minus 90 days is 2025-01-01; minus 91 is 2024-12-31.
-    const ninetyDaysPastDue = outstandingRow({
-      remainingBalanceCentavos: 3000,
-      dueDate: "2025-01-01",
-    });
-    const ninetyOneDaysPastDue = outstandingRow({
-      remainingBalanceCentavos: 4000,
-      dueDate: "2024-12-31",
-    });
+    const ninetyDaysPastDue = outstandingRow({ remainingBalanceCentavos: 3000, dueDate: "2025-01-01" });
+    const ninetyOneDaysPastDue = outstandingRow({ remainingBalanceCentavos: 4000, dueDate: "2024-12-31" });
 
     const atNinety = buildDashboardKpis(
       { ...emptySnapshot(), outstandingInvoices: [ninetyDaysPastDue] },

@@ -8,9 +8,13 @@
 //     are the sum of the same outstanding invoices' remaining balances;
 //   • the bucket boundaries stay exact and non-overlapping (31–60, 61–90, 90+).
 //
-// The columns are labelled "30-60 Days", "60-90 Days", and "90+ Days" as Phase 8's
-// table writes them. The first two read the canonical 31–60 and 61–90 aging
-// buckets, so an invoice exactly 30 days past due is NOT in the 30-60 column.
+// The columns are labelled with the SAME bucket names the AR aging report uses —
+// "Current", "1-30 Days", "31-60 Days", "61-90 Days", "90+ Days" — and they are
+// filled from those exact canonical buckets. Every outstanding centavo lands in
+// one of them, so the five bucket columns reconcile to the collector's total. The
+// earlier report dropped the not-yet-due and 1-30 columns while labelling the
+// remainder "30-60", so its labelled columns did not sum to the total and a
+// 31-day-past-due invoice was not where its label said (O7).
 //
 // An account with no assigned collector is grouped as "Unassigned" rather than
 // dropped, so the totals still reconcile with the aging report.
@@ -43,10 +47,14 @@ export interface CollectorOutstandingGroup {
   /** How many distinct service accounts owe money under this collector. */
   assignedAccountCount: number;
   totalOutstandingCentavos: number;
-  /** The canonical 31–60 day aging bucket, labelled "30-60 Days" on the report. */
-  bucket_30_60_centavos: number;
-  /** The canonical 61–90 day aging bucket, labelled "60-90 Days" on the report. */
-  bucket_60_90_centavos: number;
+  /** Not yet past due. */
+  currentCentavos: number;
+  /** Invoices 1-30 days past due. */
+  bucket_1_30_centavos: number;
+  /** Invoices 31-60 days past due. */
+  bucket_31_60_centavos: number;
+  /** Invoices 61-90 days past due. */
+  bucket_61_90_centavos: number;
   /** Invoices more than 90 days past due. */
   over_90_centavos: number;
 }
@@ -65,18 +73,20 @@ function addToBucket(
   amountCentavos: number
 ): void {
   switch (bucket) {
+    case "current":
+      group.currentCentavos += amountCentavos;
+      break;
+    case "1_to_30":
+      group.bucket_1_30_centavos += amountCentavos;
+      break;
     case "31_to_60":
-      group.bucket_30_60_centavos += amountCentavos;
+      group.bucket_31_60_centavos += amountCentavos;
       break;
     case "61_to_90":
-      group.bucket_60_90_centavos += amountCentavos;
+      group.bucket_61_90_centavos += amountCentavos;
       break;
     case "over_90":
       group.over_90_centavos += amountCentavos;
-      break;
-    case "current":
-    case "1_to_30":
-      // Not yet over 30 days past due, so it belongs to no column of this report.
       break;
   }
 }
@@ -103,8 +113,10 @@ export function buildOutstandingByCollector(
       collectorName: invoice.collectorName ?? UNASSIGNED_COLLECTOR_NAME,
       assignedAccountCount: 0,
       totalOutstandingCentavos: 0,
-      bucket_30_60_centavos: 0,
-      bucket_60_90_centavos: 0,
+      currentCentavos: 0,
+      bucket_1_30_centavos: 0,
+      bucket_31_60_centavos: 0,
+      bucket_61_90_centavos: 0,
       over_90_centavos: 0,
     };
 
@@ -140,8 +152,10 @@ export function buildOutstandingByCollector(
       collectorName: "TOTAL",
       assignedAccountCount: running.assignedAccountCount + group.assignedAccountCount,
       totalOutstandingCentavos: running.totalOutstandingCentavos + group.totalOutstandingCentavos,
-      bucket_30_60_centavos: running.bucket_30_60_centavos + group.bucket_30_60_centavos,
-      bucket_60_90_centavos: running.bucket_60_90_centavos + group.bucket_60_90_centavos,
+      currentCentavos: running.currentCentavos + group.currentCentavos,
+      bucket_1_30_centavos: running.bucket_1_30_centavos + group.bucket_1_30_centavos,
+      bucket_31_60_centavos: running.bucket_31_60_centavos + group.bucket_31_60_centavos,
+      bucket_61_90_centavos: running.bucket_61_90_centavos + group.bucket_61_90_centavos,
       over_90_centavos: running.over_90_centavos + group.over_90_centavos,
     }),
     {
@@ -149,8 +163,10 @@ export function buildOutstandingByCollector(
       collectorName: "TOTAL",
       assignedAccountCount: 0,
       totalOutstandingCentavos: 0,
-      bucket_30_60_centavos: 0,
-      bucket_60_90_centavos: 0,
+      currentCentavos: 0,
+      bucket_1_30_centavos: 0,
+      bucket_31_60_centavos: 0,
+      bucket_61_90_centavos: 0,
       over_90_centavos: 0,
     }
   );
