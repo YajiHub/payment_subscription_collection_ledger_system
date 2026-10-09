@@ -5,7 +5,7 @@
 # CAUTION: this OVERWRITES the current database contents. It is the last resort
 # after data loss, not a routine step.
 #
-#   pnpm restore backups/bcis_backup_2025-01-31_23-59-00.sql.gz
+#   pnpm restore backups/bcis_backup_2025-01-31_23-59-00_a1b2c3d4.sql.gz
 #
 # Before restoring:
 #   1. Stop the API server so nothing writes during the restore
@@ -28,7 +28,7 @@ if [ -z "${DATABASE_URL:-}" ]; then
 fi
 
 if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 /path/to/bcis_backup_YYYY-MM-DD_HH-MM-SS.sql.gz" >&2
+  echo "Usage: $0 /path/to/bcis_backup_YYYY-MM-DD_HH-MM-SS_xxxxxxxx.sql.gz" >&2
   exit 1
 fi
 

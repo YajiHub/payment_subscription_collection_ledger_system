@@ -35,6 +35,7 @@ import { backupHistory } from "../src/db/schema/system";
 import {
   createBackup,
   restoreBackup,
+  verifyBackup,
   verifyBackupArchive,
   type ScriptResult,
 } from "../src/modules/backup/backup.service";
@@ -203,6 +204,38 @@ describe("backup service", () => {
       | undefined;
     expect(inserted).toMatchObject({ filename: "bcis_backup_wp5_created.sql.gz" });
     expect(inserted?.verifiedAt).toBeInstanceOf(Date);
+  });
+
+  // Defect: a re-verification that FAILS used to throw and leave the row's old
+  // `verified_at` in place, so the row kept advertising an archive that no longer
+  // verified. The stamp must be cleared and the reason recorded.
+  it("clears verified_at and records the reason when a re-verification fails", async () => {
+    const archivePath = path.join(backupDirectory, "bcis_backup_wp5_reverify_fail.sql.gz");
+    writeArchive(archivePath, 4_000);
+
+    const entry = {
+      id: "12121212-1212-1212-1212-121212121212",
+      filename: "bcis_backup_wp5_reverify_fail.sql.gz",
+      // A recorded size that no longer matches the file on disk.
+      sizeBytes: 999_999,
+      checksum: "a".repeat(64),
+      checksumAlgorithm: "sha256",
+      createdBy: null,
+      createdAt: new Date(),
+      verifiedAt: new Date(),
+      restoreTestedAt: null,
+      notes: "Created and verified by the application",
+    };
+    fakeDatabase.queueSelectRows([entry]);
+
+    await expect(verifyBackup(entry.id)).rejects.toThrow(/verification failed/);
+
+    const cleared = fakeDatabase.updatedRows.find((row) => row.table === backupHistory)?.values as
+      | Record<string, unknown>
+      | undefined;
+    expect(cleared).toMatchObject({ verifiedAt: null });
+    expect(String(cleared?.notes)).toMatch(/Verification failed/);
+    expect(String(cleared?.notes)).toMatch(/size/);
   });
 
   it("refuses to restore an archive that has not been verified, without running pg_restore", async () => {

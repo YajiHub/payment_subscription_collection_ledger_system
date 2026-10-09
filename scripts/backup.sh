@@ -31,9 +31,32 @@ fi
 BACKUP_DIR="${BCIS_BACKUP_DIR:-$REPOSITORY_ROOT/backups}"
 RETENTION_DAYS="${BCIS_BACKUP_RETENTION_DAYS:-30}"
 TIMESTAMP="$(date +%Y-%m-%d_%H-%M-%S)"
-BACKUP_FILE="$BACKUP_DIR/bcis_backup_$TIMESTAMP.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
+
+# A name with only second resolution is NOT unique. Two backups started within the
+# same second used to produce the same name: the second overwrote the first's
+# archive, and both rows in backup_history then pointed at the survivor, so the
+# first became permanently unverifiable. Worse, had the survivor been the corrupt
+# one, the first row's recorded checksum would point at tampered bytes.
+#
+# A short random suffix makes a repeat unlikely; re-drawing it while the candidate
+# name already exists makes the collision IMPOSSIBLE, because the name finally used
+# is one that did not exist, so nothing is overwritten. The check also covers the
+# `.partial` companion, so two concurrent runs never share a temporary file either.
+BACKUP_FILE=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  CANDIDATE="$BACKUP_DIR/bcis_backup_${TIMESTAMP}_$(printf '%04x%04x' "$RANDOM" "$RANDOM").sql.gz"
+  if [ ! -e "$CANDIDATE" ] && [ ! -e "$CANDIDATE.partial" ]; then
+    BACKUP_FILE="$CANDIDATE"
+    break
+  fi
+done
+
+if [ -z "$BACKUP_FILE" ]; then
+  echo "Backup failed: could not choose a unique backup file name." >&2
+  exit 1
+fi
 
 # Dump to a temporary file and publish it only once it is known to be a real
 # dump. Writing straight to BACKUP_FILE is unsafe: the shell creates the file

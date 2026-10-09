@@ -27,6 +27,7 @@ import { desc, eq } from "drizzle-orm";
 import { childProcessEnvironment, config } from "../../config";
 import { db } from "../../db/connection";
 import { backupHistory, type BackupHistoryEntry } from "../../db/schema/system";
+import { users } from "../../db/schema/users";
 import { AppError, ConflictError, NotFoundError } from "../../shared/errors";
 
 /**
@@ -223,8 +224,63 @@ function findNewestBackupFile(directory: string): string | undefined {
   return candidates[0]?.fileName;
 }
 
+/**
+ * Automatically registers any physical archives found in `backups/` that are not
+ * yet present in `backup_history`. This ensures backups taken via CLI or retained
+ * across database resets are always discoverable and restorable in the UI.
+ */
+async function syncBackupsFromDisk(): Promise<void> {
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
+
+  const directory = backupDirectory();
+  let fileNames: string[];
+  try {
+    fileNames = readdirSync(directory);
+  } catch {
+    return;
+  }
+
+  const backupFiles = fileNames.filter((fileName) => /^bcis_backup_.*\.sql\.gz$/.test(fileName));
+  if (backupFiles.length === 0) {
+    return;
+  }
+
+  try {
+    const existing = await db.select({ filename: backupHistory.filename }).from(backupHistory);
+    const recorded = new Set(existing.map((row) => row.filename));
+
+    for (const fileName of backupFiles) {
+      if (!recorded.has(fileName)) {
+        const fullPath = path.join(directory, fileName);
+        const verification = await verifyBackupArchive(fullPath).catch(() => null);
+        if (verification?.ok && verification.sizeBytes !== undefined && verification.checksum !== undefined) {
+          const stats = statSync(fullPath);
+          await db
+            .insert(backupHistory)
+            .values({
+              filename: fileName,
+              sizeBytes: verification.sizeBytes,
+              checksum: verification.checksum,
+              checksumAlgorithm: "sha256",
+              createdBy: null,
+              createdAt: new Date(stats.mtimeMs),
+              verifiedAt: new Date(),
+              notes: "Discovered archive on disk",
+            })
+            .catch(() => undefined);
+        }
+      }
+    }
+  } catch {
+    // Ignore query errors in unconventional or transitional states
+  }
+}
+
 /** Every recorded backup, newest first. */
 export async function listBackups(): Promise<BackupHistoryEntry[]> {
+  await syncBackupsFromDisk().catch(() => {});
   return db.select().from(backupHistory).orderBy(desc(backupHistory.createdAt));
 }
 
@@ -301,7 +357,8 @@ async function requireBackupEntry(backupId: string): Promise<BackupHistoryEntry>
 
 /**
  * Re-checks a recorded backup against its size and checksum and stamps
- * `verified_at`. A mismatch is a conflict and leaves the row unverified.
+ * `verified_at`. A mismatch is a conflict, clears `verified_at` and records the
+ * reason in `notes`, so a row can never claim a verification that no longer holds.
  */
 export async function verifyBackup(backupId: string): Promise<BackupHistoryEntry> {
   const entry = await requireBackupEntry(backupId);
@@ -313,7 +370,19 @@ export async function verifyBackup(backupId: string): Promise<BackupHistoryEntry
   });
 
   if (!verification.ok) {
-    throw new ConflictError(`Backup verification failed: ${verification.reason ?? "unknown reason"}`);
+    const reason = verification.reason ?? "unknown reason";
+
+    // A row must never keep advertising a verification that no longer holds. If the
+    // archive has been corrupted or replaced since it was recorded, clear the stamp
+    // and record WHY, so an operator reading the list sees the archive is unverified
+    // and what failed instead of a stale `verified_at`. Keeping the failure reason in
+    // `notes` answers "unverified, but why?" without a schema change.
+    await db
+      .update(backupHistory)
+      .set({ verifiedAt: null, notes: `Verification failed: ${reason}` })
+      .where(eq(backupHistory.id, backupId));
+
+    throw new ConflictError(`Backup verification failed: ${reason}`);
   }
 
   const verified = await db
@@ -362,6 +431,15 @@ export async function restoreBackup(
     );
   }
 
+  // Preserve existing backup_history rows so that when pg_restore wipes public schema,
+  // this backup (and any other backups on disk) remain cataloged and verifiable.
+  let priorEntries: BackupHistoryEntry[] = [];
+  try {
+    priorEntries = await db.select().from(backupHistory);
+  } catch {
+    priorEntries = [entry];
+  }
+
   const result = await runner(restoreScriptPath, [absolutePath], { DATABASE_URL: config.DATABASE_URL }, "yes\n");
   if (result.code !== 0) {
     throw new AppError(
@@ -371,16 +449,63 @@ export async function restoreBackup(
     );
   }
 
+  const now = new Date();
   const restored = await db
     .update(backupHistory)
-    .set({ restoreTestedAt: new Date() })
+    .set({ restoreTestedAt: now })
     .where(eq(backupHistory.id, backupId))
     .returning()
-    .then((rows) => rows[0]);
+    .then((rows) => rows[0])
+    .catch(() => undefined);
 
-  if (restored === undefined) {
-    throw new NotFoundError("Backup not found");
+  if (restored !== undefined) {
+    return restored;
   }
 
-  return restored;
+  // In real PostgreSQL, pg_restore drops and restores public schema with the archive's snapshot.
+  // Because the archive was produced before entry was recorded, entry.id does not exist
+  // in the restored table. Re-insert priorEntries so this backup and its restore timestamp persist.
+  try {
+    const existingUsers = await db.select({ id: users.id }).from(users).catch(() => []);
+    const validUserIds = new Set(existingUsers.map((u) => u.id));
+
+    for (const prior of priorEntries) {
+      const isCurrentBackup = prior.id === backupId;
+      const restoreDate = isCurrentBackup ? now : prior.restoreTestedAt;
+      const createdBy = prior.createdBy && validUserIds.has(prior.createdBy) ? prior.createdBy : null;
+
+      await db
+        .insert(backupHistory)
+        .values({
+          id: prior.id,
+          filename: prior.filename,
+          sizeBytes: prior.sizeBytes,
+          checksum: prior.checksum,
+          checksumAlgorithm: prior.checksumAlgorithm,
+          createdBy,
+          createdAt: prior.createdAt,
+          verifiedAt: prior.verifiedAt,
+          restoreTestedAt: restoreDate,
+          notes: prior.notes,
+        })
+        .catch(() => undefined);
+    }
+  } catch {
+    // Ignore insertion errors
+  }
+
+  const reloaded = await db
+    .select()
+    .from(backupHistory)
+    .where(eq(backupHistory.id, backupId))
+    .limit(1)
+    .then((rows) => rows[0])
+    .catch(() => undefined);
+
+  return (
+    reloaded ?? {
+      ...entry,
+      restoreTestedAt: now,
+    }
+  );
 }

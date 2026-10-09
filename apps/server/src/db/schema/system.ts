@@ -8,7 +8,7 @@
 // `updated_by` records who last changed a setting; the change itself is also
 // written to the audit trail.
 
-import { bigint, index, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { bigint, index, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 
 import { users } from "./users";
 
@@ -64,7 +64,12 @@ export const backupHistory = pgTable(
   (table) => [
     // The backup list is ordered by recency; the filename lookup finds one archive.
     index("backup_history_created_at_idx").on(table.createdAt),
-    index("backup_history_filename_idx").on(table.filename),
+    // A file name identifies exactly one archive. A second backup that somehow
+    // picked an existing name must be refused here rather than silently creating a
+    // second row that points at the same file — which is what made one of the two
+    // rows permanently unverifiable. Names are already unique by construction
+    // (scripts/backup.sh re-draws until nothing exists); this is the database floor.
+    uniqueIndex("backup_history_filename_key").on(table.filename),
   ]
 );
 

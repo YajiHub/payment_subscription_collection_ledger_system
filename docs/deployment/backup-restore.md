@@ -34,7 +34,9 @@ The script:
 1. reads `DATABASE_URL` (the password inside it is passed straight to `pg_dump`
    and never printed);
 2. runs `pg_dump --format=custom` and gzips the result into
-   `backups/bcis_backup_YYYY-MM-DD_HH-MM-SS.sql.gz`;
+   `backups/bcis_backup_YYYY-MM-DD_HH-MM-SS_xxxxxxxx.sql.gz`. The trailing random
+   suffix keeps two backups in the same second from sharing a name; a name that
+   already exists is re-drawn rather than overwritten;
 3. prints the file path and its size;
 4. deletes backups older than the retention window.
 
@@ -76,7 +78,7 @@ setting the environment variable for the task.
 2. Run the restore and type `yes` at the confirmation prompt:
 
    ```bash
-   pnpm restore backups/bcis_backup_2025-01-31_23-59-00.sql.gz
+   pnpm restore backups/bcis_backup_2025-01-31_23-59-00_a1b2c3d4.sql.gz
    ```
 
    The script decompresses the dump and runs
