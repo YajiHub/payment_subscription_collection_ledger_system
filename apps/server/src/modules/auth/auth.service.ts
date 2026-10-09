@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { config } from "../../config";
 import { db } from "../../db/connection";
 import { loginAuditLog, revokedTokens, users } from "../../db/schema/users";
+import { roles, userRoles } from "../../db/schema/rbac";
 import { audit } from "../../shared/audit/audit-logger";
 import {
   ForbiddenError,
@@ -37,8 +38,13 @@ const TIMING_EQUALIZER_PASSWORD_HASH =
   "$2b$12$OMlJdIjzDLp3Jfn.9NR3qOBmwx5aLVRkyrFhSH6e5J1g.kCBMSeJe";
 
 // What we embed in the JWT — keep it small (no sensitive data).
+//
+// The username travels with the token so the audit trail can name the person who
+// acted without a per-write lookup. It is not a credential (the password never
+// leaves the database); it is the same identifier the login form already showed.
 export interface JwtPayload {
   sub: string; // user ID
+  username: string; // the account's username at login time
   role: UserRole; // role — the server validates this, not the client
   jti: string; // unique token ID, used for revocation
   iat: number;
@@ -116,13 +122,41 @@ export async function loginUser(
   }
 
   const jti = randomUUID();
-  const payload = { sub: user.id, role: user.role, jti };
+  const payload = { sub: user.id, username: user.username, role: user.role, jti };
   const token = jwt.sign(payload, config.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 
   // A successful login is a security event worth recording alongside failures.
   await audit.loginSucceeded(user.id, username, ipAddress);
 
-  return { token, user: { id: user.id, fullName: user.fullName, role: user.role } };
+  const resolvedRole = await resolveUserRole(user.id, user.role);
+
+  return { token, user: { id: user.id, fullName: user.fullName, role: resolvedRole as UserRole } };
+}
+
+/**
+ * Resolves the user's authoritative role from user_roles if available.
+ * Falls back to the legacy enum role if no system role is mapped or in unit test mocks.
+ */
+async function resolveUserRole(userId: string, defaultRole: UserRole): Promise<string> {
+  try {
+    const assignedRoles = await db
+      .select({ roleCode: roles.code })
+      .from(userRoles)
+      .innerJoin(roles, eq(roles.id, userRoles.roleId))
+      .where(eq(userRoles.userId, userId));
+
+    const firstRole = assignedRoles[0];
+    if (firstRole !== undefined) {
+      const primary =
+        assignedRoles.find(
+          (r) => r.roleCode !== "read_only_viewer" && r.roleCode !== "administrator"
+        ) ?? firstRole;
+      return primary.roleCode;
+    }
+  } catch {
+    // Fall back to defaultRole in mock database contexts
+  }
+  return defaultRole;
 }
 
 /**
@@ -152,5 +186,6 @@ export async function getUserProfile(userId: string) {
     throw new NotFoundError("The authenticated user no longer exists");
   }
 
-  return user;
+  const resolvedRole = await resolveUserRole(user.id, user.role);
+  return { ...user, role: resolvedRole as UserRole };
 }

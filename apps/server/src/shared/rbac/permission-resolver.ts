@@ -211,6 +211,24 @@ export async function callerHasPermission(
 }
 
 /**
+ * Whether the caller has any resolved grants at all, used only to explain a refusal.
+ *
+ * A caller with no resolved permissions is not "their role lacks this one" — they
+ * have no permissions resolved, which usually means the account is not present in
+ * the role tables (or the token predates its role assignment). The message names
+ * that real cause instead of blaming a role that was never the authority.
+ *
+ * Only the database source can answer this. Under the compiled rollback matrix or
+ * a failed resolution the role is still the best explanation, so this reports true.
+ */
+export function callerHasResolvedGrants(userId: string): boolean {
+  if (cache.status !== "database") {
+    return true;
+  }
+  return (cache.grantsByUserId.get(userId)?.size ?? 0) > 0;
+}
+
+/**
  * Keeps the cache warm on the TTL interval. The initial load is awaited separately
  * (see `ensurePermissionCacheLoaded`) so the first request is never served from an
  * unresolved cache. Returns the timer so a caller can stop it.

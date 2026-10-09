@@ -8,7 +8,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Permission } from "@bcis/shared";
 
-import { callerHasPermission } from "../rbac/permission-resolver";
+import { callerHasPermission, callerHasResolvedGrants } from "../rbac/permission-resolver";
 import { sendError } from "../response";
 
 export function authorize(requiredPermission: Permission): AuthorizeHandler {
@@ -21,6 +21,18 @@ export function authorize(requiredPermission: Permission): AuthorizeHandler {
     }
 
     if (!(await callerHasPermission(request.user.id, request.user.role, requiredPermission))) {
+      // The decision came from the resolved grants, so the reason must too. Blaming
+      // the token's role when the account has no resolved permissions at all would
+      // send the caller (and the operator) chasing the wrong cause.
+      if (!callerHasResolvedGrants(request.user.id)) {
+        return sendError(
+          reply,
+          403,
+          "FORBIDDEN",
+          "Access denied. Your account has no permissions assigned. Sign in again, or ask an administrator to assign a role."
+        );
+      }
+
       return sendError(
         reply,
         403,

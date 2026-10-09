@@ -7,6 +7,7 @@ import { config } from "../../src/config";
 
 interface TokenOverrides {
   sub?: string;
+  username?: string;
   role?: UserRole;
   jti?: string;
   // jsonwebtoken accepts a number of seconds or an ms-style string like "8h".
@@ -22,6 +23,9 @@ export function signTestToken(overrides: TokenOverrides = {}): { token: string; 
   const token = jwt.sign(
     {
       sub: overrides.sub ?? randomUUID(),
+      // The payload carries a username so the trail can name the actor, exactly
+      // as a real login token does.
+      username: overrides.username ?? "test-user",
       role: overrides.role ?? "admin",
       jti,
     },

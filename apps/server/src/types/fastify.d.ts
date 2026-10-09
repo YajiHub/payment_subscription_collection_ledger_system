@@ -19,6 +19,12 @@ declare module "fastify" {
 /** The minimal, server-trusted facts about the caller carried by a valid JWT. */
 export interface AuthenticatedUser {
   id: string;
+  /**
+   * The caller's username, carried on the token so the audit trail can name the
+   * person who acted. Null for a token minted before the username was added to
+   * the payload, so a caller must still fall back on `id`.
+   */
+  username: string | null;
   role: UserRole;
   jti: string;
   /** When the token expires — needed to expire the revocation record. */

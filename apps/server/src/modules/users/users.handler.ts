@@ -4,7 +4,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
-import { USER_ROLES, type UserRole } from "@bcis/shared";
+import { USER_ROLES, queryNumber, type UserRole } from "@bcis/shared";
 import { sendSuccess } from "../../shared/response";
 import { parseOrThrow } from "../../shared/validate";
 import { audit, requestActor } from "../../shared/audit/audit-logger";
@@ -24,8 +24,8 @@ import {
 const userIdParamsSchema = z.object({ id: z.string().uuid("A valid user id is required") });
 
 const listUsersQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  page: queryNumber("page", (schema) => schema.int().min(1)).default(1),
+  pageSize: queryNumber("pageSize", (schema) => schema.int().min(1).max(100)).default(20),
 });
 
 const createUserBodySchema = z.object({
@@ -60,6 +60,21 @@ const setActiveBodySchema = z.object({
   isActive: z.boolean(),
 });
 
+/**
+ * Refreshes authorization after a change to a user account.
+ *
+ * The resolver caches the resolved grants, so a change that adds, removes or
+ * re-points a user's roles must drop that cache or the change would only take
+ * effect after the TTL. Invalidation drops the cache to "unloaded", which is
+ * re-resolved on the next request; the immediate refresh closes the gap quickly.
+ * Every user-mutation path calls this so no path is left refreshing and another
+ * not.
+ */
+function refreshAuthorizationAfterUserChange(): void {
+  invalidatePermissionCache();
+  void refreshPermissionCache({ force: true });
+}
+
 /** GET /api/users — paginated list of every user. */
 export async function getUsers(
   request: FastifyRequest,
@@ -78,6 +93,9 @@ export async function postUser(
   const body = parseOrThrow(createUserBodySchema, request.body);
   const createdBy = request.user?.id ?? "";
   const created = await createUser({ ...body, createdBy });
+  // The new account's `user_roles` row was just written; without this the caller's
+  // own fresh token would be denied for up to the cache TTL.
+  refreshAuthorizationAfterUserChange();
   await audit.userCreated({ ...created }, requestActor(request));
   return sendSuccess(reply, created, 201);
 }
@@ -114,11 +132,8 @@ export async function putUser(request: FastifyRequest, reply: FastifyReply): Pro
     );
 
     // S12-9: a role change must take effect on the next request, not after the
-    // permission cache's TTL. Invalidation drops the cache to "unloaded", which
-    // denies until re-resolved, so no caller is answered from the compiled matrix
-    // in the gap. The refresh is kicked off immediately to close the gap quickly.
-    invalidatePermissionCache();
-    void refreshPermissionCache({ force: true });
+    // permission cache's TTL.
+    refreshAuthorizationAfterUserChange();
   }
 
   return sendSuccess(reply, updated);
@@ -132,6 +147,7 @@ export async function putUserPassword(
   const { id } = parseOrThrow(userIdParamsSchema, request.params);
   const body = parseOrThrow(changePasswordBodySchema, request.body);
   const updated = await changeUserPassword(id, body.password);
+  refreshAuthorizationAfterUserChange();
   await audit.userPasswordChanged({ ...updated }, requestActor(request));
   return sendSuccess(reply, updated);
 }
@@ -144,6 +160,9 @@ export async function putUserActiveState(
   const { id } = parseOrThrow(userIdParamsSchema, request.params);
   const body = parseOrThrow(setActiveBodySchema, request.body);
   const updated = await setUserActiveState(id, body.isActive);
+  // An account's active flag is part of what a token check trusts, so a change to
+  // it drops the resolved grants like any other account change.
+  refreshAuthorizationAfterUserChange();
 
   // Deactivating an account is a security event; reactivating one is recorded as
   // an ordinary update and needs no separate audit action.

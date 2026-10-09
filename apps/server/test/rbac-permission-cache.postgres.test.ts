@@ -227,8 +227,9 @@ describe.skipIf(!databaseIsReachable)("database-backed permissions against Postg
     );
     expect(roles.rows.map((row) => row.code)).toEqual(["collection_supervisor"]);
 
-    await refresh();
-
+    // DEFECT 2 regression: no explicit refresh here. Creating a user through the
+    // API must invalidate the permission cache itself, so the new account can act
+    // on its very next request instead of waiting out RBAC_PERMISSION_CACHE_TTL_MS.
     // The created user's legacy role is `collector`, which the compiled matrix does
     // NOT grant users:read to. A 200 here can only come from the tables.
     expect((await getUsers(createdUserId, "collector")).statusCode).toBe(200);
@@ -278,14 +279,15 @@ describe.skipIf(!databaseIsReachable)("database-backed permissions against Postg
   it("does not grant the technician users:read by default", async () => {
     await refresh();
     const technicianUser = randomUUID();
-    // A token for a user with no user_roles rows must be denied (item 1 again).
+    // A token for an id that is not in `users` is refused at authentication: a
+    // deactivated or deleted account must not keep acting on a live token.
     const { token } = signTestToken({ sub: technicianUser, role: "collector" });
     const response = await server.inject({
       method: "GET",
       url: "/api/users",
       headers: authorizationHeader(token),
     });
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(401);
 
     // And a real technician (no users:read) is denied too.
     const technicianGrants = await pool.query<{ count: string }>(

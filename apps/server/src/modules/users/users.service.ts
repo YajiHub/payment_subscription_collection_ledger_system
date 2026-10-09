@@ -119,9 +119,18 @@ async function assignSystemRole(
     .onConflictDoNothing();
 }
 
-/** Creates a user. Rejects a username that is already taken. */
-export async function createUser(input: CreateUserInput): Promise<UserSummary> {
-  const existing = await db
+/** Creates a user. Rejects a username that is already taken.
+ *
+ * `executor` is the connection the write goes through. Pass the transaction
+ * from a surrounding `db.transaction(...)` when the caller needs the account
+ * insert and its role grant to commit as one unit with more work; otherwise the
+ * default opens its own transaction.
+ */
+export async function createUser(
+  input: CreateUserInput,
+  executor: DbExecutor = db
+): Promise<UserSummary> {
+  const existing = await executor
     .select({ id: users.id })
     .from(users)
     .where(eq(users.username, input.username))
@@ -134,9 +143,12 @@ export async function createUser(input: CreateUserInput): Promise<UserSummary> {
 
   const passwordHash = await hashPassword(input.password);
 
-  // The account row and its `user_roles` grant commit together, so a user created
-  // through the API is governed by the RBAC tables from its first request.
-  return db.transaction(async (tx) => {
+  // The account row and its `user_roles` grant must commit together, so a user
+  // is governed by the RBAC tables from its first request. When the caller is
+  // already inside a transaction we JOIN it rather than opening a nested one:
+  // a separate transaction would commit independently and reopen the window
+  // this is meant to close.
+  const insertAndGrant = async (tx: DbExecutor): Promise<UserSummary> => {
     const created = await tx
       .insert(users)
       .values({
@@ -156,7 +168,9 @@ export async function createUser(input: CreateUserInput): Promise<UserSummary> {
 
     await assignSystemRole(tx, created.id, input.role, input.createdBy);
     return created;
-  });
+  };
+
+  return executor === db ? db.transaction(insertAndGrant) : insertAndGrant(executor);
 }
 
 export interface UpdateUserInput {

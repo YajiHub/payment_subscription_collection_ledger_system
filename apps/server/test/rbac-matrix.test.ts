@@ -110,7 +110,7 @@ const EXPECTED_PERMISSIONS: { method: string; url: string; permission: Permissio
   // Payments.
   { method: "GET", url: "/api/payments/receipt/:receiptNumber", permission: "payments:read" },
   { method: "POST", url: "/api/payments/gcash/upload-screenshot", permission: "payments:post" },
-  { method: "GET", url: "/api/payments/gcash/screenshot/:paymentId", permission: "payments:read" },
+  { method: "GET", url: "/api/payments/gcash/screenshot/:paymentId", permission: "payments:verify_gcash" },
   { method: "POST", url: "/api/payments", permission: "payments:post" },
   { method: "GET", url: "/api/payments", permission: "payments:read" },
   { method: "GET", url: "/api/payments/:id", permission: "payments:read" },

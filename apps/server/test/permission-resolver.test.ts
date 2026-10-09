@@ -22,11 +22,13 @@ vi.mock("../src/db/connection", async () => {
 
 import {
   callerHasPermission,
+  callerHasResolvedGrants,
   getPermissionCacheStatus,
   invalidatePermissionCache,
   refreshPermissionCache,
 } from "../src/shared/rbac/permission-resolver";
 import { setPermissionSourcePreferenceForTests } from "../src/shared/rbac/permission-source";
+import { callerSeesEveryCollectorBatch } from "../src/modules/collections/collector-batch-visibility";
 import { fakeDatabase } from "./support/fake-database";
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
@@ -67,6 +69,28 @@ describe("database-backed permission resolution", () => {
     // no row for this user, so the answer must be denial.
     expect(await callerHasPermission(USER_ID, "admin", "users:read")).toBe(false);
     expect(await callerHasPermission(USER_ID, "admin", "payments:post")).toBe(false);
+  });
+
+  // DEFECT 3: a refusal must be able to name the real cause. A caller with no
+  // resolved grants at all is distinguishable from one whose role simply lacks
+  // the one permission.
+  it("reports whether a caller has any resolved grants at all", async () => {
+    fakeDatabase.queueSelectRows([{ value: "true" }]);
+    fakeDatabase.queueSelectRows([{ userId: OTHER_USER_ID, code: "subscribers:read" }]);
+
+    await refreshPermissionCache({ force: true });
+
+    expect(callerHasResolvedGrants(OTHER_USER_ID)).toBe(true);
+    expect(callerHasResolvedGrants(USER_ID)).toBe(false);
+  });
+
+  it("does not blame a missing grant set when the compiled matrix is the authority", async () => {
+    fakeDatabase.queueSelectRows([{ value: "false" }]);
+
+    await refreshPermissionCache({ force: true });
+
+    expect(getPermissionCacheStatus()).toBe("compiled");
+    expect(callerHasResolvedGrants(USER_ID)).toBe(true);
   });
 
   it("falls back to the compiled matrix only for the explicit 'false' switch", async () => {
@@ -158,5 +182,68 @@ describe("database-backed permission resolution", () => {
 
     expect(await callerHasPermission(USER_ID, "manager", "payments:verify_gcash")).toBe(true);
     expect(await callerHasPermission(USER_ID, "manager", "reports:view")).toBe(false);
+  });
+});
+
+/**
+ * Batch VISIBILITY must come from the same resolved grants as batch PERMISSIONS.
+ *
+ * The defect this replaces: visibility read the legacy `users.role` from the JWT,
+ * so a user whose stored role was `collection_supervisor` was a supervisor for what
+ * they may do and a collector for what they may see — and could create a batch they
+ * were then refused. These tests pin the mapping in DATABASE mode, where a legacy
+ * role and a stored role genuinely disagree, which the compiled matrix cannot show.
+ */
+describe("collector batch visibility from resolved grants", () => {
+  beforeEach(() => {
+    fakeDatabase.reset();
+    invalidatePermissionCache();
+    setPermissionSourcePreferenceForTests("auto");
+  });
+
+  /** Installs the granted permission codes for a user and returns nothing useful. */
+  async function installGrants(userId: string, codes: readonly string[]): Promise<void> {
+    fakeDatabase.queueSelectRows([{ value: "true" }]);
+    fakeDatabase.queueSelectRows(codes.map((code) => ({ userId, code })));
+    await refreshPermissionCache({ force: true });
+  }
+
+  it("sees every batch when the grants allow assembling one for any collector", async () => {
+    // The demo collector: legacy `collector` on the JWT, but the stored
+    // `collection_supervisor` grant set in the tables.
+    await installGrants(USER_ID, [
+      "collector_batches:create",
+      "collector_batches:read",
+      "collector_batches:remit",
+    ]);
+
+    expect(await callerSeesEveryCollectorBatch(USER_ID, "collector")).toBe(true);
+  });
+
+  it("sees only their own when the grants are a field collector's", async () => {
+    await installGrants(USER_ID, ["collector_batches:read", "collector_batches:remit"]);
+
+    expect(await callerSeesEveryCollectorBatch(USER_ID, "collector")).toBe(false);
+  });
+
+  it("sees every batch when the grants are read-only oversight", async () => {
+    await installGrants(USER_ID, ["collector_batches:read"]);
+
+    expect(await callerSeesEveryCollectorBatch(USER_ID, "manager")).toBe(true);
+  });
+
+  it("sees every batch when the grants let the caller reconcile", async () => {
+    await installGrants(USER_ID, ["collector_batches:read", "collector_batches:reconcile"]);
+
+    expect(await callerSeesEveryCollectorBatch(USER_ID, "cashier")).toBe(true);
+  });
+
+  it("a revoked grant DENIES the wider view, exactly as it denies the permission", async () => {
+    await installGrants(USER_ID, []);
+
+    // No grants at all: the caller may not read a batch, and visibility stays
+    // closed rather than widening because the legacy role looks like an admin's.
+    expect(await callerHasPermission(USER_ID, "admin", "collector_batches:read")).toBe(false);
+    expect(await callerSeesEveryCollectorBatch(USER_ID, "admin")).toBe(false);
   });
 });
